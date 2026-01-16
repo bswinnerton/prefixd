@@ -66,8 +66,16 @@
 
 ## v1.0 - Production Ready
 
-- [ ] Multi-POP coordination
-- [ ] IPv6 FlowSpec support
+- [x] IPv6 FlowSpec support
+  - [x] IpVersion detection for IPv4/IPv6 prefixes
+  - [x] IPv6 FlowSpec NLRI construction (AFI=2, SAFI=133)
+  - [x] IPv6-aware guardrails (configurable prefix lengths)
+  - [x] IPv6 customer prefix/asset support in inventory
+- [x] Multi-POP coordination (v1.0 approach: shared PostgreSQL)
+  - [x] `GET /v1/stats` - aggregate stats across all POPs
+  - [x] `GET /v1/pops` - list known POPs from database
+  - [x] `GET /v1/mitigations?pop=all` - cross-POP visibility
+  - See "Multi-POP Architecture" section below for evolution path
 - [ ] API versioning and stability guarantees
 - [ ] Comprehensive documentation
 - [ ] Performance benchmarks
@@ -102,6 +110,53 @@
 - [ ] NetBox integration for inventory
 - [ ] Advanced correlation with ML-assisted confidence
 - [ ] Per-peer vendor profiles in config
+
+---
+
+---
+
+## Multi-POP Architecture
+
+### v1.0 Approach: Shared PostgreSQL
+
+Multiple prefixd instances share a single PostgreSQL database. Each instance:
+- Filters mitigations by its own `pop` field
+- Announces FlowSpec rules to its local GoBGP peer
+- Has visibility into all POPs via `/v1/stats`, `/v1/pops`, and `?pop=all`
+
+**Pros:**
+- Simple to deploy and operate
+- No new infrastructure required
+- Cross-POP visibility for free
+- Each POP operates independently (resilient)
+
+**Cons:**
+- Single database = potential single region latency
+- Database becomes SPOF (mitigated by Postgres HA)
+
+### Future Evolution Paths
+
+**Option A: Event Replication (for global deployment)**
+- Each POP has local database
+- Publish mitigation events to message bus (NATS, Kafka, Redis Streams)
+- Other POPs subscribe and replicate state
+- Good for: Global deployment, eventual consistency OK
+
+**Option B: Leader-Based Coordination**
+- One POP is "leader" for a given victim IP or customer
+- Leader makes decisions, replicates to followers
+- Good for: Consistent policy enforcement across POPs
+
+**Option C: API Federation**
+- POPs expose APIs to each other
+- Coordinator service aggregates state
+- Good for: Heterogeneous deployments, multi-tenant
+
+**Migration Path:**
+1. Start with shared PostgreSQL (v1.0)
+2. Add message bus for real-time sync when needed
+3. Keep `pop` field on all records (already done)
+4. APIs designed to be compatible with future coordination modes
 
 ---
 

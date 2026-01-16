@@ -172,6 +172,64 @@ impl Repository {
 
         Ok(false)
     }
+
+    // Multi-POP coordination
+
+    /// List all distinct POPs that have mitigations
+    pub async fn list_pops(&self) -> Result<Vec<PopInfo>> {
+        match &self.pool {
+            DbPool::Sqlite(pool) => list_pops_sqlite(pool).await,
+            DbPool::Postgres(pool) => list_pops_postgres(pool).await,
+        }
+    }
+
+    /// Get aggregate stats across all POPs
+    pub async fn get_stats(&self) -> Result<GlobalStats> {
+        match &self.pool {
+            DbPool::Sqlite(pool) => get_stats_sqlite(pool).await,
+            DbPool::Postgres(pool) => get_stats_postgres(pool).await,
+        }
+    }
+
+    /// List mitigations across all POPs (no POP filter)
+    pub async fn list_mitigations_all_pops(
+        &self,
+        status_filter: Option<&[MitigationStatus]>,
+        customer_id: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<Mitigation>> {
+        match &self.pool {
+            DbPool::Sqlite(pool) => {
+                list_mitigations_all_pops_sqlite(pool, status_filter, customer_id, limit, offset).await
+            }
+            DbPool::Postgres(pool) => {
+                list_mitigations_all_pops_postgres(pool, status_filter, customer_id, limit, offset).await
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PopInfo {
+    pub pop: String,
+    pub active_mitigations: u32,
+    pub total_mitigations: u32,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GlobalStats {
+    pub total_active: u32,
+    pub total_mitigations: u32,
+    pub total_events: u32,
+    pub pops: Vec<PopStats>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PopStats {
+    pub pop: String,
+    pub active: u32,
+    pub total: u32,
 }
 
 // ============================================================================
@@ -462,6 +520,114 @@ async fn list_safelist_sqlite(pool: &SqlitePool) -> Result<Vec<SafelistEntry>> {
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+async fn list_pops_sqlite(pool: &SqlitePool) -> Result<Vec<PopInfo>> {
+    let rows = sqlx::query_as::<_, (String, i64, i64)>(
+        r#"
+        SELECT pop,
+               SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
+               COUNT(*) as total
+        FROM mitigations
+        GROUP BY pop
+        ORDER BY pop
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(pop, active, total)| PopInfo {
+            pop,
+            active_mitigations: active as u32,
+            total_mitigations: total as u32,
+        })
+        .collect())
+}
+
+async fn get_stats_sqlite(pool: &SqlitePool) -> Result<GlobalStats> {
+    let (total_active, total_mitigations): (i64, i64) = sqlx::query_as(
+        r#"
+        SELECT
+            SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END),
+            COUNT(*)
+        FROM mitigations
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let total_events: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM events")
+        .fetch_one(pool)
+        .await?;
+
+    let pop_rows = sqlx::query_as::<_, (String, i64, i64)>(
+        r#"
+        SELECT pop,
+               SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
+               COUNT(*) as total
+        FROM mitigations
+        GROUP BY pop
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let pops = pop_rows
+        .into_iter()
+        .map(|(pop, active, total)| PopStats {
+            pop,
+            active: active as u32,
+            total: total as u32,
+        })
+        .collect();
+
+    Ok(GlobalStats {
+        total_active: total_active as u32,
+        total_mitigations: total_mitigations as u32,
+        total_events: total_events.0 as u32,
+        pops,
+    })
+}
+
+async fn list_mitigations_all_pops_sqlite(
+    pool: &SqlitePool,
+    status_filter: Option<&[MitigationStatus]>,
+    customer_id: Option<&str>,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<Mitigation>> {
+    let mut query = String::from(
+        r#"
+        SELECT mitigation_id, scope_hash, customer_id, service_id, victim_ip,
+               status, action, dst_prefix, protocol, dst_ports_json,
+               announced_at, expires_at, withdrawn_at, withdraw_reason, pop, escalation_level
+        FROM mitigations WHERE 1=1
+        "#,
+    );
+
+    if status_filter.is_some() {
+        query.push_str(" AND status IN (SELECT value FROM json_each($1))");
+    }
+    if customer_id.is_some() {
+        query.push_str(" AND customer_id = $2");
+    }
+    query.push_str(" ORDER BY announced_at DESC LIMIT $3 OFFSET $4");
+
+    let status_json = status_filter.map(|s| {
+        serde_json::to_string(&s.iter().map(|st| st.as_str()).collect::<Vec<_>>()).unwrap()
+    });
+
+    let rows = sqlx::query_as::<_, MitigationRow>(&query)
+        .bind(&status_json)
+        .bind(customer_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(rows.into_iter().map(Mitigation::from_row).collect())
 }
 
 // ============================================================================
@@ -756,6 +922,107 @@ async fn list_safelist_postgres(pool: &PgPool) -> Result<Vec<SafelistEntry>> {
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+async fn list_pops_postgres(pool: &PgPool) -> Result<Vec<PopInfo>> {
+    let rows = sqlx::query_as::<_, (String, i64, i64)>(
+        r#"
+        SELECT pop,
+               SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END)::bigint as active,
+               COUNT(*)::bigint as total
+        FROM mitigations
+        GROUP BY pop
+        ORDER BY pop
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(pop, active, total)| PopInfo {
+            pop,
+            active_mitigations: active as u32,
+            total_mitigations: total as u32,
+        })
+        .collect())
+}
+
+async fn get_stats_postgres(pool: &PgPool) -> Result<GlobalStats> {
+    let (total_active, total_mitigations): (i64, i64) = sqlx::query_as(
+        r#"
+        SELECT
+            COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0)::bigint,
+            COUNT(*)::bigint
+        FROM mitigations
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let total_events: (i64,) = sqlx::query_as("SELECT COUNT(*)::bigint FROM events")
+        .fetch_one(pool)
+        .await?;
+
+    let pop_rows = sqlx::query_as::<_, (String, i64, i64)>(
+        r#"
+        SELECT pop,
+               SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END)::bigint as active,
+               COUNT(*)::bigint as total
+        FROM mitigations
+        GROUP BY pop
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let pops = pop_rows
+        .into_iter()
+        .map(|(pop, active, total)| PopStats {
+            pop,
+            active: active as u32,
+            total: total as u32,
+        })
+        .collect();
+
+    Ok(GlobalStats {
+        total_active: total_active as u32,
+        total_mitigations: total_mitigations as u32,
+        total_events: total_events.0 as u32,
+        pops,
+    })
+}
+
+async fn list_mitigations_all_pops_postgres(
+    pool: &PgPool,
+    status_filter: Option<&[MitigationStatus]>,
+    customer_id: Option<&str>,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<Mitigation>> {
+    let status_strings: Option<Vec<String>> =
+        status_filter.map(|s| s.iter().map(|st| st.as_str().to_string()).collect());
+
+    let rows = sqlx::query_as::<_, MitigationRow>(
+        r#"
+        SELECT mitigation_id, scope_hash, customer_id, service_id, victim_ip,
+               status, action, dst_prefix, protocol, dst_ports_json,
+               announced_at, expires_at, withdrawn_at, withdraw_reason, pop, escalation_level
+        FROM mitigations
+        WHERE ($1::text[] IS NULL OR status = ANY($1))
+          AND ($2::text IS NULL OR customer_id = $2)
+        ORDER BY announced_at DESC
+        LIMIT $3 OFFSET $4
+        "#,
+    )
+    .bind(&status_strings)
+    .bind(customer_id)
+    .bind(limit as i64)
+    .bind(offset as i64)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(Mitigation::from_row).collect())
 }
 
 // ============================================================================

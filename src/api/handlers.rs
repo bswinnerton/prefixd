@@ -84,6 +84,8 @@ pub struct ErrorResponse {
 pub struct ListMitigationsQuery {
     status: Option<String>,
     customer_id: Option<String>,
+    /// Filter by POP. Use "all" to see mitigations from all POPs.
+    pop: Option<String>,
     #[serde(default = "default_limit")]
     limit: u32,
     #[serde(default)]
@@ -281,16 +283,30 @@ pub async fn list_mitigations(
             .collect()
     });
 
-    let mitigations = state
-        .repo
-        .list_mitigations(
-            status_filter.as_deref(),
-            query.customer_id.as_deref(),
-            query.limit,
-            query.offset,
-        )
-        .await
-        .map_err(AppError)?;
+    // If pop=all, list mitigations from all POPs
+    let mitigations = if query.pop.as_deref() == Some("all") {
+        state
+            .repo
+            .list_mitigations_all_pops(
+                status_filter.as_deref(),
+                query.customer_id.as_deref(),
+                query.limit,
+                query.offset,
+            )
+            .await
+            .map_err(AppError)?
+    } else {
+        state
+            .repo
+            .list_mitigations(
+                status_filter.as_deref(),
+                query.customer_id.as_deref(),
+                query.limit,
+                query.offset,
+            )
+            .await
+            .map_err(AppError)?
+    };
 
     let total = mitigations.len();
     let responses: Vec<_> = mitigations.iter().map(MitigationResponse::from).collect();
@@ -482,6 +498,18 @@ pub async fn reload_config(State(state): State<Arc<AppState>>) -> impl IntoRespo
         reloaded,
         timestamp: chrono::Utc::now().to_rfc3339(),
     }))
+}
+
+// Multi-POP coordination
+
+pub async fn get_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let stats = state.repo.get_stats().await.map_err(AppError)?;
+    Ok::<_, AppError>(Json(stats))
+}
+
+pub async fn list_pops(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let pops = state.repo.list_pops().await.map_err(AppError)?;
+    Ok::<_, AppError>(Json(pops))
 }
 
 // Error handling
