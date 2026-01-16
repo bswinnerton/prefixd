@@ -155,6 +155,18 @@ export async function withdrawMitigation(
   })
 }
 
+export async function getEvents(params?: {
+  limit?: number
+  offset?: number
+}): Promise<Event[]> {
+  const searchParams = new URLSearchParams()
+  if (params?.limit) searchParams.set("limit", params.limit.toString())
+  if (params?.offset) searchParams.set("offset", params.offset.toString())
+
+  const query = searchParams.toString()
+  return fetchApi<Event[]>(`/v1/events${query ? `?${query}` : ""}`)
+}
+
 export async function getSafelist(): Promise<SafelistEntry[]> {
   return fetchApi<SafelistEntry[]>("/v1/safelist")
 }

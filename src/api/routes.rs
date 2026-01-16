@@ -20,7 +20,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     // Protected routes (auth required)
     // Rate limiting is handled at the handler level via AppState
     let protected_routes = Router::new()
-        .route("/v1/events", post(handlers::ingest_event))
+        .route("/v1/events", get(handlers::list_events).post(handlers::ingest_event))
         .route("/v1/mitigations", get(handlers::list_mitigations))
         .route("/v1/mitigations", post(handlers::create_mitigation))
         .route("/v1/mitigations/{id}", get(handlers::get_mitigation))

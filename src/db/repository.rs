@@ -44,6 +44,13 @@ impl Repository {
         }
     }
 
+    pub async fn list_events(&self, limit: u32, offset: u32) -> Result<Vec<AttackEvent>> {
+        match &self.pool {
+            DbPool::Sqlite(pool) => list_events_sqlite(pool, limit, offset).await,
+            DbPool::Postgres(pool) => list_events_postgres(pool, limit, offset).await,
+        }
+    }
+
     // Mitigations
 
     pub async fn insert_mitigation(&self, m: &Mitigation) -> Result<()> {
@@ -289,6 +296,21 @@ async fn find_event_by_external_id_sqlite(
     .fetch_optional(pool)
     .await?;
     Ok(event)
+}
+
+async fn list_events_sqlite(pool: &SqlitePool, limit: u32, offset: u32) -> Result<Vec<AttackEvent>> {
+    let events = sqlx::query_as::<_, AttackEvent>(
+        r#"
+        SELECT event_id, external_event_id, source, event_timestamp, ingested_at,
+               victim_ip, vector, protocol, bps, pps, top_dst_ports_json, confidence
+        FROM events ORDER BY ingested_at DESC LIMIT $1 OFFSET $2
+        "#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok(events)
 }
 
 async fn insert_mitigation_sqlite(pool: &SqlitePool, m: &Mitigation) -> Result<()> {
@@ -683,6 +705,21 @@ async fn find_event_by_external_id_postgres(
     .fetch_optional(pool)
     .await?;
     Ok(event)
+}
+
+async fn list_events_postgres(pool: &PgPool, limit: u32, offset: u32) -> Result<Vec<AttackEvent>> {
+    let events = sqlx::query_as::<_, AttackEvent>(
+        r#"
+        SELECT event_id, external_event_id, source, event_timestamp, ingested_at,
+               victim_ip, vector, protocol, bps, pps, top_dst_ports_json, confidence
+        FROM events ORDER BY ingested_at DESC LIMIT $1 OFFSET $2
+        "#,
+    )
+    .bind(limit as i64)
+    .bind(offset as i64)
+    .fetch_all(pool)
+    .await?;
+    Ok(events)
 }
 
 async fn insert_mitigation_postgres(pool: &PgPool, m: &Mitigation) -> Result<()> {

@@ -45,6 +45,14 @@ export function usePops() {
   })
 }
 
+export function useEvents(params?: Parameters<typeof api.getEvents>[0]) {
+  const key = params ? ["events", JSON.stringify(params)] : "events"
+  return useSWR(key, () => api.getEvents(params), {
+    refreshInterval: REFRESH_INTERVAL,
+    revalidateOnFocus: true,
+  })
+}
+
 // Parallel fetch all dashboard data in one request (async-parallel pattern)
 export function useDashboard() {
   return useSWR("dashboard", api.getDashboardData, {

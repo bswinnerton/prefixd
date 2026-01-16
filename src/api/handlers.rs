@@ -103,6 +103,12 @@ pub struct ErrorResponse {
 // Request types
 
 #[derive(Deserialize)]
+pub struct ListEventsQuery {
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Deserialize)]
 pub struct ListMitigationsQuery {
     status: Option<String>,
     customer_id: Option<String>,
@@ -305,6 +311,35 @@ pub async fn ingest_event(
             mitigation_id: Some(mitigation.mitigation_id),
         }),
     ))
+}
+
+/// List events
+#[utoipa::path(
+    get,
+    path = "/v1/events",
+    tag = "events",
+    params(
+        ("limit" = Option<u32>, Query, description = "Max results (default 100)"),
+        ("offset" = Option<u32>, Query, description = "Offset for pagination"),
+    ),
+    responses(
+        (status = 200, description = "List of events", body = Vec<AttackEvent>)
+    )
+)]
+pub async fn list_events(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ListEventsQuery>,
+) -> impl IntoResponse {
+    let limit = query.limit.unwrap_or(100);
+    let offset = query.offset.unwrap_or(0);
+
+    let events = state
+        .repo
+        .list_events(limit, offset)
+        .await
+        .map_err(AppError)?;
+
+    Ok::<_, AppError>(Json(events))
 }
 
 /// List mitigations with optional filters
