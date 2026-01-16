@@ -20,6 +20,18 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  dashboard:
+    build: ./frontend
+    container_name: prefixd-dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_PREFIXD_API=http://prefixd:8080
+      - NEXT_PUBLIC_PREFIXD_TOKEN=${PREFIXD_API_TOKEN:-}
+    depends_on:
+      - prefixd
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     container_name: prefixd-postgres
