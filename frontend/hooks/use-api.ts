@@ -53,6 +53,14 @@ export function useEvents(params?: Parameters<typeof api.getEvents>[0]) {
   })
 }
 
+export function useAuditLog(params?: Parameters<typeof api.getAuditLog>[0]) {
+  const key = params ? ["audit", JSON.stringify(params)] : "audit"
+  return useSWR(key, () => api.getAuditLog(params), {
+    refreshInterval: REFRESH_INTERVAL,
+    revalidateOnFocus: true,
+  })
+}
+
 // Parallel fetch all dashboard data in one request (async-parallel pattern)
 export function useDashboard() {
   return useSWR("dashboard", api.getDashboardData, {

@@ -1,10 +1,45 @@
-use chrono::Utc;
-use sqlx::{PgPool, SqlitePool};
+use chrono::{DateTime, Utc};
+use sqlx::{FromRow, PgPool, SqlitePool};
 use uuid::Uuid;
 
 use super::DbPool;
 use crate::domain::{AttackEvent, Mitigation, MitigationRow, MitigationStatus};
 use crate::error::Result;
+use crate::observability::{ActorType, AuditEntry};
+
+#[derive(Debug, FromRow)]
+struct AuditRow {
+    audit_id: Uuid,
+    timestamp: DateTime<Utc>,
+    schema_version: i32,
+    actor_type: String,
+    actor_id: Option<String>,
+    action: String,
+    target_type: Option<String>,
+    target_id: Option<String>,
+    details_json: String,
+}
+
+impl AuditEntry {
+    fn from_row(row: AuditRow) -> Self {
+        let actor_type = match row.actor_type.as_str() {
+            "operator" => ActorType::Operator,
+            "detector" => ActorType::Detector,
+            _ => ActorType::System,
+        };
+        Self {
+            audit_id: row.audit_id,
+            timestamp: row.timestamp,
+            schema_version: row.schema_version as u32,
+            actor_type,
+            actor_id: row.actor_id,
+            action: row.action,
+            target_type: row.target_type,
+            target_id: row.target_id,
+            details: serde_json::from_str(&row.details_json).unwrap_or(serde_json::json!({})),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Repository {
@@ -48,6 +83,22 @@ impl Repository {
         match &self.pool {
             DbPool::Sqlite(pool) => list_events_sqlite(pool, limit, offset).await,
             DbPool::Postgres(pool) => list_events_postgres(pool, limit, offset).await,
+        }
+    }
+
+    // Audit Log
+
+    pub async fn insert_audit(&self, entry: &AuditEntry) -> Result<()> {
+        match &self.pool {
+            DbPool::Sqlite(pool) => insert_audit_sqlite(pool, entry).await,
+            DbPool::Postgres(pool) => insert_audit_postgres(pool, entry).await,
+        }
+    }
+
+    pub async fn list_audit(&self, limit: u32, offset: u32) -> Result<Vec<AuditEntry>> {
+        match &self.pool {
+            DbPool::Sqlite(pool) => list_audit_sqlite(pool, limit, offset).await,
+            DbPool::Postgres(pool) => list_audit_postgres(pool, limit, offset).await,
         }
     }
 
@@ -311,6 +362,43 @@ async fn list_events_sqlite(pool: &SqlitePool, limit: u32, offset: u32) -> Resul
     .fetch_all(pool)
     .await?;
     Ok(events)
+}
+
+async fn insert_audit_sqlite(pool: &SqlitePool, entry: &AuditEntry) -> Result<()> {
+    let details_json = serde_json::to_string(&entry.details)?;
+    sqlx::query(
+        r#"
+        INSERT INTO audit_log (audit_id, timestamp, schema_version, actor_type, actor_id, action, target_type, target_id, details_json)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        "#,
+    )
+    .bind(entry.audit_id)
+    .bind(entry.timestamp)
+    .bind(entry.schema_version as i32)
+    .bind(format!("{:?}", entry.actor_type).to_lowercase())
+    .bind(&entry.actor_id)
+    .bind(&entry.action)
+    .bind(&entry.target_type)
+    .bind(&entry.target_id)
+    .bind(&details_json)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn list_audit_sqlite(pool: &SqlitePool, limit: u32, offset: u32) -> Result<Vec<AuditEntry>> {
+    let rows = sqlx::query_as::<_, AuditRow>(
+        r#"
+        SELECT audit_id, timestamp, schema_version, actor_type, actor_id, action, target_type, target_id, details_json
+        FROM audit_log ORDER BY timestamp DESC LIMIT $1 OFFSET $2
+        "#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    
+    Ok(rows.into_iter().map(AuditEntry::from_row).collect())
 }
 
 async fn insert_mitigation_sqlite(pool: &SqlitePool, m: &Mitigation) -> Result<()> {
@@ -720,6 +808,43 @@ async fn list_events_postgres(pool: &PgPool, limit: u32, offset: u32) -> Result<
     .fetch_all(pool)
     .await?;
     Ok(events)
+}
+
+async fn insert_audit_postgres(pool: &PgPool, entry: &AuditEntry) -> Result<()> {
+    let details_json = serde_json::to_string(&entry.details)?;
+    sqlx::query(
+        r#"
+        INSERT INTO audit_log (audit_id, timestamp, schema_version, actor_type, actor_id, action, target_type, target_id, details_json)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        "#,
+    )
+    .bind(entry.audit_id)
+    .bind(entry.timestamp)
+    .bind(entry.schema_version as i32)
+    .bind(format!("{:?}", entry.actor_type).to_lowercase())
+    .bind(&entry.actor_id)
+    .bind(&entry.action)
+    .bind(&entry.target_type)
+    .bind(&entry.target_id)
+    .bind(&details_json)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn list_audit_postgres(pool: &PgPool, limit: u32, offset: u32) -> Result<Vec<AuditEntry>> {
+    let rows = sqlx::query_as::<_, AuditRow>(
+        r#"
+        SELECT audit_id, timestamp, schema_version, actor_type, actor_id, action, target_type, target_id, details_json
+        FROM audit_log ORDER BY timestamp DESC LIMIT $1 OFFSET $2
+        "#,
+    )
+    .bind(limit as i64)
+    .bind(offset as i64)
+    .fetch_all(pool)
+    .await?;
+    
+    Ok(rows.into_iter().map(AuditEntry::from_row).collect())
 }
 
 async fn insert_mitigation_postgres(pool: &PgPool, m: &Mitigation) -> Result<()> {

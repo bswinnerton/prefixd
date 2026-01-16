@@ -35,6 +35,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Multi-POP coordination
         .route("/v1/stats", get(handlers::get_stats))
         .route("/v1/pops", get(handlers::list_pops))
+        // Audit log
+        .route("/v1/audit", get(handlers::list_audit))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,

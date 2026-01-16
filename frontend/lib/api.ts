@@ -167,6 +167,30 @@ export async function getEvents(params?: {
   return fetchApi<Event[]>(`/v1/events${query ? `?${query}` : ""}`)
 }
 
+export interface AuditEntry {
+  audit_id: string
+  timestamp: string
+  schema_version: number
+  actor_type: "system" | "detector" | "operator"
+  actor_id: string | null
+  action: string
+  target_type: string | null
+  target_id: string | null
+  details: Record<string, unknown>
+}
+
+export async function getAuditLog(params?: {
+  limit?: number
+  offset?: number
+}): Promise<AuditEntry[]> {
+  const searchParams = new URLSearchParams()
+  if (params?.limit) searchParams.set("limit", params.limit.toString())
+  if (params?.offset) searchParams.set("offset", params.offset.toString())
+
+  const query = searchParams.toString()
+  return fetchApi<AuditEntry[]>(`/v1/audit${query ? `?${query}` : ""}`)
+}
+
 export async function getSafelist(): Promise<SafelistEntry[]> {
   return fetchApi<SafelistEntry[]>("/v1/safelist")
 }

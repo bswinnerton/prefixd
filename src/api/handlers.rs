@@ -342,6 +342,35 @@ pub async fn list_events(
     Ok::<_, AppError>(Json(events))
 }
 
+/// List audit log entries
+#[utoipa::path(
+    get,
+    path = "/v1/audit",
+    tag = "audit",
+    params(
+        ("limit" = Option<u32>, Query, description = "Max results (default 100)"),
+        ("offset" = Option<u32>, Query, description = "Offset for pagination"),
+    ),
+    responses(
+        (status = 200, description = "List of audit log entries")
+    )
+)]
+pub async fn list_audit(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ListEventsQuery>,
+) -> impl IntoResponse {
+    let limit = query.limit.unwrap_or(100);
+    let offset = query.offset.unwrap_or(0);
+
+    let entries = state
+        .repo
+        .list_audit(limit, offset)
+        .await
+        .map_err(AppError)?;
+
+    Ok::<_, AppError>(Json(entries))
+}
+
 /// List mitigations with optional filters
 #[utoipa::path(
     get,
