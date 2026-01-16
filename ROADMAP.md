@@ -62,6 +62,25 @@
 - [ ] Performance benchmarks
 - [ ] Security audit
 
+## v1.5 - Multi-Vendor Support
+
+- [ ] Vendor capability profiles
+  - [ ] Define per-vendor match/action support matrix
+  - [ ] Graceful degradation for unsupported features
+- [ ] Arista EOS support
+  - [ ] Validation with EOS 4.20+
+  - [ ] Reference import policy documentation
+- [ ] Cisco IOS-XR support
+  - [ ] Validation with XR 6.x/7.x
+  - [ ] Reference `flowspec` address-family config
+- [ ] Nokia SR OS support
+  - [ ] Validation with SR OS 19+
+  - [ ] Reference policy documentation
+- [ ] FRR support (receive-only enforcement)
+  - [ ] iptables/nftables integration for Linux enforcement
+  - [ ] Alternative: XDP/eBPF enforcement
+- [ ] Vendor-specific guardrails (ASIC limits, action support)
+
 ## v2.0+ - Advanced Features
 
 - [ ] Redirect/diversion actions (redirect-to-IP, redirect-to-VRF)
@@ -71,7 +90,7 @@
 - [ ] Fragment matching
 - [ ] NetBox integration for inventory
 - [ ] Advanced correlation with ML-assisted confidence
-- [ ] Multi-vendor support (beyond Juniper)
+- [ ] Per-peer vendor profiles in config
 
 ---
 
