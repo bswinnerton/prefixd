@@ -610,30 +610,26 @@ async fn list_mitigations_all_pops_sqlite(
 ) -> Result<Vec<Mitigation>> {
     let mut query = String::from(
         r#"
-        SELECT mitigation_id, scope_hash, customer_id, service_id, victim_ip,
-               status, action, dst_prefix, protocol, dst_ports_json,
-               announced_at, expires_at, withdrawn_at, withdraw_reason, pop, escalation_level
+        SELECT mitigation_id, scope_hash, pop, customer_id, service_id, victim_ip, vector,
+               match_json, action_type, action_params_json, status,
+               created_at, updated_at, expires_at, withdrawn_at,
+               triggering_event_id, last_event_id, escalated_from_id, reason, rejection_reason
         FROM mitigations WHERE 1=1
         "#,
     );
 
-    if status_filter.is_some() {
-        query.push_str(" AND status IN (SELECT value FROM json_each($1))");
+    if let Some(statuses) = status_filter {
+        let placeholders: Vec<_> = statuses.iter().map(|s| format!("'{}'", s.as_str())).collect();
+        query.push_str(&format!(" AND status IN ({})", placeholders.join(",")));
     }
-    if customer_id.is_some() {
-        query.push_str(" AND customer_id = $2");
-    }
-    query.push_str(" ORDER BY announced_at DESC LIMIT $3 OFFSET $4");
 
-    let status_json = status_filter.map(|s| {
-        serde_json::to_string(&s.iter().map(|st| st.as_str()).collect::<Vec<_>>()).unwrap()
-    });
+    if let Some(cid) = customer_id {
+        query.push_str(&format!(" AND customer_id = '{}'", cid));
+    }
+
+    query.push_str(&format!(" ORDER BY created_at DESC LIMIT {} OFFSET {}", limit, offset));
 
     let rows = sqlx::query_as::<_, MitigationRow>(&query)
-        .bind(&status_json)
-        .bind(customer_id)
-        .bind(limit)
-        .bind(offset)
         .fetch_all(pool)
         .await?;
 
@@ -1053,4 +1049,395 @@ pub struct SafelistEntry {
     pub reason: Option<String>,
     /// Optional expiration time
     pub expires_at: Option<chrono::DateTime<Utc>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::init_memory_pool;
+    use crate::domain::{ActionParams, ActionType, AttackVector, MatchCriteria};
+
+    async fn setup_repo() -> Repository {
+        let pool = init_memory_pool().await.unwrap();
+        Repository::from_sqlite(pool)
+    }
+
+    fn make_mitigation(victim_ip: &str, pop: &str, customer_id: Option<&str>) -> Mitigation {
+        let event_id = Uuid::new_v4();
+        Mitigation {
+            mitigation_id: Uuid::new_v4(),
+            scope_hash: format!("hash_{}", victim_ip),
+            pop: pop.to_string(),
+            customer_id: customer_id.map(String::from),
+            service_id: None,
+            victim_ip: victim_ip.to_string(),
+            vector: AttackVector::UdpFlood,
+            match_criteria: MatchCriteria {
+                dst_prefix: format!("{}/32", victim_ip),
+                protocol: Some(17),
+                dst_ports: vec![53],
+            },
+            action_type: ActionType::Discard,
+            action_params: ActionParams { rate_bps: None },
+            status: MitigationStatus::Active,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            expires_at: Utc::now() + chrono::Duration::hours(1),
+            withdrawn_at: None,
+            triggering_event_id: event_id,
+            last_event_id: event_id,
+            escalated_from_id: None,
+            reason: "test mitigation".to_string(),
+            rejection_reason: None,
+        }
+    }
+
+    fn make_event(victim_ip: &str) -> AttackEvent {
+        AttackEvent {
+            event_id: Uuid::new_v4(),
+            external_event_id: Some(format!("ext_{}", victim_ip)),
+            source: "test_detector".to_string(),
+            event_timestamp: Utc::now(),
+            ingested_at: Utc::now(),
+            victim_ip: victim_ip.to_string(),
+            vector: "udp_flood".to_string(),
+            protocol: Some(17),
+            bps: Some(1_000_000_000),
+            pps: Some(100_000),
+            top_dst_ports_json: "[53]".to_string(),
+            confidence: Some(0.95),
+        }
+    }
+
+    // ==========================================================================
+    // Event Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_insert_and_find_event() {
+        let repo = setup_repo().await;
+        let event = make_event("192.168.1.1");
+
+        repo.insert_event(&event).await.unwrap();
+
+        let found = repo
+            .find_event_by_external_id(&event.source, event.external_event_id.as_ref().unwrap())
+            .await
+            .unwrap();
+
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert_eq!(found.event_id, event.event_id);
+        assert_eq!(found.victim_ip, "192.168.1.1");
+    }
+
+    #[tokio::test]
+    async fn test_find_event_not_found() {
+        let repo = setup_repo().await;
+
+        let found = repo
+            .find_event_by_external_id("unknown", "unknown_id")
+            .await
+            .unwrap();
+
+        assert!(found.is_none());
+    }
+
+    // ==========================================================================
+    // Mitigation CRUD Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_insert_and_get_mitigation() {
+        let repo = setup_repo().await;
+        let mitigation = make_mitigation("10.0.0.1", "pop1", Some("cust_1"));
+
+        repo.insert_mitigation(&mitigation).await.unwrap();
+
+        let found = repo.get_mitigation(mitigation.mitigation_id).await.unwrap();
+        assert!(found.is_some());
+
+        let found = found.unwrap();
+        assert_eq!(found.victim_ip, "10.0.0.1");
+        assert_eq!(found.pop, "pop1");
+        assert_eq!(found.customer_id, Some("cust_1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_get_mitigation_not_found() {
+        let repo = setup_repo().await;
+
+        let found = repo.get_mitigation(Uuid::new_v4()).await.unwrap();
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_mitigation() {
+        let repo = setup_repo().await;
+        let mut mitigation = make_mitigation("10.0.0.2", "pop1", None);
+
+        repo.insert_mitigation(&mitigation).await.unwrap();
+
+        // Update status
+        mitigation.status = MitigationStatus::Withdrawn;
+        mitigation.withdrawn_at = Some(Utc::now());
+        mitigation.reason = "test withdrawal".to_string();
+
+        repo.update_mitigation(&mitigation).await.unwrap();
+
+        let found = repo.get_mitigation(mitigation.mitigation_id).await.unwrap().unwrap();
+        assert_eq!(found.status, MitigationStatus::Withdrawn);
+        assert!(found.withdrawn_at.is_some());
+    }
+
+    // ==========================================================================
+    // Mitigation Query Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_find_active_by_scope() {
+        let repo = setup_repo().await;
+        let mitigation = make_mitigation("10.0.0.3", "pop1", None);
+
+        repo.insert_mitigation(&mitigation).await.unwrap();
+
+        let found = repo
+            .find_active_by_scope(&mitigation.scope_hash, "pop1")
+            .await
+            .unwrap();
+
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().mitigation_id, mitigation.mitigation_id);
+    }
+
+    #[tokio::test]
+    async fn test_find_active_by_scope_wrong_pop() {
+        let repo = setup_repo().await;
+        let mitigation = make_mitigation("10.0.0.4", "pop1", None);
+
+        repo.insert_mitigation(&mitigation).await.unwrap();
+
+        // Different POP should not find it
+        let found = repo
+            .find_active_by_scope(&mitigation.scope_hash, "pop2")
+            .await
+            .unwrap();
+
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_find_active_by_victim() {
+        let repo = setup_repo().await;
+
+        // Insert multiple mitigations for same victim
+        let m1 = make_mitigation("10.0.0.5", "pop1", None);
+        let m2 = make_mitigation("10.0.0.5", "pop2", None);
+
+        repo.insert_mitigation(&m1).await.unwrap();
+        repo.insert_mitigation(&m2).await.unwrap();
+
+        let found = repo.find_active_by_victim("10.0.0.5").await.unwrap();
+        assert_eq!(found.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_mitigations() {
+        let repo = setup_repo().await;
+
+        repo.insert_mitigation(&make_mitigation("10.0.1.1", "pop1", Some("cust_a"))).await.unwrap();
+        repo.insert_mitigation(&make_mitigation("10.0.1.2", "pop1", Some("cust_b"))).await.unwrap();
+        repo.insert_mitigation(&make_mitigation("10.0.1.3", "pop1", Some("cust_a"))).await.unwrap();
+
+        // List all
+        let all = repo.list_mitigations(None, None, 100, 0).await.unwrap();
+        assert_eq!(all.len(), 3);
+
+        // Filter by customer
+        let cust_a = repo.list_mitigations(None, Some("cust_a"), 100, 0).await.unwrap();
+        assert_eq!(cust_a.len(), 2);
+
+        // Filter by status
+        let active = repo
+            .list_mitigations(Some(&[MitigationStatus::Active]), None, 100, 0)
+            .await
+            .unwrap();
+        assert_eq!(active.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_list_mitigations_pagination() {
+        let repo = setup_repo().await;
+
+        for i in 0..10 {
+            repo.insert_mitigation(&make_mitigation(&format!("10.0.2.{}", i), "pop1", None))
+                .await
+                .unwrap();
+        }
+
+        let page1 = repo.list_mitigations(None, None, 3, 0).await.unwrap();
+        assert_eq!(page1.len(), 3);
+
+        let page2 = repo.list_mitigations(None, None, 3, 3).await.unwrap();
+        assert_eq!(page2.len(), 3);
+
+        let page4 = repo.list_mitigations(None, None, 3, 9).await.unwrap();
+        assert_eq!(page4.len(), 1);
+    }
+
+    // ==========================================================================
+    // Counting Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_count_active_by_customer() {
+        let repo = setup_repo().await;
+
+        repo.insert_mitigation(&make_mitigation("10.0.3.1", "pop1", Some("cust_x"))).await.unwrap();
+        repo.insert_mitigation(&make_mitigation("10.0.3.2", "pop1", Some("cust_x"))).await.unwrap();
+        repo.insert_mitigation(&make_mitigation("10.0.3.3", "pop1", Some("cust_y"))).await.unwrap();
+
+        let count_x = repo.count_active_by_customer("cust_x").await.unwrap();
+        assert_eq!(count_x, 2);
+
+        let count_y = repo.count_active_by_customer("cust_y").await.unwrap();
+        assert_eq!(count_y, 1);
+
+        let count_z = repo.count_active_by_customer("cust_z").await.unwrap();
+        assert_eq!(count_z, 0);
+    }
+
+    #[tokio::test]
+    async fn test_count_active_by_pop() {
+        let repo = setup_repo().await;
+
+        repo.insert_mitigation(&make_mitigation("10.0.4.1", "nyc1", None)).await.unwrap();
+        repo.insert_mitigation(&make_mitigation("10.0.4.2", "nyc1", None)).await.unwrap();
+        repo.insert_mitigation(&make_mitigation("10.0.4.3", "lax1", None)).await.unwrap();
+
+        let nyc = repo.count_active_by_pop("nyc1").await.unwrap();
+        assert_eq!(nyc, 2);
+
+        let lax = repo.count_active_by_pop("lax1").await.unwrap();
+        assert_eq!(lax, 1);
+    }
+
+    #[tokio::test]
+    async fn test_count_active_global() {
+        let repo = setup_repo().await;
+
+        assert_eq!(repo.count_active_global().await.unwrap(), 0);
+
+        repo.insert_mitigation(&make_mitigation("10.0.5.1", "pop1", None)).await.unwrap();
+        repo.insert_mitigation(&make_mitigation("10.0.5.2", "pop2", None)).await.unwrap();
+
+        assert_eq!(repo.count_active_global().await.unwrap(), 2);
+    }
+
+    // ==========================================================================
+    // Safelist Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_safelist_crud() {
+        let repo = setup_repo().await;
+
+        // Add
+        repo.insert_safelist("10.0.0.0/8", "admin", Some("internal network"))
+            .await
+            .unwrap();
+
+        // List
+        let list = repo.list_safelist().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].prefix, "10.0.0.0/8");
+        assert_eq!(list[0].added_by, "admin");
+
+        // Remove
+        let removed = repo.remove_safelist("10.0.0.0/8").await.unwrap();
+        assert!(removed);
+
+        let list = repo.list_safelist().await.unwrap();
+        assert!(list.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_is_safelisted() {
+        let repo = setup_repo().await;
+
+        repo.insert_safelist("10.0.0.0/8", "admin", None).await.unwrap();
+        repo.insert_safelist("192.168.1.100/32", "admin", None).await.unwrap();
+
+        // In safelist range
+        assert!(repo.is_safelisted("10.1.2.3").await.unwrap());
+        assert!(repo.is_safelisted("10.255.255.255").await.unwrap());
+
+        // Exact match
+        assert!(repo.is_safelisted("192.168.1.100").await.unwrap());
+
+        // Not safelisted
+        assert!(!repo.is_safelisted("192.168.1.101").await.unwrap());
+        assert!(!repo.is_safelisted("8.8.8.8").await.unwrap());
+    }
+
+    // ==========================================================================
+    // Multi-POP Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_list_pops() {
+        let repo = setup_repo().await;
+
+        repo.insert_mitigation(&make_mitigation("10.0.6.1", "nyc1", None)).await.unwrap();
+        repo.insert_mitigation(&make_mitigation("10.0.6.2", "nyc1", None)).await.unwrap();
+        repo.insert_mitigation(&make_mitigation("10.0.6.3", "lax1", None)).await.unwrap();
+        repo.insert_mitigation(&make_mitigation("10.0.6.4", "ams1", None)).await.unwrap();
+
+        let pops = repo.list_pops().await.unwrap();
+        assert_eq!(pops.len(), 3);
+
+        // Check NYC has 2 active
+        let nyc = pops.iter().find(|p| p.pop == "nyc1").unwrap();
+        assert_eq!(nyc.active_mitigations, 2);
+        assert_eq!(nyc.total_mitigations, 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_stats() {
+        let repo = setup_repo().await;
+
+        // Insert some data
+        repo.insert_event(&make_event("10.0.7.1")).await.unwrap();
+        repo.insert_event(&make_event("10.0.7.2")).await.unwrap();
+
+        repo.insert_mitigation(&make_mitigation("10.0.7.1", "pop1", None)).await.unwrap();
+        repo.insert_mitigation(&make_mitigation("10.0.7.2", "pop2", None)).await.unwrap();
+
+        let stats = repo.get_stats().await.unwrap();
+
+        assert_eq!(stats.total_events, 2);
+        assert_eq!(stats.total_active, 2);
+        assert_eq!(stats.total_mitigations, 2);
+        assert_eq!(stats.pops.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_mitigations_all_pops() {
+        let repo = setup_repo().await;
+
+        repo.insert_mitigation(&make_mitigation("10.0.8.1", "pop1", Some("cust_1"))).await.unwrap();
+        repo.insert_mitigation(&make_mitigation("10.0.8.2", "pop2", Some("cust_1"))).await.unwrap();
+        repo.insert_mitigation(&make_mitigation("10.0.8.3", "pop3", Some("cust_2"))).await.unwrap();
+
+        // All POPs, no filter
+        let all = repo.list_mitigations_all_pops(None, None, 100, 0).await.unwrap();
+        assert_eq!(all.len(), 3);
+
+        // All POPs, filter by customer
+        let cust1 = repo
+            .list_mitigations_all_pops(None, Some("cust_1"), 100, 0)
+            .await
+            .unwrap();
+        assert_eq!(cust1.len(), 2);
+    }
 }
