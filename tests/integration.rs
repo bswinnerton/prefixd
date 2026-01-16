@@ -38,6 +38,8 @@ fn test_settings() -> Settings {
             require_ttl: true,
             dst_prefix_minlen: 32,
             dst_prefix_maxlen: 32,
+            dst_prefix_minlen_v6: None,
+            dst_prefix_maxlen_v6: None,
             max_ports: 8,
             allow_src_prefix_match: false,
             allow_tcp_flags_match: false,

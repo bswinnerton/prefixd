@@ -114,6 +114,12 @@ pub struct GuardrailsConfig {
     pub dst_prefix_minlen: u8,
     #[serde(default = "default_32")]
     pub dst_prefix_maxlen: u8,
+    /// Minimum prefix length for IPv6 (default: 128)
+    #[serde(default)]
+    pub dst_prefix_minlen_v6: Option<u8>,
+    /// Maximum prefix length for IPv6 (default: 128)
+    #[serde(default)]
+    pub dst_prefix_maxlen_v6: Option<u8>,
     #[serde(default = "default_max_ports")]
     pub max_ports: usize,
     #[serde(default)]

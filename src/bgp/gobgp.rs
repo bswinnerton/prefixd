@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use prost::Message;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -9,14 +9,16 @@ use tonic::transport::Channel;
 use super::apipb::{
     gobgp_api_client::GobgpApiClient, AddPathRequest, DeletePathRequest, Family,
     FlowSpecComponent, FlowSpecComponentItem, FlowSpecNlri as ProtoFlowSpecNlri,
+    FlowSpecIpPrefix,
     ListPathRequest, ListPeerRequest, OriginAttribute, Path, TableType, TrafficRateExtended,
     ExtendedCommunitiesAttribute,
 };
 use super::{FlowSpecAnnouncer, PeerStatus, SessionState};
-use crate::domain::{ActionType, FlowSpecAction, FlowSpecNlri, FlowSpecRule};
+use crate::domain::{ActionType, FlowSpecAction, FlowSpecNlri, FlowSpecRule, IpVersion};
 use crate::error::{PrefixdError, Result};
 
 const AFI_IP: i32 = 1;
+const AFI_IP6: i32 = 2;
 const SAFI_FLOWSPEC: i32 = 133;
 
 /// GoBGP gRPC client for FlowSpec announcements
@@ -73,22 +75,29 @@ impl GoBgpAnnouncer {
     }
 
     fn build_flowspec_path(&self, rule: &FlowSpecRule) -> Result<Path> {
-        let nlri = self.build_flowspec_nlri(&rule.nlri)?;
+        let is_v6 = rule.nlri.ip_version() == IpVersion::V6;
+        let afi = if is_v6 { AFI_IP6 } else { AFI_IP };
+
+        let nlri = if is_v6 {
+            self.build_flowspec_nlri_v6(&rule.nlri)?
+        } else {
+            self.build_flowspec_nlri_v4(&rule.nlri)?
+        };
         let pattrs = self.build_path_attributes(&rule.actions)?;
 
         Ok(Path {
             nlri: Some(nlri),
             pattrs,
             family: Some(Family {
-                afi: AFI_IP,
+                afi,
                 safi: SAFI_FLOWSPEC,
             }),
             ..Default::default()
         })
     }
 
-    fn build_flowspec_nlri(&self, nlri: &FlowSpecNlri) -> Result<prost_types::Any> {
-        let (prefix_u32, prefix_len) = self.parse_prefix(&nlri.dst_prefix)?;
+    fn build_flowspec_nlri_v4(&self, nlri: &FlowSpecNlri) -> Result<prost_types::Any> {
+        let (prefix_u32, prefix_len) = self.parse_prefix_v4(&nlri.dst_prefix)?;
 
         // Build FlowSpec NLRI components per RFC 5575 as Any
         let mut rules: Vec<prost_types::Any> = Vec::new();
@@ -154,6 +163,72 @@ impl GoBgpAnnouncer {
         let mut buf = Vec::new();
         flowspec_nlri.encode(&mut buf).map_err(|e| {
             PrefixdError::BgpAnnouncementFailed(format!("failed to encode NLRI: {}", e))
+        })?;
+
+        Ok(prost_types::Any {
+            type_url: "type.googleapis.com/apipb.FlowSpecNLRI".to_string(),
+            value: buf,
+        })
+    }
+
+    fn build_flowspec_nlri_v6(&self, nlri: &FlowSpecNlri) -> Result<prost_types::Any> {
+        let (addr, prefix_len) = self.parse_prefix_v6(&nlri.dst_prefix)?;
+
+        // Build FlowSpec NLRI components for IPv6 per RFC 8956
+        let mut rules: Vec<prost_types::Any> = Vec::new();
+
+        // Type 1: Destination Prefix (IPv6) - use FlowSpecIPPrefix for v6
+        let dst_prefix_component = FlowSpecIpPrefix {
+            r#type: 1, // FLOWSPEC_TYPE_DST_PREFIX
+            prefix_len: prefix_len as u32,
+            prefix: addr.to_string(),
+            offset: 0,
+        };
+        rules.push(self.encode_any("apipb.FlowSpecIPPrefix", &dst_prefix_component)?);
+
+        // Type 3: Next Header (equivalent to IP Protocol for IPv6)
+        if let Some(proto) = nlri.protocol {
+            let proto_component = FlowSpecComponent {
+                r#type: 3, // FLOWSPEC_TYPE_IP_PROTO / NEXT_HEADER
+                items: vec![FlowSpecComponentItem {
+                    op: 0x81, // end-of-list + equals
+                    value: proto as u64,
+                }],
+            };
+            rules.push(self.encode_any("apipb.FlowSpecComponent", &proto_component)?);
+        }
+
+        // Type 5: Destination Port
+        if !nlri.dst_ports.is_empty() {
+            let items: Vec<_> = nlri
+                .dst_ports
+                .iter()
+                .enumerate()
+                .map(|(i, &port)| {
+                    let op = if i == nlri.dst_ports.len() - 1 {
+                        0x81u32
+                    } else {
+                        0x01u32
+                    };
+                    FlowSpecComponentItem {
+                        op,
+                        value: port as u64,
+                    }
+                })
+                .collect();
+
+            let port_component = FlowSpecComponent {
+                r#type: 5,
+                items,
+            };
+            rules.push(self.encode_any("apipb.FlowSpecComponent", &port_component)?);
+        }
+
+        let flowspec_nlri = ProtoFlowSpecNlri { rules };
+
+        let mut buf = Vec::new();
+        flowspec_nlri.encode(&mut buf).map_err(|e| {
+            PrefixdError::BgpAnnouncementFailed(format!("failed to encode IPv6 NLRI: {}", e))
         })?;
 
         Ok(prost_types::Any {
@@ -228,10 +303,10 @@ impl GoBgpAnnouncer {
         })
     }
 
-    fn parse_prefix(&self, prefix: &str) -> Result<(u32, u8)> {
+    fn parse_prefix_v4(&self, prefix: &str) -> Result<(u32, u8)> {
         let parts: Vec<&str> = prefix.split('/').collect();
         let ip = Ipv4Addr::from_str(parts[0]).map_err(|_| {
-            PrefixdError::InvalidPrefix(format!("invalid IP in prefix: {}", prefix))
+            PrefixdError::InvalidPrefix(format!("invalid IPv4 in prefix: {}", prefix))
         })?;
         let len: u8 = parts
             .get(1)
@@ -239,6 +314,19 @@ impl GoBgpAnnouncer {
             .parse()
             .map_err(|_| PrefixdError::InvalidPrefix(format!("invalid prefix length: {}", prefix)))?;
         Ok((u32::from(ip), len))
+    }
+
+    fn parse_prefix_v6(&self, prefix: &str) -> Result<(Ipv6Addr, u8)> {
+        let parts: Vec<&str> = prefix.split('/').collect();
+        let ip = Ipv6Addr::from_str(parts[0]).map_err(|_| {
+            PrefixdError::InvalidPrefix(format!("invalid IPv6 in prefix: {}", prefix))
+        })?;
+        let len: u8 = parts
+            .get(1)
+            .unwrap_or(&"128")
+            .parse()
+            .map_err(|_| PrefixdError::InvalidPrefix(format!("invalid prefix length: {}", prefix)))?;
+        Ok((ip, len))
     }
 }
 
@@ -275,10 +363,13 @@ impl FlowSpecAnnouncer for GoBgpAnnouncer {
     async fn withdraw(&self, rule: &FlowSpecRule) -> Result<()> {
         let mut client = self.get_client().await?;
         let path = self.build_flowspec_path(rule)?;
+        let is_v6 = rule.nlri.ip_version() == IpVersion::V6;
+        let afi = if is_v6 { AFI_IP6 } else { AFI_IP };
 
         tracing::info!(
             nlri_hash = %rule.nlri_hash(),
             dst_prefix = %rule.nlri.dst_prefix,
+            ipv6 = is_v6,
             "withdrawing flowspec rule via GoBGP"
         );
 
@@ -287,7 +378,7 @@ impl FlowSpecAnnouncer for GoBgpAnnouncer {
             path: Some(path),
             vrf_id: String::new(),
             family: Some(Family {
-                afi: AFI_IP,
+                afi,
                 safi: SAFI_FLOWSPEC,
             }),
             uuid: Vec::new(),

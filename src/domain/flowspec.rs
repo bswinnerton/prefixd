@@ -3,6 +3,13 @@ use sha2::{Digest, Sha256};
 
 use super::{ActionParams, ActionType, MatchCriteria};
 
+/// IP version for FlowSpec rules
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IpVersion {
+    V4,
+    V6,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlowSpecNlri {
     pub dst_prefix: String,
@@ -11,6 +18,15 @@ pub struct FlowSpecNlri {
 }
 
 impl FlowSpecNlri {
+    /// Detect IP version from the destination prefix
+    pub fn ip_version(&self) -> IpVersion {
+        if self.dst_prefix.contains(':') {
+            IpVersion::V6
+        } else {
+            IpVersion::V4
+        }
+    }
+
     pub fn compute_hash(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(self.dst_prefix.as_bytes());

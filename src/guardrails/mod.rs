@@ -52,14 +52,25 @@ impl Guardrails {
     }
 
     fn validate_prefix_length(&self, criteria: &MatchCriteria) -> Result<()> {
-        let prefix_len = extract_prefix_length(&criteria.dst_prefix);
+        let is_v6 = criteria.dst_prefix.contains(':');
+        let prefix_len = extract_prefix_length(&criteria.dst_prefix, is_v6);
 
-        if prefix_len < self.config.dst_prefix_minlen || prefix_len > self.config.dst_prefix_maxlen {
+        // Use IPv6-specific limits if configured, otherwise default to /128
+        let (min, max) = if is_v6 {
+            (
+                self.config.dst_prefix_minlen_v6.unwrap_or(128),
+                self.config.dst_prefix_maxlen_v6.unwrap_or(128),
+            )
+        } else {
+            (self.config.dst_prefix_minlen, self.config.dst_prefix_maxlen)
+        };
+
+        if prefix_len < min || prefix_len > max {
             return Err(PrefixdError::GuardrailViolation(
                 GuardrailError::PrefixLengthViolation {
                     len: prefix_len,
-                    min: self.config.dst_prefix_minlen,
-                    max: self.config.dst_prefix_maxlen,
+                    min,
+                    max,
                 },
             ));
         }
@@ -114,12 +125,13 @@ impl Guardrails {
     }
 }
 
-fn extract_prefix_length(prefix: &str) -> u8 {
+fn extract_prefix_length(prefix: &str, is_v6: bool) -> u8 {
+    let default = if is_v6 { 128 } else { 32 };
     prefix
         .split('/')
         .nth(1)
         .and_then(|s| s.parse().ok())
-        .unwrap_or(32)
+        .unwrap_or(default)
 }
 
 #[cfg(test)]
@@ -132,6 +144,8 @@ mod tests {
                 require_ttl: true,
                 dst_prefix_minlen: 32,
                 dst_prefix_maxlen: 32,
+                dst_prefix_minlen_v6: None,
+                dst_prefix_maxlen_v6: None,
                 max_ports: 8,
                 allow_src_prefix_match: false,
                 allow_tcp_flags_match: false,
@@ -150,9 +164,12 @@ mod tests {
 
     #[test]
     fn test_prefix_length_extraction() {
-        assert_eq!(extract_prefix_length("192.168.1.1/32"), 32);
-        assert_eq!(extract_prefix_length("192.168.1.0/24"), 24);
-        assert_eq!(extract_prefix_length("192.168.1.1"), 32);
+        assert_eq!(extract_prefix_length("192.168.1.1/32", false), 32);
+        assert_eq!(extract_prefix_length("192.168.1.0/24", false), 24);
+        assert_eq!(extract_prefix_length("192.168.1.1", false), 32);
+        assert_eq!(extract_prefix_length("2001:db8::1/128", true), 128);
+        assert_eq!(extract_prefix_length("2001:db8::/64", true), 64);
+        assert_eq!(extract_prefix_length("2001:db8::1", true), 128);
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use anyhow::Result;
-use ipnet::Ipv4Net;
+use ipnet::{Ipv4Net, Ipv6Net};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 use std::str::FromStr;
 
@@ -10,7 +10,9 @@ use std::str::FromStr;
 pub struct Inventory {
     pub customers: Vec<Customer>,
     #[serde(skip)]
-    ip_index: HashMap<Ipv4Addr, (String, Option<String>)>,
+    ip_index_v4: HashMap<Ipv4Addr, (String, Option<String>)>,
+    #[serde(skip)]
+    ip_index_v6: HashMap<Ipv6Addr, (String, Option<String>)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,7 +75,8 @@ impl Inventory {
     pub fn new(customers: Vec<Customer>) -> Self {
         let mut inv = Self {
             customers,
-            ip_index: HashMap::new(),
+            ip_index_v4: HashMap::new(),
+            ip_index_v6: HashMap::new(),
         };
         inv.build_index();
         inv
@@ -87,12 +90,18 @@ impl Inventory {
     }
 
     fn build_index(&mut self) {
-        self.ip_index.clear();
+        self.ip_index_v4.clear();
+        self.ip_index_v6.clear();
         for customer in &self.customers {
             for service in &customer.services {
                 for asset in &service.assets {
                     if let Ok(ip) = Ipv4Addr::from_str(&asset.ip) {
-                        self.ip_index.insert(
+                        self.ip_index_v4.insert(
+                            ip,
+                            (customer.customer_id.clone(), Some(service.service_id.clone())),
+                        );
+                    } else if let Ok(ip) = Ipv6Addr::from_str(&asset.ip) {
+                        self.ip_index_v6.insert(
                             ip,
                             (customer.customer_id.clone(), Some(service.service_id.clone())),
                         );
@@ -103,10 +112,18 @@ impl Inventory {
     }
 
     pub fn lookup_ip(&self, ip_str: &str) -> Option<IpContext> {
-        let ip = Ipv4Addr::from_str(ip_str).ok()?;
+        // Try to parse as either IPv4 or IPv6
+        let ip: IpAddr = ip_str.parse().ok()?;
 
+        match ip {
+            IpAddr::V4(ipv4) => self.lookup_ipv4(ipv4),
+            IpAddr::V6(ipv6) => self.lookup_ipv6(ipv6),
+        }
+    }
+
+    fn lookup_ipv4(&self, ip: Ipv4Addr) -> Option<IpContext> {
         // Check direct asset match first
-        if let Some((customer_id, service_id)) = self.ip_index.get(&ip) {
+        if let Some((customer_id, service_id)) = self.ip_index_v4.get(&ip) {
             return self.build_context(customer_id, service_id.as_deref());
         }
 
@@ -114,6 +131,26 @@ impl Inventory {
         for customer in &self.customers {
             for prefix_str in &customer.prefixes {
                 if let Ok(prefix) = Ipv4Net::from_str(prefix_str) {
+                    if prefix.contains(&ip) {
+                        return self.build_context(&customer.customer_id, None);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn lookup_ipv6(&self, ip: Ipv6Addr) -> Option<IpContext> {
+        // Check direct asset match first
+        if let Some((customer_id, service_id)) = self.ip_index_v6.get(&ip) {
+            return self.build_context(customer_id, service_id.as_deref());
+        }
+
+        // Fall back to prefix match
+        for customer in &self.customers {
+            for prefix_str in &customer.prefixes {
+                if let Ok(prefix) = Ipv6Net::from_str(prefix_str) {
                     if prefix.contains(&ip) {
                         return self.build_context(&customer.customer_id, None);
                     }
