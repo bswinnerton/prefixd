@@ -1,0 +1,82 @@
+"use client"
+
+import { useEffect, useState } from "react"
+import { Menu, Search } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+
+const pops = ["IAD1", "IAD2", "SFO1", "LAX1", "ORD1", "AMS1", "FRA1", "NRT1"]
+
+interface TopBarProps {
+  onMenuClick?: () => void
+  onSearchClick?: () => void
+}
+
+export function TopBar({ onMenuClick, onSearchClick }: TopBarProps) {
+  const [time, setTime] = useState<string>("")
+
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date()
+      setTime(
+        now.toLocaleTimeString("en-US", {
+          timeZone: "UTC",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }) + " UTC",
+      )
+    }
+    updateTime()
+    const interval = setInterval(updateTime, 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  return (
+    <header className="sticky top-0 z-30 flex h-12 items-center justify-between border-b border-border bg-background/95 px-3 sm:px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onMenuClick}
+          className="lg:hidden p-2 -ml-2 text-muted-foreground hover:text-foreground min-h-[44px] min-w-[44px] flex items-center justify-center"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+
+        <div className="flex lg:hidden items-center gap-2">
+          <div className="flex h-6 w-6 items-center justify-center bg-primary">
+            <span className="font-mono text-[10px] font-bold text-primary-foreground">P</span>
+          </div>
+        </div>
+
+        <Select defaultValue="IAD1">
+          <SelectTrigger className="w-20 h-7 bg-secondary border-border text-xs font-mono">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {pops.map((pop) => (
+              <SelectItem key={pop} value={pop} className="text-xs font-mono">
+                {pop}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <button
+          onClick={onSearchClick}
+          className="hidden sm:flex items-center gap-2 h-7 px-2 border border-border bg-secondary/50 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+        >
+          <Search className="h-3 w-3" />
+          <span className="hidden md:inline font-mono">Search</span>
+          <kbd className="kbd">⌘K</kbd>
+        </button>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <span className="h-1.5 w-1.5 bg-primary" />
+          <span className="hidden sm:inline text-xs font-mono text-primary">CONNECTED</span>
+        </div>
+        <div className="text-[10px] font-mono text-muted-foreground tabular-nums">{time}</div>
+      </div>
+    </header>
+  )
+}
