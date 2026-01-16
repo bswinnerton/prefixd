@@ -65,6 +65,11 @@ prost-build = "0.14"
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "benchmarks"
+harness = false
 
 [[bin]]
 name = "prefixd"
