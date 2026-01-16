@@ -132,7 +132,35 @@ Completed:
 
 Proto files are in `proto/` and compiled via `build.rs`. Generated code is in `target/debug/build/prefixd-*/out/apipb.rs`.
 
+## CLI (prefixdctl)
+
+Separate binary for controlling the daemon via API:
+
+```bash
+# Status and health
+prefixdctl status
+prefixdctl peers
+
+# Mitigations
+prefixdctl mitigations list
+prefixdctl mitigations list --status active --customer cust_123
+prefixdctl mitigations get <id>
+prefixdctl mitigations withdraw <id> --reason "false positive" --operator jsmith
+
+# Safelist
+prefixdctl safelist list
+prefixdctl safelist add 10.0.0.1/32 --reason "router loopback" --operator jsmith
+prefixdctl safelist remove 10.0.0.1/32
+
+# Options
+prefixdctl -a http://localhost:8080  # API endpoint
+prefixdctl -t <token>                 # Bearer token
+prefixdctl -f json                    # JSON output
+```
+
 ## Environment Variables
 
+- `PREFIXD_API` - API endpoint for prefixdctl (default: http://127.0.0.1:8080)
 - `PREFIXD_API_TOKEN` - Bearer token for API auth (when mode=bearer)
 - `RUST_LOG` - Log level override (e.g., `RUST_LOG=debug`)
+- `USER` - Default operator ID for CLI commands
