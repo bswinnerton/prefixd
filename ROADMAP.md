@@ -136,7 +136,43 @@
   - [x] `GET /v1/events` endpoint
   - [x] `GET /v1/audit` endpoint
 
-## v1.5 - Multi-Vendor Support
+## v1.5 - Multi-Signal Correlation
+
+**Goal:** Combine weak signals from multiple sources into high-confidence mitigation decisions.
+
+### Signal Source Adapters
+- [ ] FastNetMon adapter (current HTTP webhook, enhanced)
+  - [ ] Configurable confidence mapping
+  - [ ] Threshold-based confidence derivation
+- [ ] Prometheus/VictoriaMetrics adapter
+  - [ ] Pull-based metric queries
+  - [ ] Alertmanager webhook receiver
+  - [ ] Host metrics → synthetic events (SYN backlog, conntrack exhaustion)
+- [ ] Router telemetry adapter
+  - [ ] Junos JTI/streaming telemetry
+  - [ ] Control-plane stress signals (CPU, memory, flow table pressure)
+  - [ ] gNMI support for multi-vendor
+
+### Correlation Engine
+- [ ] Time-windowed event correlation
+  - [ ] Group events for same victim within N seconds
+  - [ ] Aggregate confidence across sources
+- [ ] Source weighting configuration
+  - [ ] Per-source confidence multipliers
+  - [ ] Source reliability scoring
+- [ ] Corroboration requirements
+  - [ ] "Require 2+ sources" mode for low-confidence signals
+  - [ ] Escalation requires corroborating signal
+
+### Enhanced Confidence Model
+- [ ] Derived confidence calculation
+  - [ ] BPS/PPS ratio to baseline
+  - [ ] Port entropy analysis
+  - [ ] Traffic pattern scoring
+- [ ] Confidence decay over time
+- [ ] Per-playbook confidence thresholds
+
+## v2.0 - Multi-Vendor Support
 
 - [ ] Vendor capability profiles
   - [ ] Define per-vendor match/action support matrix
@@ -155,16 +191,19 @@
   - [ ] Alternative: XDP/eBPF enforcement
 - [ ] Vendor-specific guardrails (ASIC limits, action support)
 
-## v2.0+ - Advanced Features
+## v2.5+ - Advanced Features
 
 - [ ] Redirect/diversion actions (redirect-to-IP, redirect-to-VRF)
-- [ ] Scrubber integration
-- [ ] Packet length matching
-- [ ] TCP flags matching
-- [ ] Fragment matching
-- [ ] NetBox integration for inventory
-- [ ] Advanced correlation with ML-assisted confidence
-- [ ] Per-peer vendor profiles in config
+- [ ] Scrubber integration with diversion orchestration
+- [ ] Extended match criteria
+  - [ ] Packet length matching
+  - [ ] TCP flags matching
+  - [ ] Fragment matching
+  - [ ] DSCP/traffic class
+- [ ] NetBox integration for inventory sync
+- [ ] Customer self-service portal
+  - [ ] Read-only mitigation visibility
+  - [ ] Manual mitigation requests (with approval workflow)
 
 ---
 
@@ -213,12 +252,51 @@ Multiple prefixd instances share a single PostgreSQL database. Each instance:
 
 ---
 
+---
+
+## Signal-Driven Architecture
+
+prefixd implements a **signal-driven** architecture where detection is decoupled from enforcement:
+
+```
+[ Signal Sources ]          [ prefixd ]                    [ Enforcement ]
+                                 |
+  FastNetMon ─────────┐          v
+  Prometheus/Alerts ──┼──► Signal Ingest ──► Policy Engine ──► GoBGP ──► Routers
+  Router Telemetry ───┤          │                │
+  Host Metrics ───────┘          v                v
+                          Guardrails        FlowSpec NLRI
+                               │
+                               v
+                         Audit + State
+```
+
+**Key Principles:**
+- Detection systems signal intent, not enforce mitigation
+- No detector ever speaks BGP directly
+- Multiple weak signals can combine into high-confidence actions
+- Mitigation scope derived from inventory, not detector guesses
+- prefixd is authoritative for rule lifecycle (create, escalate, withdraw)
+
+**Supported Signal Sources (v1.0):**
+- HTTP POST webhook (FastNetMon, custom scripts)
+- Any system that can emit the `AttackEvent` schema
+
+**Future Signal Sources (v1.5+):**
+- Prometheus/Alertmanager
+- Router streaming telemetry (JTI, gNMI)
+- Host kernel metrics (node_exporter)
+- Load balancer metrics (HAProxy, Envoy)
+
+---
+
 ## Non-Goals
 
 These are explicitly out of scope:
 
-- Inline packet scrubbing
-- L7/WAF analysis
-- FlowSpec "match everything" rules (blocked by guardrails)
-- Tbps-scale scrubbing without upstream support
-- Competing with commercial DDoS platforms (Arbor, Corero)
+- **Inline packet scrubbing** - prefixd is control-plane only
+- **L7/WAF analysis** - focus is L3/L4 volumetric attacks
+- **FlowSpec "match everything" rules** - blocked by guardrails
+- **Tbps-scale scrubbing** - requires upstream/scrubber integration
+- **Competing with commercial platforms** - prefixd is infrastructure glue, not a product
+- **Detection algorithm development** - use existing detectors, prefixd handles policy
