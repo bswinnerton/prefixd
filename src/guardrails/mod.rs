@@ -162,18 +162,107 @@ mod tests {
         )
     }
 
+    fn relaxed_config() -> (GuardrailsConfig, QuotasConfig) {
+        (
+            GuardrailsConfig {
+                require_ttl: false,
+                dst_prefix_minlen: 24,
+                dst_prefix_maxlen: 32,
+                dst_prefix_minlen_v6: Some(64),
+                dst_prefix_maxlen_v6: Some(128),
+                max_ports: 16,
+                allow_src_prefix_match: true,
+                allow_tcp_flags_match: true,
+                allow_fragment_match: true,
+                allow_packet_length_match: true,
+            },
+            QuotasConfig {
+                max_active_per_customer: 100,
+                max_active_per_pop: 1000,
+                max_active_global: 5000,
+                max_new_per_minute: 100,
+                max_announcements_per_peer: 500,
+            },
+        )
+    }
+
+    // ==========================================================================
+    // Prefix Length Extraction Tests
+    // ==========================================================================
+
     #[test]
-    fn test_prefix_length_extraction() {
+    fn test_prefix_length_extraction_ipv4() {
         assert_eq!(extract_prefix_length("192.168.1.1/32", false), 32);
         assert_eq!(extract_prefix_length("192.168.1.0/24", false), 24);
-        assert_eq!(extract_prefix_length("192.168.1.1", false), 32);
-        assert_eq!(extract_prefix_length("2001:db8::1/128", true), 128);
-        assert_eq!(extract_prefix_length("2001:db8::/64", true), 64);
-        assert_eq!(extract_prefix_length("2001:db8::1", true), 128);
+        assert_eq!(extract_prefix_length("10.0.0.0/8", false), 8);
+        assert_eq!(extract_prefix_length("0.0.0.0/0", false), 0);
     }
 
     #[test]
-    fn test_validate_prefix_length() {
+    fn test_prefix_length_extraction_ipv4_no_cidr() {
+        // Should default to /32 for IPv4
+        assert_eq!(extract_prefix_length("192.168.1.1", false), 32);
+        assert_eq!(extract_prefix_length("10.0.0.1", false), 32);
+    }
+
+    #[test]
+    fn test_prefix_length_extraction_ipv6() {
+        assert_eq!(extract_prefix_length("2001:db8::1/128", true), 128);
+        assert_eq!(extract_prefix_length("2001:db8::/64", true), 64);
+        assert_eq!(extract_prefix_length("2001:db8::/48", true), 48);
+        assert_eq!(extract_prefix_length("::/0", true), 0);
+    }
+
+    #[test]
+    fn test_prefix_length_extraction_ipv6_no_cidr() {
+        // Should default to /128 for IPv6
+        assert_eq!(extract_prefix_length("2001:db8::1", true), 128);
+        assert_eq!(extract_prefix_length("::1", true), 128);
+    }
+
+    // ==========================================================================
+    // TTL Validation Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_validate_ttl_required_with_zero() {
+        let (config, quotas) = test_config();
+        let guardrails = Guardrails::new(config, quotas);
+
+        let result = guardrails.validate_ttl(0);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PrefixdError::GuardrailViolation(GuardrailError::TtlRequired) => {}
+            _ => panic!("Expected TtlRequired error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_ttl_required_with_value() {
+        let (config, quotas) = test_config();
+        let guardrails = Guardrails::new(config, quotas);
+
+        assert!(guardrails.validate_ttl(60).is_ok());
+        assert!(guardrails.validate_ttl(3600).is_ok());
+        assert!(guardrails.validate_ttl(1).is_ok());
+    }
+
+    #[test]
+    fn test_validate_ttl_not_required() {
+        let (config, quotas) = relaxed_config();
+        let guardrails = Guardrails::new(config, quotas);
+
+        // Zero TTL should be allowed when not required
+        assert!(guardrails.validate_ttl(0).is_ok());
+        assert!(guardrails.validate_ttl(60).is_ok());
+    }
+
+    // ==========================================================================
+    // Prefix Length Validation Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_validate_prefix_length_ipv4_valid() {
         let (config, quotas) = test_config();
         let guardrails = Guardrails::new(config, quotas);
 
@@ -183,12 +272,208 @@ mod tests {
             dst_ports: vec![53],
         };
         assert!(guardrails.validate_prefix_length(&valid).is_ok());
+    }
+
+    #[test]
+    fn test_validate_prefix_length_ipv4_too_short() {
+        let (config, quotas) = test_config();
+        let guardrails = Guardrails::new(config, quotas);
 
         let invalid = MatchCriteria {
             dst_prefix: "203.0.113.0/24".to_string(),
             protocol: Some(17),
             dst_ports: vec![53],
         };
+        let result = guardrails.validate_prefix_length(&invalid);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PrefixdError::GuardrailViolation(GuardrailError::PrefixLengthViolation { len, min, max }) => {
+                assert_eq!(len, 24);
+                assert_eq!(min, 32);
+                assert_eq!(max, 32);
+            }
+            _ => panic!("Expected PrefixLengthViolation error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_prefix_length_ipv4_relaxed() {
+        let (config, quotas) = relaxed_config();
+        let guardrails = Guardrails::new(config, quotas);
+
+        // /24 should be allowed with relaxed config (min=24, max=32)
+        let valid_24 = MatchCriteria {
+            dst_prefix: "203.0.113.0/24".to_string(),
+            protocol: Some(17),
+            dst_ports: vec![53],
+        };
+        assert!(guardrails.validate_prefix_length(&valid_24).is_ok());
+
+        // /32 should still be valid
+        let valid_32 = MatchCriteria {
+            dst_prefix: "203.0.113.10/32".to_string(),
+            protocol: Some(17),
+            dst_ports: vec![53],
+        };
+        assert!(guardrails.validate_prefix_length(&valid_32).is_ok());
+
+        // /16 should fail (below min)
+        let invalid = MatchCriteria {
+            dst_prefix: "203.0.0.0/16".to_string(),
+            protocol: Some(17),
+            dst_ports: vec![53],
+        };
         assert!(guardrails.validate_prefix_length(&invalid).is_err());
+    }
+
+    #[test]
+    fn test_validate_prefix_length_ipv6_default() {
+        let (config, quotas) = test_config();
+        let guardrails = Guardrails::new(config, quotas);
+
+        // Default IPv6 is /128 only
+        let valid = MatchCriteria {
+            dst_prefix: "2001:db8::1/128".to_string(),
+            protocol: Some(17),
+            dst_ports: vec![53],
+        };
+        assert!(guardrails.validate_prefix_length(&valid).is_ok());
+
+        let invalid = MatchCriteria {
+            dst_prefix: "2001:db8::/64".to_string(),
+            protocol: Some(17),
+            dst_ports: vec![53],
+        };
+        assert!(guardrails.validate_prefix_length(&invalid).is_err());
+    }
+
+    #[test]
+    fn test_validate_prefix_length_ipv6_relaxed() {
+        let (config, quotas) = relaxed_config();
+        let guardrails = Guardrails::new(config, quotas);
+
+        // /64 should be allowed with relaxed config
+        let valid_64 = MatchCriteria {
+            dst_prefix: "2001:db8::/64".to_string(),
+            protocol: Some(17),
+            dst_ports: vec![53],
+        };
+        assert!(guardrails.validate_prefix_length(&valid_64).is_ok());
+
+        // /128 should still be valid
+        let valid_128 = MatchCriteria {
+            dst_prefix: "2001:db8::1/128".to_string(),
+            protocol: Some(17),
+            dst_ports: vec![53],
+        };
+        assert!(guardrails.validate_prefix_length(&valid_128).is_ok());
+
+        // /48 should fail (below min of 64)
+        let invalid = MatchCriteria {
+            dst_prefix: "2001:db8::/48".to_string(),
+            protocol: Some(17),
+            dst_ports: vec![53],
+        };
+        assert!(guardrails.validate_prefix_length(&invalid).is_err());
+    }
+
+    // ==========================================================================
+    // Port Count Validation Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_validate_port_count_within_limit() {
+        let (config, quotas) = test_config();
+        let guardrails = Guardrails::new(config, quotas);
+
+        let valid = MatchCriteria {
+            dst_prefix: "203.0.113.10/32".to_string(),
+            protocol: Some(17),
+            dst_ports: vec![53, 80, 443, 8080],
+        };
+        assert!(guardrails.validate_port_count(&valid).is_ok());
+    }
+
+    #[test]
+    fn test_validate_port_count_at_limit() {
+        let (config, quotas) = test_config();
+        let guardrails = Guardrails::new(config, quotas);
+
+        let valid = MatchCriteria {
+            dst_prefix: "203.0.113.10/32".to_string(),
+            protocol: Some(17),
+            dst_ports: vec![1, 2, 3, 4, 5, 6, 7, 8], // exactly 8
+        };
+        assert!(guardrails.validate_port_count(&valid).is_ok());
+    }
+
+    #[test]
+    fn test_validate_port_count_exceeds_limit() {
+        let (config, quotas) = test_config();
+        let guardrails = Guardrails::new(config, quotas);
+
+        let invalid = MatchCriteria {
+            dst_prefix: "203.0.113.10/32".to_string(),
+            protocol: Some(17),
+            dst_ports: vec![1, 2, 3, 4, 5, 6, 7, 8, 9], // 9 ports
+        };
+        let result = guardrails.validate_port_count(&invalid);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PrefixdError::GuardrailViolation(GuardrailError::TooManyPorts { count, max }) => {
+                assert_eq!(count, 9);
+                assert_eq!(max, 8);
+            }
+            _ => panic!("Expected TooManyPorts error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_port_count_empty() {
+        let (config, quotas) = test_config();
+        let guardrails = Guardrails::new(config, quotas);
+
+        let valid = MatchCriteria {
+            dst_prefix: "203.0.113.10/32".to_string(),
+            protocol: Some(17),
+            dst_ports: vec![],
+        };
+        assert!(guardrails.validate_port_count(&valid).is_ok());
+    }
+
+    #[test]
+    fn test_validate_port_count_relaxed_limit() {
+        let (config, quotas) = relaxed_config();
+        let guardrails = Guardrails::new(config, quotas);
+
+        let valid = MatchCriteria {
+            dst_prefix: "203.0.113.10/32".to_string(),
+            protocol: Some(17),
+            dst_ports: (1..=16).collect(), // 16 ports
+        };
+        assert!(guardrails.validate_port_count(&valid).is_ok());
+
+        let invalid = MatchCriteria {
+            dst_prefix: "203.0.113.10/32".to_string(),
+            protocol: Some(17),
+            dst_ports: (1..=17).collect(), // 17 ports
+        };
+        assert!(guardrails.validate_port_count(&invalid).is_err());
+    }
+
+    // ==========================================================================
+    // IPv6 Detection Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_ipv6_detection() {
+        // These should be detected as IPv6
+        assert!("2001:db8::1/128".contains(':'));
+        assert!("::1".contains(':'));
+        assert!("fe80::1%eth0".contains(':'));
+
+        // These should not be detected as IPv6
+        assert!(!"192.168.1.1/32".contains(':'));
+        assert!(!"10.0.0.1".contains(':'));
     }
 }
