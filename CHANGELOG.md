@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Security & Authentication**
+  - mTLS authentication with client certificate verification (rustls 0.23)
+  - Security headers: X-Content-Type-Options, X-Frame-Options, Cache-Control
+  - 5 auth integration tests (bearer flows, security headers validation)
+
+- **Documentation**
+  - `docs/configuration.md` - Complete YAML reference for all config options
+  - `docs/deployment.md` - Docker, bare metal, GoBGP, router config, mTLS setup
+  - `docs/troubleshooting.md` - Operational runbook with common issues
+  - `docs/benchmarks.md` - Performance analysis with optimization recommendations
+
+- **Benchmark Suite** (criterion)
+  - Inventory lookup benchmarks (hit/miss/is_owned)
+  - Database operation benchmarks (insert/get/list/count)
+  - Serialization benchmarks (JSON serialize/deserialize)
+  - Scaling benchmarks (DB list, inventory lookup by size)
+  - Results: ~6K events/sec throughput, sub-ms API queries
+
+- **Frontend Polish**
+  - Live activity feed (replaces mock data with real API)
+  - Config page with system status, BGP session, quotas, safelist viewer
+  - Loading states with spinners, error states with icons
+  - Empty state handling throughout dashboard
+
 - Comprehensive unit test suite (84 tests total)
   - Guardrails tests: prefix validation, TTL, port count, IPv6 detection (18 tests)
   - BGP/GoBGP tests: NLRI construction, path attributes, RFC constants (16 tests)
@@ -31,8 +55,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Dashboard service in docker-compose.yml (port 3000)
 - Bun package manager for frontend (faster installs)
 
+### Changed
+
+- **2026 Stable Dependencies**
+  - axum 0.7 → 0.8, tower 0.4 → 0.5, tower-http 0.5 → 0.6
+  - tonic 0.11 → 0.14, prost 0.12 → 0.14
+  - sqlx 0.7 → 0.8, reqwest 0.11 → 0.12
+  - utoipa 4 → 5, prometheus 0.13 → 0.14, thiserror 1 → 2
+
 ### Fixed
 
+- Security vulnerabilities: sqlx 0.7.4 (RUSTSEC-2024-0363), protobuf 2.28.0
 - `list_mitigations_all_pops_sqlite` query using wrong column names
 
 ## [0.5.0] - 2026-01-16
