@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-01-16
+
+### Added
+
+- Escalation logic for police → discard transitions
+  - Persistence tracking (configurable min duration)
+  - Confidence threshold checking
+  - Policy profile support (strict blocks escalation)
+  - Max escalated duration guard
+- Event correlation engine
+  - Exact scope matching for TTL extension
+  - Port relationship detection (superset/subset/overlap/disjoint)
+  - Smart action decisions (replace, keep, create parallel)
+- Audit log writer (JSON Lines format)
+  - Event ingestion logging
+  - Mitigation lifecycle logging
+  - Safelist change logging
+  - Guardrail rejection logging
+- Alerting webhooks
+  - Slack integration with colored attachments
+  - PagerDuty Events API v2 integration
+  - Generic webhook support with custom headers
+  - Alert severity levels (info, warning, critical)
+- AGENTS.md for AI agent context
+
+### Changed
+
+- Policy module now exports escalation and correlation submodules
+- Observability module includes audit and alerting
+
 ## [0.2.0] - 2026-01-16
 
 ### Added

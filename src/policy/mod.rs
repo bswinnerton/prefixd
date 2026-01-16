@@ -1,3 +1,9 @@
+mod correlation;
+mod escalation;
+
+pub use correlation::*;
+pub use escalation::*;
+
 use crate::config::{AllowedPorts, IpContext, Playbook, PlaybookAction, PlaybookMatch, PlaybookStep, Playbooks};
 use crate::domain::{
     ActionParams, ActionType, AttackEvent, AttackVector, MatchCriteria, MitigationIntent,

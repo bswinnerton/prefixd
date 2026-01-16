@@ -29,17 +29,17 @@
   - [x] `prefixd_bgp_session_up`
   - [x] `prefixd_guardrail_rejections_total`
 
-## v0.3 - Escalation & Correlation
+## v0.3 - Escalation & Correlation (Done)
 
-- [ ] Escalation logic (police → discard)
-  - [ ] Persistence tracking
-  - [ ] Confidence thresholds
-  - [ ] Policy profile support (strict/normal/relaxed)
-- [ ] Improved event correlation
-  - [ ] Port superset/subset handling
-  - [ ] Parallel mitigation for disjoint ports
-- [ ] Audit log file writer (JSON Lines)
-- [ ] Alerting webhooks (PagerDuty, Slack)
+- [x] Escalation logic (police → discard)
+  - [x] Persistence tracking
+  - [x] Confidence thresholds
+  - [x] Policy profile support (strict/normal/relaxed)
+- [x] Improved event correlation
+  - [x] Port superset/subset handling
+  - [x] Parallel mitigation for disjoint ports
+- [x] Audit log file writer (JSON Lines)
+- [x] Alerting webhooks (PagerDuty, Slack)
 
 ## v0.4 - Operational Tooling
 

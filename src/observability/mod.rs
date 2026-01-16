@@ -1,5 +1,9 @@
+mod alerting;
+mod audit;
 mod metrics;
 
+pub use alerting::*;
+pub use audit::*;
 pub use metrics::*;
 
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
