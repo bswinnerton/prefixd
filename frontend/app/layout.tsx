@@ -1,16 +1,22 @@
 import type React from "react"
 import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
-import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
+import { SWRProvider } from "@/components/swr-provider"
+import { Analytics } from "@/components/analytics"
 
-const _geist = Geist({ subsets: ["latin"] })
-const _geistMono = Geist_Mono({ subsets: ["latin"] })
+const geist = Geist({ 
+  subsets: ["latin"],
+  variable: "--font-geist-sans",
+})
+const geistMono = Geist_Mono({ 
+  subsets: ["latin"],
+  variable: "--font-geist-mono",
+})
 
 export const metadata: Metadata = {
-  title: "prefixd Operator Dashboard",
-  description: "DDoS Mitigation Control Plane",
-  generator: "v0.app",
+  title: "prefixd Dashboard",
+  description: "BGP FlowSpec DDoS Mitigation Control Plane",
   icons: {
     icon: [
       {
@@ -43,9 +49,11 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className="dark bg-background">
-      <body className={`font-sans antialiased`}>
-        {children}
+    <html lang="en" className={`dark bg-background ${geist.variable} ${geistMono.variable}`}>
+      <body className="font-sans antialiased">
+        <SWRProvider>
+          {children}
+        </SWRProvider>
         <Analytics />
       </body>
     </html>

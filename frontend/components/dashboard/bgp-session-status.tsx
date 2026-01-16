@@ -1,56 +1,52 @@
+"use client"
+
+import { useHealth, usePops } from "@/hooks/use-api"
 import { cn } from "@/lib/utils"
 
-interface BgpPeer {
-  name: string
-  status: "established" | "idle" | "connect" | "active"
-  uptime?: string
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const mins = Math.floor((seconds % 3600) / 60)
+  if (days > 0) return `${days}d ${hours}h ${mins}m`
+  if (hours > 0) return `${hours}h ${mins}m`
+  return `${mins}m`
 }
 
-const peers: BgpPeer[] = [
-  { name: "jnpr-edge-1", status: "established", uptime: "14d 6h 32m" },
-  { name: "jnpr-edge-2", status: "established", uptime: "14d 6h 30m" },
-]
-
 export function BgpSessionStatus() {
+  const { data: health, error } = useHealth()
+  const { data: pops } = usePops()
+
+  const isUp = health?.bgp_session_up ?? false
+
   return (
     <div className="border border-border bg-card p-4">
-      <h3 className="text-xs font-mono uppercase tracking-wide text-muted-foreground mb-3">BGP Sessions</h3>
+      <h3 className="text-xs font-mono uppercase tracking-wide text-muted-foreground mb-3">System Status</h3>
       <div className="flex flex-wrap gap-2">
-        {peers.map((peer) => (
-          <div
-            key={peer.name}
-            className="group relative flex items-center gap-2 bg-secondary px-3 py-2 border border-border"
-          >
-            <span
-              className={cn(
-                "h-1.5 w-1.5",
-                peer.status === "established"
-                  ? "bg-primary"
-                  : peer.status === "idle"
-                    ? "bg-muted-foreground"
-                    : "bg-warning",
-              )}
-            />
-            <span className="font-mono text-xs text-foreground">{peer.name}</span>
-            <span
-              className={cn(
-                "text-[10px] font-mono uppercase",
-                peer.status === "established"
-                  ? "text-primary"
-                  : peer.status === "idle"
-                    ? "text-muted-foreground"
-                    : "text-warning",
-              )}
-            >
-              {peer.status}
+        <div className="group relative flex items-center gap-2 bg-secondary px-3 py-2 border border-border">
+          <span className={cn("h-1.5 w-1.5", isUp ? "bg-primary" : "bg-destructive")} />
+          <span className="font-mono text-xs text-foreground">BGP</span>
+          <span className={cn("text-[10px] font-mono uppercase", isUp ? "text-primary" : "text-destructive")}>
+            {isUp ? "UP" : error ? "ERROR" : "DOWN"}
+          </span>
+        </div>
+
+        {health && (
+          <div className="group relative flex items-center gap-2 bg-secondary px-3 py-2 border border-border">
+            <span className="h-1.5 w-1.5 bg-primary" />
+            <span className="font-mono text-xs text-foreground">{health.pop}</span>
+            <span className="text-[10px] font-mono text-muted-foreground">
+              {formatUptime(health.uptime_seconds)}
             </span>
-            {peer.uptime && (
-              <div className="absolute -top-8 left-1/2 -translate-x-1/2 hidden group-hover:block bg-popover text-popover-foreground text-[10px] font-mono px-2 py-1 border border-border shadow-lg whitespace-nowrap z-10">
-                uptime: {peer.uptime}
-              </div>
-            )}
           </div>
-        ))}
+        )}
+
+        {pops && pops.length > 1 && (
+          <div className="flex items-center gap-2 bg-secondary px-3 py-2 border border-border">
+            <span className="font-mono text-xs text-muted-foreground">
+              {pops.length} POPs
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )

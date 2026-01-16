@@ -171,10 +171,9 @@ export function MitigationDetailPanel({ mitigation, onClose }: MitigationDetailP
 
         {/* Action Buttons */}
         <div className="pt-4">
-          <Button variant="destructive" className="w-full" disabled>
+          <Button variant="destructive" className="w-full" disabled={mitigation.status !== "active" && mitigation.status !== "escalated"}>
             Withdraw Mitigation
           </Button>
-          <p className="text-xs text-muted-foreground text-center mt-2">Disabled in v0.2</p>
         </div>
       </div>
     </div>
