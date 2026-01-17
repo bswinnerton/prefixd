@@ -151,6 +151,15 @@ async fn test_health_endpoint() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Verify gobgp is now a structured object
+    assert!(json["gobgp"].is_object(), "gobgp should be an object");
+    assert!(json["gobgp"]["status"].is_string(), "gobgp.status should be a string");
+    // database remains a string for backward compat
+    assert!(json["database"].is_string(), "database should be a string");
 }
 
 #[tokio::test]

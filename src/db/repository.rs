@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::RepositoryTrait;
 use crate::domain::{AttackEvent, Mitigation, MitigationRow, MitigationStatus};
 use crate::error::Result;
-use crate::observability::{ActorType, AuditEntry};
+use crate::observability::{metrics::ROW_PARSE_ERRORS, ActorType, AuditEntry};
 
 #[derive(Debug, FromRow)]
 struct AuditRow {
@@ -276,7 +276,17 @@ impl RepositoryTrait for Repository {
         .bind(victim_ip)
         .fetch_all(&self.pool)
         .await?;
-        rows.into_iter().map(Mitigation::from_row).collect()
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| match Mitigation::from_row(row) {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    ROW_PARSE_ERRORS.with_label_values(&["mitigations"]).inc();
+                    tracing::error!(error = %e, "skipping corrupted mitigation row");
+                    None
+                }
+            })
+            .collect())
     }
 
     async fn list_mitigations(
@@ -310,7 +320,17 @@ impl RepositoryTrait for Repository {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter().map(Mitigation::from_row).collect()
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| match Mitigation::from_row(row) {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    ROW_PARSE_ERRORS.with_label_values(&["mitigations"]).inc();
+                    tracing::error!(error = %e, "skipping corrupted mitigation row");
+                    None
+                }
+            })
+            .collect())
     }
 
     async fn count_active_by_customer(&self, customer_id: &str) -> Result<u32> {
@@ -357,7 +377,17 @@ impl RepositoryTrait for Repository {
         .bind(now)
         .fetch_all(&self.pool)
         .await?;
-        rows.into_iter().map(Mitigation::from_row).collect()
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| match Mitigation::from_row(row) {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    ROW_PARSE_ERRORS.with_label_values(&["mitigations"]).inc();
+                    tracing::error!(error = %e, "skipping corrupted mitigation row");
+                    None
+                }
+            })
+            .collect())
     }
 
     async fn insert_safelist(&self, prefix: &str, added_by: &str, reason: Option<&str>) -> Result<()> {
@@ -511,7 +541,17 @@ impl RepositoryTrait for Repository {
         .fetch_all(&self.pool)
         .await?;
 
-        rows.into_iter().map(Mitigation::from_row).collect()
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| match Mitigation::from_row(row) {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    ROW_PARSE_ERRORS.with_label_values(&["mitigations"]).inc();
+                    tracing::error!(error = %e, "skipping corrupted mitigation row");
+                    None
+                }
+            })
+            .collect())
     }
 }
 

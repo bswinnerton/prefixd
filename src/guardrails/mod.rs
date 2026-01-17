@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 
-use crate::config::{GuardrailsConfig, QuotasConfig};
+use crate::config::{GuardrailsConfig, QuotasConfig, TimersConfig};
 use crate::db::RepositoryTrait;
 use crate::domain::{MatchCriteria, MitigationIntent};
 use crate::error::{GuardrailError, PrefixdError, Result};
@@ -8,11 +8,25 @@ use crate::error::{GuardrailError, PrefixdError, Result};
 pub struct Guardrails {
     config: GuardrailsConfig,
     quotas: QuotasConfig,
+    /// Resolved min TTL (from guardrails config or timers fallback)
+    min_ttl: u32,
+    /// Resolved max TTL (from guardrails config or timers fallback)
+    max_ttl: u32,
 }
 
 impl Guardrails {
+    /// Create guardrails with explicit TTL bounds (for production use with timers fallback)
+    pub fn with_timers(config: GuardrailsConfig, quotas: QuotasConfig, timers: &TimersConfig) -> Self {
+        let min_ttl = config.min_ttl_seconds.unwrap_or(timers.min_ttl_seconds);
+        let max_ttl = config.max_ttl_seconds.unwrap_or(timers.max_ttl_seconds);
+        Self { config, quotas, min_ttl, max_ttl }
+    }
+
+    /// Create guardrails with config-only TTL bounds (for tests)
     pub fn new(config: GuardrailsConfig, quotas: QuotasConfig) -> Self {
-        Self { config, quotas }
+        let min_ttl = config.min_ttl_seconds.unwrap_or(0);
+        let max_ttl = config.max_ttl_seconds.unwrap_or(u32::MAX);
+        Self { config, quotas, min_ttl, max_ttl }
     }
 
     pub async fn validate(
@@ -49,15 +63,12 @@ impl Guardrails {
             return Err(PrefixdError::GuardrailViolation(GuardrailError::TtlRequired));
         }
 
-        // Enforce min/max TTL bounds if configured
-        let min_ttl = self.config.min_ttl_seconds.unwrap_or(0);
-        let max_ttl = self.config.max_ttl_seconds.unwrap_or(u32::MAX);
-
-        if ttl > 0 && (ttl < min_ttl || ttl > max_ttl) {
+        // Use resolved TTL bounds (from guardrails config or timers fallback)
+        if ttl > 0 && (ttl < self.min_ttl || ttl > self.max_ttl) {
             return Err(PrefixdError::GuardrailViolation(GuardrailError::TtlOutOfBounds {
                 ttl,
-                min: min_ttl,
-                max: max_ttl,
+                min: self.min_ttl,
+                max: self.max_ttl,
             }));
         }
 

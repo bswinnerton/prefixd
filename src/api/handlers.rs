@@ -103,7 +103,16 @@ pub struct HealthResponse {
     /// Database connectivity status
     database: String,
     /// GoBGP connectivity status
-    gobgp: String,
+    gobgp: ComponentHealth,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ComponentHealth {
+    /// Component status (connected, error)
+    status: String,
+    /// Error message if status is error
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -282,9 +291,10 @@ pub async fn ingest_event(
     }
 
     // Validate guardrails
-    let guardrails = Guardrails::new(
+    let guardrails = Guardrails::with_timers(
         state.settings.guardrails.clone(),
         state.settings.quotas.clone(),
+        &state.settings.timers,
     );
 
     let is_safelisted = state.repo.is_safelisted(&event.victim_ip).await.unwrap_or(false);
@@ -533,9 +543,10 @@ pub async fn create_mitigation(
     };
 
     // Validate
-    let guardrails = Guardrails::new(
+    let guardrails = Guardrails::with_timers(
         state.settings.guardrails.clone(),
         state.settings.quotas.clone(),
+        &state.settings.timers,
     );
     let is_safelisted = state.repo.is_safelisted(&req.victim_ip).await.unwrap_or(false);
     guardrails.validate(&intent, state.repo.as_ref(), is_safelisted).await.map_err(AppError)?;
@@ -640,15 +651,18 @@ pub async fn remove_safelist(
 )]
 pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     // Check GoBGP connectivity
-    let (sessions, gobgp_status) = match state.announcer.session_status().await {
-        Ok(s) => (s, "connected".to_string()),
-        Err(e) => (vec![], format!("error: {}", e)),
+    let (sessions, gobgp_health) = match state.announcer.session_status().await {
+        Ok(s) => (s, ComponentHealth { status: "connected".to_string(), error: None }),
+        Err(e) => (vec![], ComponentHealth { status: "error".to_string(), error: Some(e.to_string()) }),
     };
 
     // Check database connectivity
-    let (active, db_status) = match state.repo.count_active_global().await {
-        Ok(count) => (count, "connected".to_string()),
-        Err(e) => (0, format!("error: {}", e)),
+    let (active, db_status, db_error) = match state.repo.count_active_global().await {
+        Ok(count) => (count, "connected".to_string(), false),
+        Err(e) => {
+            tracing::warn!(error = %e, "database health check failed");
+            (0, format!("error: {}", e), true)
+        }
     };
 
     let bgp_map: std::collections::HashMap<_, _> = sessions
@@ -657,7 +671,7 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         .collect();
 
     // Determine overall status
-    let status = if db_status.starts_with("error") || gobgp_status.starts_with("error") {
+    let status = if db_error || gobgp_health.status == "error" {
         "degraded"
     } else {
         "healthy"
@@ -668,7 +682,7 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         bgp_sessions: bgp_map,
         active_mitigations: active,
         database: db_status,
-        gobgp: gobgp_status,
+        gobgp: gobgp_health,
     })
 }
 

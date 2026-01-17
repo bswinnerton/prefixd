@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Observability**
   - `prefixd_config_reload_total` counter metric (success/error)
   - `prefixd_escalations_total` counter metric
+  - `prefixd_db_row_parse_errors_total` counter metric (tracks corrupted DB rows)
   - Database connectivity status in `/v1/health` endpoint
-  - GoBGP connectivity status in `/v1/health` endpoint
+  - GoBGP connectivity status in `/v1/health` endpoint (now structured: `{status, error}`)
   - Health endpoint now returns `"degraded"` status on DB or GoBGP failure
   - Warning logs for FlowSpec path parse failures in reconciliation
 
@@ -63,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `compute_scope_hash()` now deduplicates ports before hashing for consistency
 - Bearer token cached at startup (was reading env var on every request)
 - `Mitigation::from_row` now returns `Result` with error logging (was silently defaulting on parse failures)
+- List queries now skip corrupted rows instead of failing entirely (with metric + log)
+- Guardrails TTL bounds now fall back to `timers.min/max_ttl_seconds` if not set in guardrails config
 
 - IPv6 support in `is_safelisted()` - now handles both IPv4 and IPv6 prefixes
 - `is_safelisted()` performance - uses PostgreSQL inet operators instead of loading all entries
@@ -76,6 +79,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Response** (breaking for clients parsing `total`)
   - Renamed `total` to `count` in `MitigationsListResponse`
   - Clarifies this is page size, not total count
+
+- **Health Response** (breaking for clients parsing `gobgp` as string)
+  - `gobgp` field now returns `{status: string, error?: string}` object
+  - `database` field unchanged (string) for backward compatibility
 
 - **Code Quality**
   - Consolidated duplicate route registrations in `routes.rs`

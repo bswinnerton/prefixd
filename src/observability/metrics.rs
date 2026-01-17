@@ -129,6 +129,16 @@ pub static ESCALATIONS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
     .unwrap()
 });
 
+// Database metrics
+pub static ROW_PARSE_ERRORS: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "prefixd_db_row_parse_errors_total",
+        "Count of database rows that failed to parse",
+        &["table"]
+    )
+    .unwrap()
+});
+
 /// Generate Prometheus metrics output
 pub fn gather_metrics() -> String {
     let encoder = TextEncoder::new();
@@ -154,4 +164,5 @@ pub fn init_metrics() {
     Lazy::force(&RECONCILIATION_RUNS);
     Lazy::force(&CONFIG_RELOADS);
     Lazy::force(&ESCALATIONS_TOTAL);
+    Lazy::force(&ROW_PARSE_ERRORS);
 }
