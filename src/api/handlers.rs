@@ -83,12 +83,14 @@ pub struct MitigationsListResponse {
 
 #[derive(Serialize, ToSchema)]
 pub struct HealthResponse {
-    /// Health status
+    /// Health status (healthy, degraded)
     status: String,
     /// BGP session states by peer name
     bgp_sessions: std::collections::HashMap<String, String>,
     /// Number of active mitigations
     active_mitigations: u32,
+    /// Database connectivity status
+    database: String,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -270,7 +272,7 @@ pub async fn ingest_event(
 
     let is_safelisted = state.repo.is_safelisted(&event.victim_ip).await.unwrap_or(false);
 
-    if let Err(e) = guardrails.validate(&intent, &state.repo, is_safelisted).await {
+    if let Err(e) = guardrails.validate(&intent, state.repo.as_ref(), is_safelisted).await {
         tracing::warn!(error = %e, "guardrail rejected mitigation");
         return Err(AppError(e));
     }
@@ -501,7 +503,7 @@ pub async fn create_mitigation(
         state.settings.quotas.clone(),
     );
     let is_safelisted = state.repo.is_safelisted(&req.victim_ip).await.unwrap_or(false);
-    guardrails.validate(&intent, &state.repo, is_safelisted).await.map_err(AppError)?;
+    guardrails.validate(&intent, state.repo.as_ref(), is_safelisted).await.map_err(AppError)?;
 
     // Create and announce
     let mut mitigation = Mitigation::from_intent(
@@ -603,17 +605,29 @@ pub async fn remove_safelist(
 )]
 pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let sessions = state.announcer.session_status().await.unwrap_or_default();
-    let active = state.repo.count_active_global().await.unwrap_or(0);
+
+    // Check database connectivity
+    let (active, db_status) = match state.repo.count_active_global().await {
+        Ok(count) => (count, "connected".to_string()),
+        Err(e) => (0, format!("error: {}", e)),
+    };
 
     let bgp_map: std::collections::HashMap<_, _> = sessions
         .into_iter()
         .map(|s| (s.name, s.state.to_string()))
         .collect();
 
+    let status = if db_status.starts_with("error") {
+        "degraded"
+    } else {
+        "healthy"
+    };
+
     Json(HealthResponse {
-        status: "healthy".to_string(),
+        status: status.to_string(),
         bgp_sessions: bgp_map,
         active_mitigations: active,
+        database: db_status,
     })
 }
 
@@ -630,12 +644,23 @@ pub struct ReloadResponse {
 }
 
 pub async fn reload_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let reloaded = state.reload_config().await.map_err(AppError)?;
-
-    Ok::<_, AppError>(Json(ReloadResponse {
-        reloaded,
-        timestamp: chrono::Utc::now().to_rfc3339(),
-    }))
+    match state.reload_config().await {
+        Ok(reloaded) => {
+            crate::observability::CONFIG_RELOADS
+                .with_label_values(&["success"])
+                .inc();
+            Ok::<_, AppError>(Json(ReloadResponse {
+                reloaded,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            }))
+        }
+        Err(e) => {
+            crate::observability::CONFIG_RELOADS
+                .with_label_values(&["error"])
+                .inc();
+            Err(AppError(e))
+        }
+    }
 }
 
 // Multi-POP coordination

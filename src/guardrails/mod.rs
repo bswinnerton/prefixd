@@ -1,5 +1,5 @@
 use crate::config::{GuardrailsConfig, QuotasConfig};
-use crate::db::Repository;
+use crate::db::RepositoryTrait;
 use crate::domain::{MatchCriteria, MitigationIntent};
 use crate::error::{GuardrailError, PrefixdError, Result};
 
@@ -16,7 +16,7 @@ impl Guardrails {
     pub async fn validate(
         &self,
         intent: &MitigationIntent,
-        repo: &Repository,
+        repo: &dyn RepositoryTrait,
         is_safelisted: bool,
     ) -> Result<()> {
         // Check safelist
@@ -88,7 +88,7 @@ impl Guardrails {
         Ok(())
     }
 
-    async fn validate_quotas(&self, intent: &MitigationIntent, repo: &Repository) -> Result<()> {
+    async fn validate_quotas(&self, intent: &MitigationIntent, repo: &dyn RepositoryTrait) -> Result<()> {
         // Customer quota
         if let Some(ref cid) = intent.customer_id {
             let count = repo.count_active_by_customer(cid).await?;

@@ -109,6 +109,26 @@ pub static RECONCILIATION_RUNS: Lazy<CounterVec> = Lazy::new(|| {
     .unwrap()
 });
 
+// Config reload metrics
+pub static CONFIG_RELOADS: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "prefixd_config_reload_total",
+        "Total number of configuration reloads",
+        &["status"]
+    )
+    .unwrap()
+});
+
+// Escalation metrics
+pub static ESCALATIONS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "prefixd_escalations_total",
+        "Total number of mitigations escalated",
+        &["from_action", "to_action", "pop"]
+    )
+    .unwrap()
+});
+
 /// Generate Prometheus metrics output
 pub fn gather_metrics() -> String {
     let encoder = TextEncoder::new();
@@ -132,4 +152,6 @@ pub fn init_metrics() {
     Lazy::force(&BGP_SESSION_UP);
     Lazy::force(&GUARDRAIL_REJECTIONS);
     Lazy::force(&RECONCILIATION_RUNS);
+    Lazy::force(&CONFIG_RELOADS);
+    Lazy::force(&ESCALATIONS_TOTAL);
 }

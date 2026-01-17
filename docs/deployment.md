@@ -5,7 +5,7 @@
 prefixd requires:
 - **prefixd** daemon (this software)
 - **GoBGP** sidecar for BGP FlowSpec announcements
-- **Database** (SQLite for single-node, PostgreSQL for multi-POP)
+- **PostgreSQL 14+**
 - **Edge routers** configured to receive and apply FlowSpec
 
 ```
@@ -17,7 +17,7 @@ prefixd requires:
                            ▼                   ▼
                     ┌─────────────┐     ┌─────────────┐
                     │  Database   │     │   Routers   │
-                    │ (SQLite/PG) │     │  (Juniper)  │
+                    │ (PostgreSQL)│     │  (Juniper)  │
                     └─────────────┘     └─────────────┘
 ```
 

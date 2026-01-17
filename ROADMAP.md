@@ -5,7 +5,7 @@
 - [x] HTTP API with event ingestion
 - [x] Policy engine with YAML playbooks
 - [x] Guardrails (TTL, /32, quotas, safelist)
-- [x] SQLite state store
+- [x] PostgreSQL state store
 - [x] MockAnnouncer for testing
 - [x] Reconciliation loop
 - [x] Dry-run mode
@@ -55,13 +55,26 @@
 ## v0.5 - Docker & PostgreSQL (Done)
 
 - [x] PostgreSQL backend option
-  - [x] Runtime-configurable storage driver (sqlite/postgres)
   - [x] Postgres migrations
   - [x] Connection pooling
 - [x] Docker deployment
   - [x] Multi-stage Dockerfile
   - [x] docker-compose.yml (prefixd, postgres, gobgp)
   - [x] Example postgres config
+
+## v0.6 - PostgreSQL-Only & Test Infrastructure (Done)
+
+- [x] Remove SQLite support (PostgreSQL-only)
+  - [x] Extract `RepositoryTrait` from `Repository`
+  - [x] Remove all SQLite code paths (~800 lines removed)
+  - [x] Remove `DbPool` enum, use `PgPool` directly
+  - [x] Remove `StorageDriver` enum from config
+  - [x] Update `storage.path` → `storage.connection_string`
+- [x] Mock repository for testing
+  - [x] Create `MockRepository` implementing `RepositoryTrait`
+  - [x] Migrate unit tests to use `MockRepository`
+  - [x] Add testcontainers dev-dependencies
+- [x] Update documentation (remove SQLite references)
 
 ## v1.0 - Production Ready
 
@@ -142,6 +155,100 @@
   - [x] Live activity feed (replaces mock data)
   - [x] Config page (system status, BGP, quotas, safelist viewer)
   - [x] Loading/error states throughout
+
+## v1.1 - Integration Tests & Bug Fixes
+
+**Goal:** Comprehensive integration test coverage and critical bug fixes.
+
+### Integration Tests (using testcontainers)
+- [ ] Full event ingestion flow (event → policy → mitigation → BGP)
+- [ ] Mitigation withdrawal via API
+- [ ] TTL expiry via reconciliation loop
+- [ ] Configuration hot-reload
+- [ ] Pagination and filtering queries
+- [ ] Migration verification (clean Postgres → migrations)
+
+### Bug Fixes
+- [ ] Fix `is_safelisted()` performance
+  - [ ] Replace load-all with indexed query
+  - [ ] Add prefix tree for efficient CIDR matching
+- [ ] Add IPv6 support in `is_safelisted()`
+- [ ] Add timeout handling for GoBGP gRPC calls
+- [ ] Add retry logic for transient BGP failures
+  - [ ] Exponential backoff
+  - [ ] Circuit breaker pattern
+
+### Security Hardening
+- [ ] API key rotation support (multiple valid tokens)
+- [ ] Audit log for authentication failures
+- [ ] Request size limits (body size, header count)
+
+## v1.2 - Observability & DevOps
+
+**Goal:** Production-grade observability and CI/CD infrastructure.
+
+### Observability
+- [ ] HTTP metrics
+  - [ ] `prefixd_http_request_duration_seconds` histogram
+  - [ ] `prefixd_http_requests_total` counter (by endpoint, status)
+- [ ] Database metrics
+  - [ ] `prefixd_db_query_duration_seconds` histogram
+  - [ ] `prefixd_db_connections_active` gauge
+- [ ] Operational metrics
+  - [ ] `prefixd_config_reload_total` counter
+  - [ ] `prefixd_escalations_total` counter
+- [ ] Tracing
+  - [ ] Request correlation with trace IDs
+  - [ ] Span instrumentation for key operations
+- [ ] Health checks
+  - [ ] Database connectivity check
+  - [ ] GoBGP connectivity check
+  - [ ] Detailed `/v1/health` response
+
+### DevOps
+- [ ] GitHub Actions CI
+  - [ ] Test (unit + integration with testcontainers)
+  - [ ] Lint (clippy, rustfmt)
+  - [ ] Build (release binary, Docker image)
+  - [ ] Security audit (cargo-audit)
+- [ ] Kubernetes manifests
+  - [ ] Deployment, Service, ConfigMap, Secret
+  - [ ] PodDisruptionBudget
+  - [ ] HorizontalPodAutoscaler
+- [ ] Helm chart
+- [ ] Pre-commit hooks configuration
+- [ ] Dependabot configuration
+
+## v1.3 - Frontend Maturity & API Polish
+
+**Goal:** Production-quality frontend and API refinements.
+
+### Frontend Testing & Features
+- [ ] Vitest test setup
+- [ ] API client tests
+- [ ] React hooks tests
+- [ ] Error boundaries throughout
+- [ ] WebSocket support (replace 5s polling)
+  - [ ] Real-time mitigation updates
+  - [ ] Live event stream
+
+### API Polish
+- [ ] OpenAPI enhancements
+  - [ ] Descriptions for all endpoints
+  - [ ] Request/response examples
+  - [ ] Error response schemas
+- [ ] Bulk operations
+  - [ ] `POST /v1/mitigations/bulk-withdraw`
+  - [ ] `POST /v1/safelist/bulk-add`
+
+### Documentation
+- [ ] Inline code documentation
+  - [ ] BGP NLRI construction comments
+  - [ ] Escalation logic comments
+- [ ] Operations guides
+  - [ ] Connection pool tuning
+  - [ ] PostgreSQL performance tuning
+- [ ] Architecture Decision Records (ADRs)
 
 ## v1.5 - Multi-Signal Correlation
 

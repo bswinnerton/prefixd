@@ -1,6 +1,6 @@
 # Benchmark Results
 
-Benchmarks run on Linux with SQLite in-memory database. Results are representative of single-threaded performance.
+Benchmarks run on Linux with MockRepository (in-memory). Results are representative of single-threaded performance.
 
 Run benchmarks with:
 ```bash
@@ -45,7 +45,7 @@ db_count_active          163 µs        Count active mitigations
 db_is_safelisted         166 µs        Check safelist with prefix matching
 ```
 
-**Analysis:** Database operations are dominated by SQLite I/O, even with in-memory database. At ~6K inserts/sec, prefixd can handle significant event volumes. The list operation is slower due to JSON deserialization of match criteria. PostgreSQL performance will vary based on network latency.
+**Analysis:** Database operations with MockRepository are very fast (in-memory). Production PostgreSQL performance will vary based on network latency and connection pooling. At ~6K inserts/sec baseline, prefixd can handle significant event volumes.
 
 **Recommendation:** For high-volume deployments (>1000 events/min), consider:
 - Connection pooling (already implemented)
@@ -63,7 +63,7 @@ db_is_safelisted         166 µs        Check safelist with prefix matching
 | 100 | 716 µs | 2.9x baseline |
 | 500 | 1.05 ms | 4.3x baseline |
 
-**Analysis:** List performance scales sub-linearly due to SQLite's efficient B-tree indexing. The LIMIT 50 clause keeps result set processing constant regardless of table size. Good scaling characteristics for production.
+**Analysis:** List performance scales sub-linearly due to efficient B-tree indexing. The LIMIT 50 clause keeps result set processing constant regardless of table size. Good scaling characteristics for production.
 
 #### Inventory Lookup Scaling
 

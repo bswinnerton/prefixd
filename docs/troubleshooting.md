@@ -141,10 +141,10 @@ ls -lh /var/lib/prefixd/prefixd.db
 2. **Shorter TTLs** - Reduce `max_ttl_seconds`
 3. **Database cleanup** - Old data accumulates
    ```sql
-   -- SQLite: vacuum old data
-   DELETE FROM events WHERE ingested_at < datetime('now', '-7 days');
-   DELETE FROM mitigations WHERE status = 'expired' AND updated_at < datetime('now', '-7 days');
-   VACUUM;
+   -- PostgreSQL: clean old data
+   DELETE FROM events WHERE ingested_at < NOW() - INTERVAL '7 days';
+   DELETE FROM mitigations WHERE status = 'expired' AND updated_at < NOW() - INTERVAL '7 days';
+   VACUUM ANALYZE;
    ```
 
 ### 5. Reconciliation Loop Errors
@@ -198,7 +198,7 @@ openssl s_client -connect localhost:8443 \
 curl -s localhost:9090/metrics | grep prefixd_event_processing
 
 # Database performance
-sqlite3 /var/lib/prefixd/prefixd.db "PRAGMA integrity_check;"
+psql -h localhost -U prefixd -c "SELECT count(*) FROM mitigations;"
 ```
 
 **Solutions:**
@@ -292,23 +292,20 @@ cat audit.jsonl | jq 'select(.details.source == "fastnetmon")'
 
 ## Recovery Procedures
 
-### Database Corruption (SQLite)
+### Database Issues (PostgreSQL)
 
 ```bash
-# Stop prefixd
-systemctl stop prefixd
+# Check database connectivity
+psql -h localhost -U prefixd -c "SELECT 1;"
 
-# Backup corrupted database
-cp /var/lib/prefixd/prefixd.db /var/lib/prefixd/prefixd.db.corrupt
+# Check for locked queries
+psql -h localhost -U prefixd -c "SELECT * FROM pg_stat_activity WHERE state = 'active';"
 
-# Attempt recovery
-sqlite3 /var/lib/prefixd/prefixd.db ".recover" | sqlite3 /var/lib/prefixd/prefixd.db.recovered
+# Vacuum and analyze (run during low traffic)
+psql -h localhost -U prefixd -c "VACUUM ANALYZE;"
 
-# Replace if successful
-mv /var/lib/prefixd/prefixd.db.recovered /var/lib/prefixd/prefixd.db
-
-# Restart
-systemctl start prefixd
+# Check table sizes
+psql -h localhost -U prefixd -c "SELECT relname, pg_size_pretty(pg_total_relation_size(relid)) FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC;"
 ```
 
 ### Emergency Withdrawal of All Rules

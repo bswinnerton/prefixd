@@ -13,7 +13,7 @@ Detector → HTTP API → Policy Engine → Guardrails → FlowSpec Manager → 
                                            ↑
                                    Reconciliation Loop
                                            ↓
-                                     SQLite (state)
+                                     PostgreSQL (state)
 ```
 
 ## Directory Structure
@@ -23,7 +23,7 @@ src/
 ├── api/           # HTTP handlers, auth, rate limiting
 ├── bgp/           # FlowSpecAnnouncer trait, GoBGP client, mock
 ├── config/        # Settings, Inventory, Playbooks (YAML parsing)
-├── db/            # SQLite repository with sqlx
+├── db/            # PostgreSQL repository with sqlx + mock for testing
 ├── domain/        # Core types: AttackEvent, Mitigation, FlowSpecRule
 ├── guardrails/    # Validation, quotas, safelist protection
 ├── observability/ # Tracing, Prometheus metrics
@@ -56,7 +56,7 @@ src/
 
 2. **Reconciliation Loop** (every 30s)
    - Find expired mitigations → withdraw
-   - Compare desired (SQLite) vs actual (GoBGP RIB)
+   - Compare desired (PostgreSQL) vs actual (GoBGP RIB)
    - Re-announce missing rules
 
 ## Important Constraints
@@ -87,7 +87,7 @@ Completed:
 - GoBGP gRPC client
 - Policy engine with playbooks
 - Guardrails and quotas
-- SQLite state store
+- PostgreSQL state store
 - Prometheus metrics
 - Dry-run mode
 

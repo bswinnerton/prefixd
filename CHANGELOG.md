@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Observability**
+  - `prefixd_config_reload_total` counter metric (success/error)
+  - `prefixd_escalations_total` counter metric
+  - Database connectivity status in `/v1/health` endpoint
+  - Health endpoint now returns `"degraded"` status on DB failure
+
+- **Security**
+  - Request body size limit (1MB) via tower-http
+
+- **Bug Fixes**
+  - IPv6 support in `is_safelisted()` - now handles both IPv4 and IPv6 prefixes
+
+### Changed
+
+- **PostgreSQL-only storage** (breaking change)
+  - Removed SQLite support entirely (~800 lines removed)
+  - Simplified `StorageConfig`: `driver` removed, `path` → `connection_string`
+  - Extracted `RepositoryTrait` for testability
+  - Added `MockRepository` for fast unit tests
+  - Tests now use `MockRepository` instead of SQLite in-memory
+
+### Removed
+
+- SQLite storage driver and all related code
+- `StorageDriver` enum from configuration
+- `storage.driver` config option
+
+---
+
+## [0.6.0] - 2026-01-17
+
+### Added
+
 - **Security & Authentication**
   - mTLS authentication with client certificate verification (rustls 0.23)
   - Security headers: X-Content-Type-Options, X-Frame-Options, Cache-Control

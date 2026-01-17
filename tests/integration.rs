@@ -9,9 +9,9 @@ use prefixd::config::{
     AllowedPorts, Asset, AuthConfig, AuthMode, BgpConfig, BgpMode, Customer, EscalationConfig,
     GuardrailsConfig, HttpConfig, Inventory, ObservabilityConfig, Playbook, PlaybookAction,
     PlaybookMatch, PlaybookStep, Playbooks, QuotasConfig, RateLimitConfig, SafelistConfig,
-    Service, Settings, ShutdownConfig, StorageConfig, StorageDriver, TimersConfig,
+    Service, Settings, ShutdownConfig, StorageConfig, TimersConfig,
 };
-use prefixd::db;
+use prefixd::db::{MockRepository, RepositoryTrait};
 use prefixd::domain::AttackVector;
 use prefixd::AppState;
 
@@ -69,8 +69,7 @@ fn test_settings() -> Settings {
             max_escalated_duration_seconds: 1800,
         },
         storage: StorageConfig {
-            driver: StorageDriver::Sqlite,
-            path: ":memory:".to_string(),
+            connection_string: "postgres://unused:unused@localhost/unused".to_string(),
         },
         observability: ObservabilityConfig {
             log_format: prefixd::config::LogFormat::Pretty,
@@ -85,23 +84,23 @@ fn test_settings() -> Settings {
 
 fn test_inventory() -> Inventory {
     Inventory::new(vec![Customer {
-            customer_id: "cust_test".to_string(),
-            name: "Test Customer".to_string(),
-            prefixes: vec!["203.0.113.0/24".to_string()],
-            policy_profile: prefixd::config::PolicyProfile::Normal,
-            services: vec![Service {
-                service_id: "svc_dns".to_string(),
-                name: "DNS".to_string(),
-                assets: vec![Asset {
-                    ip: "203.0.113.10".to_string(),
-                    role: Some("dns".to_string()),
-                }],
-                allowed_ports: AllowedPorts {
-                    udp: vec![53],
-                    tcp: vec![53],
-                },
+        customer_id: "cust_test".to_string(),
+        name: "Test Customer".to_string(),
+        prefixes: vec!["203.0.113.0/24".to_string()],
+        policy_profile: prefixd::config::PolicyProfile::Normal,
+        services: vec![Service {
+            service_id: "svc_dns".to_string(),
+            name: "DNS".to_string(),
+            assets: vec![Asset {
+                ip: "203.0.113.10".to_string(),
+                role: Some("dns".to_string()),
             }],
-        }])
+            allowed_ports: AllowedPorts {
+                udp: vec![53],
+                tcp: vec![53],
+            },
+        }],
+    }])
 }
 
 fn test_playbooks() -> Playbooks {
@@ -124,8 +123,7 @@ fn test_playbooks() -> Playbooks {
 }
 
 async fn setup_app() -> axum::Router {
-    let pool = db::init_memory_pool().await.unwrap();
-    let repo = db::Repository::from_sqlite(pool);
+    let repo: Arc<dyn RepositoryTrait> = Arc::new(MockRepository::new());
     let announcer = Arc::new(MockAnnouncer::new());
 
     let state = AppState::new(
@@ -214,8 +212,7 @@ async fn setup_app_with_bearer() -> axum::Router {
         std::env::set_var("TEST_PREFIXD_TOKEN", "test-secret-token-123");
     }
 
-    let pool = db::init_memory_pool().await.unwrap();
-    let repo = db::Repository::from_sqlite(pool);
+    let repo: Arc<dyn RepositoryTrait> = Arc::new(MockRepository::new());
     let announcer = Arc::new(MockAnnouncer::new());
 
     let state = AppState::new(
@@ -234,7 +231,6 @@ async fn setup_app_with_bearer() -> axum::Router {
 async fn test_bearer_auth_missing_token_returns_401() {
     let app = setup_app_with_bearer().await;
 
-    // Request without Authorization header
     let response = app
         .oneshot(
             Request::builder()
@@ -252,7 +248,6 @@ async fn test_bearer_auth_missing_token_returns_401() {
 async fn test_bearer_auth_invalid_token_returns_401() {
     let app = setup_app_with_bearer().await;
 
-    // Request with wrong token
     let response = app
         .oneshot(
             Request::builder()
@@ -271,7 +266,6 @@ async fn test_bearer_auth_invalid_token_returns_401() {
 async fn test_bearer_auth_valid_token_returns_200() {
     let app = setup_app_with_bearer().await;
 
-    // Request with correct token
     let response = app
         .oneshot(
             Request::builder()
@@ -290,7 +284,6 @@ async fn test_bearer_auth_valid_token_returns_200() {
 async fn test_public_endpoint_no_auth_required() {
     let app = setup_app_with_bearer().await;
 
-    // Health endpoint should work without auth even when bearer is configured
     let response = app
         .oneshot(
             Request::builder()
@@ -320,7 +313,6 @@ async fn test_security_headers_present() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    // Check security headers
     assert_eq!(
         response.headers().get("x-content-type-options").map(|v| v.to_str().unwrap()),
         Some("nosniff")

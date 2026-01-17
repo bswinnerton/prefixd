@@ -5,7 +5,7 @@ use clap::Parser;
 
 use prefixd::api::create_router;
 use prefixd::bgp::{GoBgpAnnouncer, MockAnnouncer};
-use prefixd::config::{AppConfig, AuthMode, BgpMode, StorageDriver};
+use prefixd::config::{AppConfig, AuthMode, BgpMode};
 use prefixd::db;
 use prefixd::observability::init_tracing;
 use prefixd::scheduler::ReconciliationLoop;
@@ -44,17 +44,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Init database
     let storage = &config.settings.storage;
-    tracing::info!(driver = ?storage.driver, "initializing database");
+    tracing::info!("initializing PostgreSQL database");
 
-    if storage.driver == StorageDriver::Sqlite {
-        let db_path = PathBuf::from(&storage.path);
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-    }
-
-    let pool = db::init_pool_from_config(storage.driver, &storage.path).await?;
-    let repo = db::Repository::new(pool);
+    let pool = db::init_postgres_pool(&storage.connection_string).await?;
+    let repo: Arc<dyn db::RepositoryTrait> = Arc::new(db::Repository::new(pool));
 
     // Init safelist from config
     for prefix in &config.settings.safelist.prefixes {
@@ -152,15 +145,12 @@ async fn start_tls_server(
     use std::fs::File;
     use std::io::BufReader;
 
-    // For mTLS, we need to build a custom rustls config
-    // For simple TLS, use the built-in method
     let rustls_config = if require_client_cert {
         let ca_path = tls_config
             .ca_path
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("mTLS requires ca_path to be set"))?;
 
-        // Load CA certificates for client verification
         let ca_file = File::open(ca_path)?;
         let mut ca_reader = BufReader::new(ca_file);
         let ca_certs: Vec<_> = rustls_pemfile::certs(&mut ca_reader)
@@ -175,7 +165,6 @@ async fn start_tls_server(
             .build()
             .map_err(|e| anyhow::anyhow!("failed to build client verifier: {}", e))?;
 
-        // Load server certificate and key
         let cert_file = File::open(&tls_config.cert_path)?;
         let mut cert_reader = BufReader::new(cert_file);
         let certs: Vec<_> = rustls_pemfile::certs(&mut cert_reader)
@@ -192,7 +181,6 @@ async fn start_tls_server(
 
         RustlsConfig::from_config(Arc::new(config))
     } else {
-        // TLS without client certificate requirement
         RustlsConfig::from_pem_file(&tls_config.cert_path, &tls_config.key_path).await?
     };
 
@@ -205,7 +193,6 @@ async fn start_tls_server(
 
     let addr: std::net::SocketAddr = listen.parse()?;
 
-    // axum-server uses Handle for graceful shutdown
     let handle = axum_server::Handle::new();
     let shutdown_handle = handle.clone();
 
@@ -255,10 +242,8 @@ async fn shutdown_signal(state: Arc<AppState>) {
         "shutdown signal received, beginning graceful shutdown"
     );
 
-    // Mark as shutting down (new events will get 503)
     state.trigger_shutdown();
 
-    // Give in-flight requests time to complete
     if drain_timeout > 0 {
         tracing::info!(seconds = drain_timeout, "waiting for drain period");
         tokio::time::sleep(std::time::Duration::from_secs(drain_timeout as u64)).await;

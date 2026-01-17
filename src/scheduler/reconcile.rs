@@ -3,11 +3,11 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 
 use crate::bgp::FlowSpecAnnouncer;
-use crate::db::Repository;
+use crate::db::RepositoryTrait;
 use crate::domain::{FlowSpecAction, FlowSpecNlri, FlowSpecRule, MitigationStatus};
 
 pub struct ReconciliationLoop {
-    repo: Repository,
+    repo: Arc<dyn RepositoryTrait>,
     announcer: Arc<dyn FlowSpecAnnouncer>,
     interval: Duration,
     dry_run: bool,
@@ -15,7 +15,7 @@ pub struct ReconciliationLoop {
 
 impl ReconciliationLoop {
     pub fn new(
-        repo: Repository,
+        repo: Arc<dyn RepositoryTrait>,
         announcer: Arc<dyn FlowSpecAnnouncer>,
         interval_seconds: u32,
         dry_run: bool,

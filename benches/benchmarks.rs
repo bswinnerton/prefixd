@@ -1,81 +1,10 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use prefixd::config::{
-    AllowedPorts, Asset, AuthConfig, AuthMode, BgpConfig, BgpMode, Customer, EscalationConfig,
-    GuardrailsConfig, HttpConfig, Inventory, ObservabilityConfig, Playbook, PlaybookAction,
-    PlaybookMatch, PlaybookStep, Playbooks, QuotasConfig, RateLimitConfig, SafelistConfig,
-    Service, Settings, ShutdownConfig, StorageConfig, StorageDriver, TimersConfig,
+    AllowedPorts, Asset, Customer, Inventory, Service,
 };
-use prefixd::db;
+use prefixd::db::{MockRepository, RepositoryTrait};
 use prefixd::domain::{ActionParams, ActionType, AttackVector, MatchCriteria, Mitigation, MitigationStatus};
-
-fn test_settings() -> Settings {
-    Settings {
-        pop: "bench1".to_string(),
-        mode: prefixd::config::OperationMode::DryRun,
-        http: HttpConfig {
-            listen: "127.0.0.1:0".to_string(),
-            auth: AuthConfig {
-                mode: AuthMode::None,
-                bearer_token_env: None,
-            },
-            rate_limit: RateLimitConfig::default(),
-            tls: None,
-        },
-        bgp: BgpConfig {
-            mode: BgpMode::Mock,
-            gobgp_grpc: "127.0.0.1:50051".to_string(),
-            local_asn: 65000,
-            router_id: "10.0.0.1".to_string(),
-            neighbors: vec![],
-        },
-        guardrails: GuardrailsConfig {
-            require_ttl: true,
-            dst_prefix_minlen: 32,
-            dst_prefix_maxlen: 32,
-            dst_prefix_minlen_v6: None,
-            dst_prefix_maxlen_v6: None,
-            max_ports: 8,
-            allow_src_prefix_match: false,
-            allow_tcp_flags_match: false,
-            allow_fragment_match: false,
-            allow_packet_length_match: false,
-        },
-        quotas: QuotasConfig {
-            max_active_per_customer: 100,
-            max_active_per_pop: 1000,
-            max_active_global: 5000,
-            max_new_per_minute: 1000,
-            max_announcements_per_peer: 1000,
-        },
-        timers: TimersConfig {
-            default_ttl_seconds: 120,
-            min_ttl_seconds: 30,
-            max_ttl_seconds: 1800,
-            correlation_window_seconds: 300,
-            reconciliation_interval_seconds: 30,
-            quiet_period_after_withdraw_seconds: 120,
-        },
-        escalation: EscalationConfig {
-            enabled: true,
-            min_persistence_seconds: 120,
-            min_confidence: 0.7,
-            max_escalated_duration_seconds: 1800,
-        },
-        storage: StorageConfig {
-            driver: StorageDriver::Sqlite,
-            path: ":memory:".to_string(),
-        },
-        observability: ObservabilityConfig {
-            log_format: prefixd::config::LogFormat::Pretty,
-            log_level: "warn".to_string(),
-            audit_log_path: "/dev/null".to_string(),
-            metrics_listen: "127.0.0.1:0".to_string(),
-        },
-        safelist: SafelistConfig { prefixes: vec![] },
-        shutdown: ShutdownConfig::default(),
-    }
-}
 
 fn test_inventory() -> Inventory {
     let mut customers = Vec::new();
@@ -104,73 +33,37 @@ fn test_inventory() -> Inventory {
     Inventory::new(customers)
 }
 
-fn test_playbooks() -> Playbooks {
-    Playbooks {
-        playbooks: vec![
-            Playbook {
-                name: "udp_flood".to_string(),
-                match_criteria: PlaybookMatch {
-                    vector: AttackVector::UdpFlood,
-                    require_top_ports: false,
-                },
-                steps: vec![PlaybookStep {
-                    action: PlaybookAction::Police,
-                    rate_bps: Some(5_000_000),
-                    ttl_seconds: 120,
-                    require_confidence_at_least: None,
-                    require_persistence_seconds: None,
-                }],
-            },
-            Playbook {
-                name: "syn_flood".to_string(),
-                match_criteria: PlaybookMatch {
-                    vector: AttackVector::SynFlood,
-                    require_top_ports: false,
-                },
-                steps: vec![PlaybookStep {
-                    action: PlaybookAction::Discard,
-                    rate_bps: None,
-                    ttl_seconds: 180,
-                    require_confidence_at_least: None,
-                    require_persistence_seconds: None,
-                }],
-            },
-        ],
-    }
-}
-
 fn make_mitigation(i: usize) -> Mitigation {
+    let event_id = uuid::Uuid::new_v4();
     Mitigation {
         mitigation_id: uuid::Uuid::new_v4(),
         scope_hash: format!("hash_{}", i),
         pop: "bench1".to_string(),
         customer_id: Some(format!("cust_{}", i % 100)),
         service_id: Some(format!("svc_{}", i % 100)),
-        victim_ip: format!("203.0.{}.{}", i % 100, (i % 10) + 10),
+        victim_ip: format!("203.0.{}.{}", i / 256, i % 256),
         vector: AttackVector::UdpFlood,
         match_criteria: MatchCriteria {
-            dst_prefix: format!("203.0.{}.{}/32", i % 100, (i % 10) + 10),
+            dst_prefix: format!("203.0.{}.{}/32", i / 256, i % 256),
             protocol: Some(17),
             dst_ports: vec![53],
         },
-        action_type: ActionType::Police,
-        action_params: ActionParams {
-            rate_bps: Some(5_000_000),
-        },
+        action_type: ActionType::Discard,
+        action_params: ActionParams { rate_bps: None },
         status: MitigationStatus::Active,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
-        expires_at: chrono::Utc::now() + chrono::Duration::seconds(120),
+        expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         withdrawn_at: None,
-        triggering_event_id: uuid::Uuid::new_v4(),
-        last_event_id: uuid::Uuid::new_v4(),
+        triggering_event_id: event_id,
+        last_event_id: event_id,
         escalated_from_id: None,
-        reason: "benchmark".to_string(),
+        reason: "benchmark test".to_string(),
         rejection_reason: None,
     }
 }
 
-// Benchmark: Inventory IP lookup
+// Benchmark: Inventory lookup
 fn bench_inventory_lookup(c: &mut Criterion) {
     let inventory = test_inventory();
 
@@ -179,11 +72,15 @@ fn bench_inventory_lookup(c: &mut Criterion) {
     });
 
     c.bench_function("inventory_lookup_miss", |b| {
-        b.iter(|| black_box(inventory.lookup_ip("10.0.0.1")))
+        b.iter(|| black_box(inventory.lookup_ip("8.8.8.8")))
     });
 
-    c.bench_function("inventory_is_owned", |b| {
-        b.iter(|| black_box(inventory.is_owned("203.0.50.15")))
+    c.bench_function("inventory_is_owned_hit", |b| {
+        b.iter(|| black_box(inventory.is_owned("203.0.50.100")))
+    });
+
+    c.bench_function("inventory_is_owned_miss", |b| {
+        b.iter(|| black_box(inventory.is_owned("8.8.8.8")))
     });
 }
 
@@ -200,14 +97,13 @@ fn bench_scope_hash(c: &mut Criterion) {
     });
 }
 
-// Benchmark: Database operations (async)
+// Benchmark: Database operations using MockRepository
 fn bench_database_operations(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     c.bench_function("db_insert_mitigation", |b| {
         b.to_async(&rt).iter_custom(|iters| async move {
-            let pool = db::init_memory_pool().await.unwrap();
-            let repo = db::Repository::from_sqlite(pool);
+            let repo = MockRepository::new();
 
             let start = std::time::Instant::now();
             for i in 0..iters {
@@ -220,10 +116,8 @@ fn bench_database_operations(c: &mut Criterion) {
 
     c.bench_function("db_get_mitigation", |b| {
         b.to_async(&rt).iter_custom(|iters| async move {
-            let pool = db::init_memory_pool().await.unwrap();
-            let repo = db::Repository::from_sqlite(pool);
+            let repo = MockRepository::new();
 
-            // Insert some mitigations first
             let mut ids = Vec::new();
             for i in 0..100 {
                 let m = make_mitigation(i);
@@ -242,10 +136,8 @@ fn bench_database_operations(c: &mut Criterion) {
 
     c.bench_function("db_list_mitigations", |b| {
         b.to_async(&rt).iter_custom(|iters| async move {
-            let pool = db::init_memory_pool().await.unwrap();
-            let repo = db::Repository::from_sqlite(pool);
+            let repo = MockRepository::new();
 
-            // Insert mitigations
             for i in 0..100 {
                 let m = make_mitigation(i);
                 repo.insert_mitigation(&m).await.unwrap();
@@ -261,10 +153,8 @@ fn bench_database_operations(c: &mut Criterion) {
 
     c.bench_function("db_count_active", |b| {
         b.to_async(&rt).iter_custom(|iters| async move {
-            let pool = db::init_memory_pool().await.unwrap();
-            let repo = db::Repository::from_sqlite(pool);
+            let repo = MockRepository::new();
 
-            // Insert mitigations
             for i in 0..100 {
                 let m = make_mitigation(i);
                 repo.insert_mitigation(&m).await.unwrap();
@@ -280,10 +170,8 @@ fn bench_database_operations(c: &mut Criterion) {
 
     c.bench_function("db_is_safelisted", |b| {
         b.to_async(&rt).iter_custom(|iters| async move {
-            let pool = db::init_memory_pool().await.unwrap();
-            let repo = db::Repository::from_sqlite(pool);
+            let repo = MockRepository::new();
 
-            // Add some safelist entries
             for i in 0..10 {
                 repo.insert_safelist(&format!("10.0.{}.0/24", i), "bench", None)
                     .await
@@ -364,8 +252,7 @@ fn bench_db_scaling(c: &mut Criterion) {
             size,
             |b, &size| {
                 b.to_async(&rt).iter_custom(|iters| async move {
-                    let pool = db::init_memory_pool().await.unwrap();
-                    let repo = db::Repository::from_sqlite(pool);
+                    let repo = MockRepository::new();
 
                     for i in 0..size {
                         let m = make_mitigation(i);

@@ -6,6 +6,7 @@ use axum::{
     Json, Router,
 };
 use std::sync::Arc;
+use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use utoipa::OpenApi;
 
@@ -60,6 +61,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
         ))
+        // Request body size limit (1MB)
+        .layer(RequestBodyLimitLayer::new(1024 * 1024))
 }
 
 async fn openapi_json() -> impl IntoResponse {

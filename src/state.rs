@@ -5,7 +5,7 @@ use tokio::sync::{broadcast, RwLock};
 
 use crate::bgp::FlowSpecAnnouncer;
 use crate::config::{Inventory, Playbooks, Settings};
-use crate::db::Repository;
+use crate::db::RepositoryTrait;
 use crate::error::{PrefixdError, Result};
 
 /// Shared application state
@@ -13,7 +13,7 @@ pub struct AppState {
     pub settings: Settings,
     pub inventory: RwLock<Inventory>,
     pub playbooks: RwLock<Playbooks>,
-    pub repo: Repository,
+    pub repo: Arc<dyn RepositoryTrait>,
     pub announcer: Arc<dyn FlowSpecAnnouncer>,
     pub shutdown_tx: broadcast::Sender<()>,
     config_dir: PathBuf,
@@ -25,7 +25,7 @@ impl AppState {
         settings: Settings,
         inventory: Inventory,
         playbooks: Playbooks,
-        repo: Repository,
+        repo: Arc<dyn RepositoryTrait>,
         announcer: Arc<dyn FlowSpecAnnouncer>,
         config_dir: PathBuf,
     ) -> Arc<Self> {

@@ -115,11 +115,8 @@ escalation:
   max_escalated_duration_seconds: 1800  # default: 1800
 
 storage:
-  # Storage driver: sqlite or postgres
-  driver: sqlite  # or: postgres
-  # SQLite: file path | Postgres: connection string
-  path: "./data/prefixd.db"
-  # path: "postgres://user:pass@localhost/prefixd"
+  # PostgreSQL connection string
+  connection_string: "postgres://user:pass@localhost/prefixd"
 
 observability:
   # Log format: json or pretty

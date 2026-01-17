@@ -25,7 +25,7 @@ A **BGP FlowSpec** routing policy daemon for automated L3/L4 DDoS mitigation. Re
 | **Operations** | CLI tool (`prefixdctl`), hot-reload config, graceful shutdown |
 | **Observability** | Prometheus metrics, structured audit log, JSON/pretty logging |
 | **Security** | Bearer token auth, mTLS, security headers |
-| **Storage** | SQLite (single node) or PostgreSQL (multi-POP) |
+| **Storage** | PostgreSQL |
 | **Dashboard** | Next.js web UI with live stats, mitigations, events, audit log |
 
 ## Quick Start
@@ -76,7 +76,7 @@ cargo build --release
                     │              Reconciliation ◀──▶ GoBGP         │
                     │                     │                          │
                     │                     ▼                          │
-                    │              PostgreSQL / SQLite               │
+                    │                  PostgreSQL                     │
                     └─────────────────────────────────────────────────┘
 ```
 
@@ -255,7 +255,7 @@ See [benchmarks.md](docs/benchmarks.md) for details.
 
 - Rust 1.85+ (for building)
 - GoBGP (FlowSpec announcements)
-- PostgreSQL 14+ (multi-POP) or SQLite (single node)
+- PostgreSQL 14+
 - Routers with FlowSpec support (Juniper, Arista, Cisco, Nokia)
 
 ## License
