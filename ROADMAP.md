@@ -444,6 +444,42 @@ prefixd implements a **signal-driven** architecture where detection is decoupled
 
 ---
 
+## Maturity Tiers
+
+**Goal:** Transform prefixd from functional to production-proven.
+
+### Tier 1: Credibility (Priority)
+- [ ] Implement `parse_flowspec_path()` - reconciliation is blind without it
+- [ ] Test with real routers (Juniper MX, Arista 7xxx) and document quirks
+- [ ] Ship Grafana dashboards (prefixd metrics + BGP session health)
+- [ ] Record demo video: attack → detection → mitigation → recovery
+
+### Tier 2: Remove Weaknesses
+- [ ] Native BGP speaker option (remove GoBGP dependency)
+  - [ ] Evaluate zettabgp or bgp-rs crate
+  - [ ] Feature flag to choose GoBGP vs native
+- [ ] WebSocket for real-time dashboard updates (replace 5s polling)
+- [ ] GoBGP health monitoring with automatic alerting
+- [ ] Chaos testing suite
+  - [ ] Kill GoBGP mid-mitigation
+  - [ ] Kill Postgres during event ingestion
+  - [ ] Flood events beyond rate limits
+
+### Tier 3: Differentiation
+- [ ] Multi-signal correlation (see v1.5 roadmap) - killer feature
+- [ ] Scrubber integration (redirect-to-VRF) for serious scale
+- [ ] FlowSpec action visualization (show exactly what rules are in RIB)
+- [ ] "Dry-run replay" - replay historical events with new playbooks
+
+### Tier 4: Community
+- [ ] "Why prefixd exists" blog post (signal-driven architecture)
+- [ ] Example integrations
+  - [ ] FastNetMon → prefixd
+  - [ ] Prometheus alerts → prefixd
+- [ ] Operator testimonials after production use
+
+---
+
 ## Non-Goals
 
 These are explicitly out of scope:
