@@ -71,7 +71,7 @@ impl TestContext {
     }
 
     pub async fn router(&self) -> axum::Router {
-        let auth_layer = create_auth_layer(self.pool.clone(), self.repo.clone()).await;
+        let auth_layer = create_auth_layer(self.pool.clone(), self.repo.clone(), false).await;
         prefixd::api::create_router(self.state.clone(), auth_layer)
     }
 

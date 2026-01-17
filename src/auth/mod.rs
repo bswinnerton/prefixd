@@ -13,9 +13,15 @@ use crate::db::RepositoryTrait;
 pub type AuthSession = axum_login::AuthSession<AuthBackend>;
 
 /// Create the auth manager layer for the router
+/// 
+/// # Arguments
+/// * `pool` - PostgreSQL connection pool for session storage
+/// * `repo` - Repository for operator lookups
+/// * `secure_cookies` - Set to true for HTTPS (production), false for HTTP (dev)
 pub async fn create_auth_layer(
     pool: PgPool,
     repo: Arc<dyn RepositoryTrait>,
+    secure_cookies: bool,
 ) -> axum_login::AuthManagerLayer<AuthBackend, PostgresStore> {
     // Session store using PostgreSQL
     let session_store = PostgresStore::new(pool.clone());
@@ -33,7 +39,7 @@ pub async fn create_auth_layer(
 
     // Session layer configuration
     let session_layer = tower_sessions::SessionManagerLayer::new(PostgresStore::new(pool))
-        .with_secure(false) // Set to true in production with HTTPS
+        .with_secure(secure_cookies)
         .with_same_site(tower_sessions::cookie::SameSite::Lax)
         .with_http_only(true)
         .with_expiry(tower_sessions::Expiry::OnInactivity(

@@ -369,8 +369,12 @@ pub async fn ingest_event(
 )]
 pub async fn list_events(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<ListEventsQuery>,
-) -> impl IntoResponse {
+) -> Result<Json<EventsListResponse>, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_bearer_auth(&state, auth_header)?;
+
     let limit = clamp_limit(query.limit.unwrap_or(100));
     let offset = query.offset.unwrap_or(0);
 
@@ -378,10 +382,10 @@ pub async fn list_events(
         .repo
         .list_events(limit, offset)
         .await
-        .map_err(AppError)?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let count = events.len();
-    Ok::<_, AppError>(Json(EventsListResponse { events, count }))
+    Ok(Json(EventsListResponse { events, count }))
 }
 
 /// List audit log entries
@@ -399,8 +403,12 @@ pub async fn list_events(
 )]
 pub async fn list_audit(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<ListEventsQuery>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_bearer_auth(&state, auth_header)?;
+
     let limit = query.limit.unwrap_or(100);
     let offset = query.offset.unwrap_or(0);
 
@@ -408,9 +416,9 @@ pub async fn list_audit(
         .repo
         .list_audit(limit, offset)
         .await
-        .map_err(AppError)?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok::<_, AppError>(Json(entries))
+    Ok(Json(entries))
 }
 
 /// List mitigations with optional filters
@@ -495,31 +503,42 @@ pub async fn list_mitigations(
 )]
 pub async fn get_mitigation(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
-) -> impl IntoResponse {
+) -> Result<Json<MitigationResponse>, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_bearer_auth(&state, auth_header)?;
+
     let mitigation = state
         .repo
         .get_mitigation(id)
         .await
-        .map_err(AppError)?
-        .ok_or_else(|| AppError(PrefixdError::MitigationNotFound(id)))?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
 
-    Ok::<_, AppError>(Json(MitigationResponse::from(&mitigation)))
+    Ok(Json(MitigationResponse::from(&mitigation)))
 }
 
 pub async fn create_mitigation(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(req): Json<CreateMitigationRequest>,
 ) -> impl IntoResponse {
+    // Check auth first
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    if let Err(status) = require_bearer_auth(&state, auth_header) {
+        return Err(status);
+    }
+
     // Validate protocol - reject unknown values instead of silently converting to None
     let protocol = match req.protocol.as_str() {
         "udp" => Some(17u8),
         "tcp" => Some(6u8),
         "icmp" => Some(1u8),
         "any" | "" => None,
-        _ => return Err(AppError(PrefixdError::InvalidRequest(
+        _ => return Ok(AppError(PrefixdError::InvalidRequest(
             format!("invalid protocol '{}', expected: udp, tcp, icmp, any", req.protocol)
-        ))),
+        )).into_response()),
     };
 
     // Validate action type
@@ -527,16 +546,16 @@ pub async fn create_mitigation(
         "police" => {
             // Police action requires rate_bps
             if req.rate_bps.is_none() {
-                return Err(AppError(PrefixdError::InvalidRequest(
+                return Ok(AppError(PrefixdError::InvalidRequest(
                     "action 'police' requires rate_bps".to_string()
-                )));
+                )).into_response());
             }
             ActionType::Police
         }
         "discard" => ActionType::Discard,
-        _ => return Err(AppError(PrefixdError::InvalidRequest(
+        _ => return Ok(AppError(PrefixdError::InvalidRequest(
             format!("invalid action '{}', expected: discard, police", req.action)
-        ))),
+        )).into_response()),
     };
 
     let inventory = state.inventory.read().await;
@@ -566,7 +585,9 @@ pub async fn create_mitigation(
         &state.settings.timers,
     );
     let is_safelisted = state.repo.is_safelisted(&req.victim_ip).await.unwrap_or(false);
-    guardrails.validate(&intent, state.repo.as_ref(), is_safelisted).await.map_err(AppError)?;
+    if let Err(e) = guardrails.validate(&intent, state.repo.as_ref(), is_safelisted).await {
+        return Ok(AppError(e).into_response());
+    }
 
     // Create and announce
     let mut mitigation = Mitigation::from_intent(
@@ -579,31 +600,38 @@ pub async fn create_mitigation(
         let nlri = FlowSpecNlri::from(&mitigation.match_criteria);
         let action = FlowSpecAction::from((mitigation.action_type, &mitigation.action_params));
         let rule = FlowSpecRule::new(nlri, action);
-        state.announcer.announce(&rule).await.map_err(AppError)?;
+        if let Err(e) = state.announcer.announce(&rule).await {
+            return Ok(AppError(e).into_response());
+        }
     }
 
     mitigation.activate();
-    state.repo.insert_mitigation(&mitigation).await.map_err(AppError)?;
+    if let Err(e) = state.repo.insert_mitigation(&mitigation).await {
+        return Ok(AppError(e).into_response());
+    }
 
-    Ok::<_, AppError>((StatusCode::CREATED, Json(MitigationResponse::from(&mitigation))))
+    Ok((StatusCode::CREATED, Json(MitigationResponse::from(&mitigation))).into_response())
 }
 
 pub async fn withdraw_mitigation(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Json(req): Json<WithdrawRequest>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, StatusCode> {
+    // Check auth
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_bearer_auth(&state, auth_header)?;
+
     let mut mitigation = state
         .repo
         .get_mitigation(id)
         .await
-        .map_err(AppError)?
-        .ok_or_else(|| AppError(PrefixdError::MitigationNotFound(id)))?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     if !mitigation.is_active() {
-        return Err(AppError(PrefixdError::InvalidRequest(
-            "mitigation not active".to_string(),
-        )));
+        return Err(StatusCode::BAD_REQUEST);
     }
 
     // Withdraw BGP
@@ -611,11 +639,11 @@ pub async fn withdraw_mitigation(
         let nlri = FlowSpecNlri::from(&mitigation.match_criteria);
         let action = FlowSpecAction::from((mitigation.action_type, &mitigation.action_params));
         let rule = FlowSpecRule::new(nlri, action);
-        state.announcer.withdraw(&rule).await.map_err(AppError)?;
+        state.announcer.withdraw(&rule).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
 
     mitigation.withdraw(Some(format!("{}: {}", req.operator_id, req.reason)));
-    state.repo.update_mitigation(&mitigation).await.map_err(AppError)?;
+    state.repo.update_mitigation(&mitigation).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Broadcast withdrawal via WebSocket
     let _ = state.ws_broadcast.send(crate::ws::WsMessage::MitigationWithdrawn {
@@ -628,37 +656,51 @@ pub async fn withdraw_mitigation(
         "mitigation withdrawn"
     );
 
-    Ok::<_, AppError>(Json(MitigationResponse::from(&mitigation)))
+    Ok(Json(MitigationResponse::from(&mitigation)))
 }
 
-pub async fn list_safelist(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let entries = state.repo.list_safelist().await.map_err(AppError)?;
-    Ok::<_, AppError>(Json(entries))
+pub async fn list_safelist(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_bearer_auth(&state, auth_header)?;
+
+    let entries = state.repo.list_safelist().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(entries))
 }
 
 pub async fn add_safelist(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(req): Json<AddSafelistRequest>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_bearer_auth(&state, auth_header)?;
+
     state
         .repo
         .insert_safelist(&req.prefix, &req.operator_id, req.reason.as_deref())
         .await
-        .map_err(AppError)?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     tracing::info!(prefix = %req.prefix, operator = %req.operator_id, "safelist entry added");
-    Ok::<_, AppError>(StatusCode::CREATED)
+    Ok(StatusCode::CREATED)
 }
 
 pub async fn remove_safelist(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(prefix): Path<String>,
-) -> impl IntoResponse {
-    let removed = state.repo.remove_safelist(&prefix).await.map_err(AppError)?;
+) -> Result<impl IntoResponse, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_bearer_auth(&state, auth_header)?;
+
+    let removed = state.repo.remove_safelist(&prefix).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if removed {
-        Ok::<_, AppError>(StatusCode::NO_CONTENT)
+        Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(AppError(PrefixdError::NotFound(format!("safelist entry: {}", prefix))))
+        Err(StatusCode::NOT_FOUND)
     }
 }
 
@@ -720,22 +762,28 @@ pub struct ReloadResponse {
     timestamp: String,
 }
 
-pub async fn reload_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn reload_config(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_bearer_auth(&state, auth_header)?;
+
     match state.reload_config().await {
         Ok(reloaded) => {
             crate::observability::CONFIG_RELOADS
                 .with_label_values(&["success"])
                 .inc();
-            Ok::<_, AppError>(Json(ReloadResponse {
+            Ok(Json(ReloadResponse {
                 reloaded,
                 timestamp: chrono::Utc::now().to_rfc3339(),
             }))
         }
-        Err(e) => {
+        Err(_) => {
             crate::observability::CONFIG_RELOADS
                 .with_label_values(&["error"])
                 .inc();
-            Err(AppError(e))
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
@@ -751,9 +799,15 @@ pub async fn reload_config(State(state): State<Arc<AppState>>) -> impl IntoRespo
         (status = 200, description = "Global statistics", body = crate::db::repository::GlobalStats)
     )
 )]
-pub async fn get_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let stats = state.repo.get_stats().await.map_err(AppError)?;
-    Ok::<_, AppError>(Json(stats))
+pub async fn get_stats(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_bearer_auth(&state, auth_header)?;
+
+    let stats = state.repo.get_stats().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(stats))
 }
 
 /// List all known POPs
@@ -765,9 +819,15 @@ pub async fn get_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         (status = 200, description = "List of POPs", body = Vec<crate::db::repository::PopInfo>)
     )
 )]
-pub async fn list_pops(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let pops = state.repo.list_pops().await.map_err(AppError)?;
-    Ok::<_, AppError>(Json(pops))
+pub async fn list_pops(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_bearer_auth(&state, auth_header)?;
+
+    let pops = state.repo.list_pops().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(pops))
 }
 
 // Error handling
