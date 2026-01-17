@@ -448,39 +448,50 @@ prefixd implements a **signal-driven** architecture where detection is decoupled
 
 **Goal:** Transform prefixd from functional to production-proven.
 
-### Tier 1: Credibility (Priority)
-- [ ] Implement `parse_flowspec_path()` - reconciliation is blind without it
-- [ ] Test with real routers (Juniper MX, Arista 7xxx) and document quirks
+### Known Limitations (Honest Assessment)
+
+1. **Reconciliation is blind** - `parse_flowspec_path()` not implemented; can't compare desired vs actual RIB state
+2. **GoBGP is SPOF** - If GoBGP crashes/hangs, mitigations don't happen; we're trusting a sidecar
+3. **Never tested with real routers** - Juniper/Arista/Cisco FlowSpec import policies are finicky; bugs will surface
+4. **Detection quality is everything** - Garbage signals in = garbage mitigations out (guardrails help but don't fix bad data)
+5. **5s polling during attacks** - Operators will be frustrated; WebSocket is more important than ranked
+6. **No Tbps scale** - Requires scrubber integration for serious volumetric attacks
+
+### Tier 1: Credibility (Do These First)
+- [ ] **Implement `parse_flowspec_path()`** - CRITICAL: reconciliation is blind without it
+- [ ] **Test with real routers** - Juniper MX, Arista 7xxx, Cisco; document quirks and import policy gotchas
+- [ ] **WebSocket for dashboard** - 5s polling is unacceptable during active attacks (moved up from Tier 2)
 - [ ] Ship Grafana dashboards (prefixd metrics + BGP session health)
 - [ ] Record demo video: attack → detection → mitigation → recovery
 
 ### Tier 2: Remove Weaknesses
-- [ ] GoBGP hardening (priority)
+- [ ] GoBGP hardening (reduce SPOF risk)
   - [x] Connection timeout (10s) and request timeout (30s)
   - [x] Retry with exponential backoff (3 retries)
-  - [ ] Automatic reconnection on disconnect
-  - [ ] Health check endpoint (`/v1/health` includes GoBGP status)
+  - [ ] Automatic reconnection on disconnect with state re-sync
   - [ ] Circuit breaker pattern for sustained failures
   - [ ] Metrics: `prefixd_gobgp_reconnects_total`, `prefixd_gobgp_latency_seconds`
-- [ ] WebSocket for real-time dashboard updates (replace 5s polling)
+  - [ ] Alert on GoBGP disconnect (webhook/PagerDuty)
 - [ ] Chaos testing suite
   - [ ] Kill GoBGP mid-mitigation → verify reconnect + re-announce
   - [ ] Kill Postgres during event ingestion → verify graceful degradation
   - [ ] Flood events beyond rate limits → verify backpressure
+- [ ] Input validation hardening
+  - [ ] Document expected signal quality from detectors
+  - [ ] Add confidence threshold filtering (reject low-confidence events)
 - [ ] Native BGP speaker (future/optional)
   - [ ] Evaluate zettabgp or bgp-rs if GoBGP proves inadequate
-  - [ ] Feature flag to choose GoBGP vs native
 
 ### Tier 3: Differentiation
 - [ ] Multi-signal correlation (see v1.5 roadmap) - killer feature
-- [ ] Scrubber integration (redirect-to-VRF) for serious scale
+- [ ] Scrubber integration (redirect-to-VRF) - required for Tbps scale
 - [ ] FlowSpec action visualization (show exactly what rules are in RIB)
 - [ ] "Dry-run replay" - replay historical events with new playbooks
 
 ### Tier 4: Community
 - [ ] "Why prefixd exists" blog post (signal-driven architecture)
 - [ ] Example integrations
-  - [ ] FastNetMon → prefixd
+  - [ ] FastNetMon → prefixd (with quality tuning guide)
   - [ ] Prometheus alerts → prefixd
 - [ ] Operator testimonials after production use
 
