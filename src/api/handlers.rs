@@ -75,10 +75,10 @@ impl From<&Mitigation> for MitigationResponse {
 
 #[derive(Serialize, ToSchema)]
 pub struct MitigationsListResponse {
-    /// List of mitigations
+    /// List of mitigations in this page
     mitigations: Vec<MitigationResponse>,
-    /// Total count
-    total: usize,
+    /// Number of mitigations returned in this page
+    count: usize,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -424,12 +424,12 @@ pub async fn list_mitigations(
             .map_err(AppError)?
     };
 
-    let total = mitigations.len();
+    let count = mitigations.len();
     let responses: Vec<_> = mitigations.iter().map(MitigationResponse::from).collect();
 
     Ok::<_, AppError>(Json(MitigationsListResponse {
         mitigations: responses,
-        total,
+        count,
     }))
 }
 
@@ -464,17 +464,32 @@ pub async fn create_mitigation(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateMitigationRequest>,
 ) -> impl IntoResponse {
+    // Validate protocol - reject unknown values instead of silently converting to None
     let protocol = match req.protocol.as_str() {
         "udp" => Some(17u8),
         "tcp" => Some(6u8),
         "icmp" => Some(1u8),
-        _ => None,
+        "any" | "" => None,
+        _ => return Err(AppError(PrefixdError::InvalidRequest(
+            format!("invalid protocol '{}', expected: udp, tcp, icmp, any", req.protocol)
+        ))),
     };
 
+    // Validate action type
     let action_type = match req.action.as_str() {
-        "police" => ActionType::Police,
+        "police" => {
+            // Police action requires rate_bps
+            if req.rate_bps.is_none() {
+                return Err(AppError(PrefixdError::InvalidRequest(
+                    "action 'police' requires rate_bps".to_string()
+                )));
+            }
+            ActionType::Police
+        }
         "discard" => ActionType::Discard,
-        _ => return Err(AppError(PrefixdError::InvalidRequest("invalid action".to_string()))),
+        _ => return Err(AppError(PrefixdError::InvalidRequest(
+            format!("invalid action '{}', expected: discard, police", req.action)
+        ))),
     };
 
     let inventory = state.inventory.read().await;

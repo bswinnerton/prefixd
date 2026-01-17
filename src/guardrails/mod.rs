@@ -46,8 +46,7 @@ impl Guardrails {
         if self.config.require_ttl && ttl == 0 {
             return Err(PrefixdError::GuardrailViolation(GuardrailError::TtlRequired));
         }
-
-        // Note: min/max TTL should come from timers config, passed separately
+        // TODO: Add min/max TTL bounds enforcement (see ROADMAP v1.3)
         Ok(())
     }
 

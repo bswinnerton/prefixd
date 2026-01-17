@@ -476,8 +476,15 @@ impl FlowSpecAnnouncer for GoBgpAnnouncer {
         })? {
             if let Some(dest) = resp.destination {
                 for path in dest.paths {
-                    if let Ok(rule) = self.parse_flowspec_path(&path) {
-                        rules.push(rule);
+                    match self.parse_flowspec_path(&path) {
+                        Ok(rule) => rules.push(rule),
+                        Err(e) => {
+                            // Log warning for parse failures to aid debugging reconciliation gaps
+                            tracing::warn!(
+                                error = %e,
+                                "failed to parse FlowSpec path from GoBGP RIB, rule will be ignored in reconciliation"
+                            );
+                        }
                     }
                 }
             }
