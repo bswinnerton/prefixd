@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `prefixd_config_reload_total` counter metric (success/error)
   - `prefixd_escalations_total` counter metric
   - Database connectivity status in `/v1/health` endpoint
-  - Health endpoint now returns `"degraded"` status on DB failure
+  - GoBGP connectivity status in `/v1/health` endpoint
+  - Health endpoint now returns `"degraded"` status on DB or GoBGP failure
   - Warning logs for FlowSpec path parse failures in reconciliation
 
 - **Security**
@@ -48,12 +49,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **DevOps**
   - Dependabot configuration for Cargo, GitHub Actions, and npm
+  - Pre-commit hooks configuration (fmt, clippy, test)
+
+- **Guardrails**
+  - Max TTL enforcement via `guardrails.max_ttl_seconds` config
+  - Min TTL enforcement via `guardrails.min_ttl_seconds` config
 
 ### Fixed
+
+- **Startup validation** - `auth.mode=bearer` without token now fails fast at startup (was returning 500 on every request)
 
 - IPv6 prefix validation uses proper `IpAddr` parsing (was using contains(':') heuristic)
 - `compute_scope_hash()` now deduplicates ports before hashing for consistency
 - Bearer token cached at startup (was reading env var on every request)
+- `Mitigation::from_row` now returns `Result` with error logging (was silently defaulting on parse failures)
 
 - IPv6 support in `is_safelisted()` - now handles both IPv4 and IPv6 prefixes
 - `is_safelisted()` performance - uses PostgreSQL inet operators instead of loading all entries

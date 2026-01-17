@@ -48,7 +48,19 @@ impl Guardrails {
         if self.config.require_ttl && ttl == 0 {
             return Err(PrefixdError::GuardrailViolation(GuardrailError::TtlRequired));
         }
-        // TODO: Add min/max TTL bounds enforcement (see ROADMAP v1.3)
+
+        // Enforce min/max TTL bounds if configured
+        let min_ttl = self.config.min_ttl_seconds.unwrap_or(0);
+        let max_ttl = self.config.max_ttl_seconds.unwrap_or(u32::MAX);
+
+        if ttl > 0 && (ttl < min_ttl || ttl > max_ttl) {
+            return Err(PrefixdError::GuardrailViolation(GuardrailError::TtlOutOfBounds {
+                ttl,
+                min: min_ttl,
+                max: max_ttl,
+            }));
+        }
+
         Ok(())
     }
 
@@ -151,6 +163,8 @@ mod tests {
         (
             GuardrailsConfig {
                 require_ttl: true,
+                min_ttl_seconds: Some(30),
+                max_ttl_seconds: Some(1800),
                 dst_prefix_minlen: 32,
                 dst_prefix_maxlen: 32,
                 dst_prefix_minlen_v6: None,
@@ -175,6 +189,8 @@ mod tests {
         (
             GuardrailsConfig {
                 require_ttl: false,
+                min_ttl_seconds: None,
+                max_ttl_seconds: None,
                 dst_prefix_minlen: 24,
                 dst_prefix_maxlen: 32,
                 dst_prefix_minlen_v6: Some(64),
@@ -251,9 +267,40 @@ mod tests {
         let (config, quotas) = test_config();
         let guardrails = Guardrails::new(config, quotas);
 
+        // Valid TTLs within bounds (30-1800)
         assert!(guardrails.validate_ttl(60).is_ok());
-        assert!(guardrails.validate_ttl(3600).is_ok());
-        assert!(guardrails.validate_ttl(1).is_ok());
+        assert!(guardrails.validate_ttl(30).is_ok());  // min
+        assert!(guardrails.validate_ttl(1800).is_ok()); // max
+    }
+
+    #[test]
+    fn test_validate_ttl_out_of_bounds() {
+        let (config, quotas) = test_config();
+        let guardrails = Guardrails::new(config, quotas);
+
+        // Below minimum (30)
+        let result = guardrails.validate_ttl(10);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PrefixdError::GuardrailViolation(GuardrailError::TtlOutOfBounds { ttl, min, max }) => {
+                assert_eq!(ttl, 10);
+                assert_eq!(min, 30);
+                assert_eq!(max, 1800);
+            }
+            _ => panic!("Expected TtlOutOfBounds error"),
+        }
+
+        // Above maximum (1800)
+        let result = guardrails.validate_ttl(3600);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PrefixdError::GuardrailViolation(GuardrailError::TtlOutOfBounds { ttl, min, max }) => {
+                assert_eq!(ttl, 3600);
+                assert_eq!(min, 30);
+                assert_eq!(max, 1800);
+            }
+            _ => panic!("Expected TtlOutOfBounds error"),
+        }
     }
 
     #[test]
@@ -263,7 +310,9 @@ mod tests {
 
         // Zero TTL should be allowed when not required
         assert!(guardrails.validate_ttl(0).is_ok());
+        // Any positive TTL is fine without bounds
         assert!(guardrails.validate_ttl(60).is_ok());
+        assert!(guardrails.validate_ttl(999999).is_ok());
     }
 
     // ==========================================================================

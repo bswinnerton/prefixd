@@ -55,7 +55,8 @@ impl TestContext {
             repo.clone(),
             announcer,
             std::path::PathBuf::from("."),
-        );
+        )
+        .expect("failed to create app state");
 
         Self {
             state,
@@ -91,6 +92,8 @@ pub fn test_settings() -> Settings {
         },
         guardrails: GuardrailsConfig {
             require_ttl: true,
+            min_ttl_seconds: Some(30),
+            max_ttl_seconds: Some(1800),
             dst_prefix_minlen: 32,
             dst_prefix_maxlen: 32,
             dst_prefix_minlen_v6: None,

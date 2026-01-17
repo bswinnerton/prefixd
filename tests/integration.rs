@@ -37,6 +37,8 @@ fn test_settings() -> Settings {
         },
         guardrails: GuardrailsConfig {
             require_ttl: true,
+            min_ttl_seconds: Some(30),
+            max_ttl_seconds: Some(1800),
             dst_prefix_minlen: 32,
             dst_prefix_maxlen: 32,
             dst_prefix_minlen_v6: None,
@@ -133,7 +135,8 @@ async fn setup_app() -> axum::Router {
         repo,
         announcer,
         std::path::PathBuf::from("."),
-    );
+    )
+    .expect("failed to create app state");
 
     create_router(state)
 }
@@ -222,7 +225,8 @@ async fn setup_app_with_bearer() -> axum::Router {
         repo,
         announcer,
         std::path::PathBuf::from("."),
-    );
+    )
+    .expect("failed to create app state");
 
     create_router(state)
 }

@@ -205,7 +205,7 @@
   - [ ] Span instrumentation for key operations
 - [x] Health checks
   - [x] Database connectivity check in `/v1/health`
-  - [ ] GoBGP connectivity check
+  - [x] GoBGP connectivity check
   - [x] Detailed `/v1/health` response (status: healthy/degraded)
 
 ### DevOps
@@ -219,7 +219,7 @@
   - [ ] PodDisruptionBudget
   - [ ] HorizontalPodAutoscaler
 - [ ] Helm chart
-- [ ] Pre-commit hooks configuration
+- [x] Pre-commit hooks configuration
 - [x] Dependabot configuration
 
 ## v1.3 - Frontend Maturity & API Polish
@@ -243,10 +243,10 @@
 - [ ] Bulk operations
   - [ ] `POST /v1/mitigations/bulk-withdraw`
   - [ ] `POST /v1/safelist/bulk-add`
-- [ ] API validation improvements
+- [x] API validation improvements
   - [x] Tighten `create_mitigation` validation (protocol/action/rate)
   - [x] Clarify `total` semantics (page size vs total count) - renamed to `count`
-  - [ ] Add max TTL enforcement in guardrails (config-driven)
+  - [x] Add max TTL enforcement in guardrails (config-driven)
 - [x] Pagination hardening
   - [x] Add hard upper bound on `limit` param (1000)
   - [x] Wrap `list_events` in `EventsListResponse` with `count`
@@ -261,9 +261,9 @@
   - [ ] Document limitation if not implemented
 
 ### Domain Model Hardening
-- [ ] `Mitigation::from_row` - fail instead of defaulting on parse errors
-  - [ ] Return Result instead of silently defaulting to Police/Pending
-  - [ ] Log/alert on data corruption
+- [x] `Mitigation::from_row` - fail instead of defaulting on parse errors
+  - [x] Return Result instead of silently defaulting to Police/Pending
+  - [x] Log/alert on data corruption
 - [x] `MatchCriteria::compute_scope_hash` - dedup ports before sorting
 - [x] `validate_prefix_length` - use `IpAddr` parsing instead of contains(':') heuristic
   - [x] Handle IPv4-mapped IPv6 correctly

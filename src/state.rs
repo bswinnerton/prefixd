@@ -30,7 +30,7 @@ impl AppState {
         repo: Arc<dyn RepositoryTrait>,
         announcer: Arc<dyn FlowSpecAnnouncer>,
         config_dir: PathBuf,
-    ) -> Arc<Self> {
+    ) -> Result<Arc<Self>> {
         let (shutdown_tx, _) = broadcast::channel(1);
 
         // Load bearer token at startup (avoids per-request env lookups)
@@ -48,18 +48,17 @@ impl AppState {
                     Some(token)
                 }
                 _ => {
-                    tracing::error!(
-                        env_var = %env_var,
-                        "bearer auth enabled but token env var not set or empty"
-                    );
-                    None
+                    return Err(PrefixdError::Config(format!(
+                        "auth.mode=bearer but {} is not set or empty",
+                        env_var
+                    )));
                 }
             }
         } else {
             None
         };
 
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             settings,
             inventory: RwLock::new(inventory),
             playbooks: RwLock::new(playbooks),
@@ -69,7 +68,7 @@ impl AppState {
             bearer_token,
             config_dir,
             shutting_down: AtomicBool::new(false),
-        })
+        }))
     }
 
     pub fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {

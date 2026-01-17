@@ -5,6 +5,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use super::AttackVector;
+use crate::error::{PrefixdError, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -43,7 +44,7 @@ impl std::fmt::Display for MitigationStatus {
 impl std::str::FromStr for MitigationStatus {
     type Err = String;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
             "pending" => Ok(Self::Pending),
             "active" => Ok(Self::Active),
@@ -81,7 +82,7 @@ impl std::fmt::Display for ActionType {
 impl std::str::FromStr for ActionType {
     type Err = String;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
             "police" => Ok(Self::Police),
             "discard" => Ok(Self::Discard),
@@ -214,32 +215,67 @@ impl Mitigation {
         }
     }
 
-    pub fn from_row(row: MitigationRow) -> Self {
-        let match_criteria: MatchCriteria =
-            serde_json::from_str(&row.match_json).unwrap_or(MatchCriteria {
-                dst_prefix: String::new(),
-                protocol: None,
-                dst_ports: vec![],
-            });
+    pub fn from_row(row: MitigationRow) -> Result<Self> {
+        let match_criteria: MatchCriteria = serde_json::from_str(&row.match_json).map_err(|e| {
+            tracing::error!(
+                mitigation_id = %row.mitigation_id,
+                error = %e,
+                "failed to parse match_json - possible data corruption"
+            );
+            PrefixdError::Internal(format!("invalid match_json for mitigation {}: {}", row.mitigation_id, e))
+        })?;
 
-        let action_params: ActionParams = row
-            .action_params_json
-            .as_deref()
-            .and_then(|s| serde_json::from_str(s).ok())
-            .unwrap_or(ActionParams { rate_bps: None });
+        let action_params: ActionParams = match &row.action_params_json {
+            Some(json) => serde_json::from_str(json).map_err(|e| {
+                tracing::error!(
+                    mitigation_id = %row.mitigation_id,
+                    error = %e,
+                    "failed to parse action_params_json - possible data corruption"
+                );
+                PrefixdError::Internal(format!("invalid action_params_json for mitigation {}: {}", row.mitigation_id, e))
+            })?,
+            None => ActionParams { rate_bps: None },
+        };
 
-        Self {
+        let vector = row.vector.parse().map_err(|_| {
+            tracing::error!(
+                mitigation_id = %row.mitigation_id,
+                vector = %row.vector,
+                "failed to parse vector - possible data corruption"
+            );
+            PrefixdError::Internal(format!("invalid vector '{}' for mitigation {}", row.vector, row.mitigation_id))
+        })?;
+
+        let action_type = row.action_type.parse().map_err(|_| {
+            tracing::error!(
+                mitigation_id = %row.mitigation_id,
+                action_type = %row.action_type,
+                "failed to parse action_type - possible data corruption"
+            );
+            PrefixdError::Internal(format!("invalid action_type '{}' for mitigation {}", row.action_type, row.mitigation_id))
+        })?;
+
+        let status = row.status.parse().map_err(|_| {
+            tracing::error!(
+                mitigation_id = %row.mitigation_id,
+                status = %row.status,
+                "failed to parse status - possible data corruption"
+            );
+            PrefixdError::Internal(format!("invalid status '{}' for mitigation {}", row.status, row.mitigation_id))
+        })?;
+
+        Ok(Self {
             mitigation_id: row.mitigation_id,
             scope_hash: row.scope_hash,
             pop: row.pop,
             customer_id: row.customer_id,
             service_id: row.service_id,
             victim_ip: row.victim_ip,
-            vector: row.vector.parse().unwrap_or(AttackVector::Unknown),
+            vector,
             match_criteria,
-            action_type: row.action_type.parse().unwrap_or(ActionType::Police),
+            action_type,
             action_params,
-            status: row.status.parse().unwrap_or(MitigationStatus::Pending),
+            status,
             created_at: row.created_at,
             updated_at: row.updated_at,
             expires_at: row.expires_at,
@@ -249,7 +285,7 @@ impl Mitigation {
             escalated_from_id: row.escalated_from_id,
             reason: row.reason.unwrap_or_default(),
             rejection_reason: row.rejection_reason,
-        }
+        })
     }
 
     pub fn is_active(&self) -> bool {

@@ -76,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
         repo.clone(),
         announcer.clone(),
         cli.config.clone(),
-    );
+    )?;
 
     // Start reconciliation loop
     let reconciler = ReconciliationLoop::new(

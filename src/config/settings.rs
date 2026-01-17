@@ -120,6 +120,12 @@ pub struct BgpNeighbor {
 pub struct GuardrailsConfig {
     #[serde(default = "default_true")]
     pub require_ttl: bool,
+    /// Minimum TTL in seconds (default: from timers.min_ttl_seconds)
+    #[serde(default)]
+    pub min_ttl_seconds: Option<u32>,
+    /// Maximum TTL in seconds (default: from timers.max_ttl_seconds)
+    #[serde(default)]
+    pub max_ttl_seconds: Option<u32>,
     #[serde(default = "default_32")]
     pub dst_prefix_minlen: u8,
     #[serde(default = "default_32")]

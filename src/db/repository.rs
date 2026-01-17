@@ -235,7 +235,10 @@ impl RepositoryTrait for Repository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(Mitigation::from_row))
+        match row {
+            Some(r) => Ok(Some(Mitigation::from_row(r)?)),
+            None => Ok(None),
+        }
     }
 
     async fn find_active_by_scope(&self, scope_hash: &str, pop: &str) -> Result<Option<Mitigation>> {
@@ -253,7 +256,10 @@ impl RepositoryTrait for Repository {
         .bind(pop)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(Mitigation::from_row))
+        match row {
+            Some(r) => Ok(Some(Mitigation::from_row(r)?)),
+            None => Ok(None),
+        }
     }
 
     async fn find_active_by_victim(&self, victim_ip: &str) -> Result<Vec<Mitigation>> {
@@ -270,7 +276,7 @@ impl RepositoryTrait for Repository {
         .bind(victim_ip)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(Mitigation::from_row).collect())
+        rows.into_iter().map(Mitigation::from_row).collect()
     }
 
     async fn list_mitigations(
@@ -304,7 +310,7 @@ impl RepositoryTrait for Repository {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows.into_iter().map(Mitigation::from_row).collect())
+        rows.into_iter().map(Mitigation::from_row).collect()
     }
 
     async fn count_active_by_customer(&self, customer_id: &str) -> Result<u32> {
@@ -351,7 +357,7 @@ impl RepositoryTrait for Repository {
         .bind(now)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(Mitigation::from_row).collect())
+        rows.into_iter().map(Mitigation::from_row).collect()
     }
 
     async fn insert_safelist(&self, prefix: &str, added_by: &str, reason: Option<&str>) -> Result<()> {
@@ -505,7 +511,7 @@ impl RepositoryTrait for Repository {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows.into_iter().map(Mitigation::from_row).collect())
+        rows.into_iter().map(Mitigation::from_row).collect()
     }
 }
 

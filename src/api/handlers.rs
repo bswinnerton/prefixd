@@ -102,6 +102,8 @@ pub struct HealthResponse {
     active_mitigations: u32,
     /// Database connectivity status
     database: String,
+    /// GoBGP connectivity status
+    gobgp: String,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -637,7 +639,11 @@ pub async fn remove_safelist(
     )
 )]
 pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let sessions = state.announcer.session_status().await.unwrap_or_default();
+    // Check GoBGP connectivity
+    let (sessions, gobgp_status) = match state.announcer.session_status().await {
+        Ok(s) => (s, "connected".to_string()),
+        Err(e) => (vec![], format!("error: {}", e)),
+    };
 
     // Check database connectivity
     let (active, db_status) = match state.repo.count_active_global().await {
@@ -650,7 +656,8 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         .map(|s| (s.name, s.state.to_string()))
         .collect();
 
-    let status = if db_status.starts_with("error") {
+    // Determine overall status
+    let status = if db_status.starts_with("error") || gobgp_status.starts_with("error") {
         "degraded"
     } else {
         "healthy"
@@ -661,6 +668,7 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         bgp_sessions: bgp_map,
         active_mitigations: active,
         database: db_status,
+        gobgp: gobgp_status,
     })
 }
 
