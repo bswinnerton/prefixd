@@ -1,15 +1,19 @@
 use std::path::Path;
 use std::sync::Arc;
-use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
+use testcontainers::{
+    core::{IntoContainerPort, WaitFor},
+    runners::AsyncRunner,
+    ContainerAsync, GenericImage, ImageExt,
+};
 use testcontainers_modules::postgres::Postgres;
 
 use prefixd::auth::create_auth_layer;
-use prefixd::bgp::MockAnnouncer;
+use prefixd::bgp::{FlowSpecAnnouncer, GoBgpAnnouncer, MockAnnouncer};
 use prefixd::config::{
     AllowedPorts, Asset, AuthConfig, AuthMode, BgpConfig, BgpMode, Customer, EscalationConfig,
-    GuardrailsConfig, HttpConfig, Inventory, ObservabilityConfig, Playbook, PlaybookAction,
-    PlaybookMatch, PlaybookStep, Playbooks, QuotasConfig, RateLimitConfig, SafelistConfig,
-    Service, Settings, ShutdownConfig, StorageConfig, TimersConfig,
+    GuardrailsConfig, HttpConfig, Inventory, ObservabilityConfig, OperationMode, Playbook,
+    PlaybookAction, PlaybookMatch, PlaybookStep, Playbooks, QuotasConfig, RateLimitConfig,
+    SafelistConfig, Service, Settings, ShutdownConfig, StorageConfig, TimersConfig,
 };
 use prefixd::db::{init_postgres_pool, Repository, RepositoryTrait};
 use prefixd::domain::AttackVector;
@@ -272,4 +276,153 @@ pub fn test_playbooks() -> Playbooks {
             },
         ],
     }
+}
+
+// =============================================================================
+// E2E Test Context - Uses REAL GoBGP (not mock)
+// =============================================================================
+
+/// End-to-end test context with real Postgres AND real GoBGP containers.
+/// This tests the full flow: HTTP API → prefixd → GoBGP gRPC → FlowSpec RIB
+pub struct E2ETestContext {
+    pub state: Arc<AppState>,
+    pub repo: Arc<dyn RepositoryTrait>,
+    pub announcer: Arc<GoBgpAnnouncer>,
+    pub pool: PgPool,
+    pub gobgp_endpoint: String,
+    _postgres: ContainerAsync<Postgres>,
+    _gobgp: ContainerAsync<GenericImage>,
+}
+
+impl E2ETestContext {
+    /// Create a new E2E test context with real Postgres and GoBGP containers.
+    pub async fn new() -> Self {
+        // Start Postgres container
+        let postgres = Postgres::default()
+            .with_tag("16-alpine")
+            .start()
+            .await
+            .expect("Failed to start Postgres container");
+
+        let pg_host = postgres.get_host().await.expect("Failed to get Postgres host");
+        let pg_port = postgres
+            .get_host_port_ipv4(5432)
+            .await
+            .expect("Failed to get Postgres port");
+
+        let connection_string = format!(
+            "postgres://postgres:postgres@{}:{}/postgres",
+            pg_host, pg_port
+        );
+
+        // Start GoBGP container
+        // The jauderho/gobgp image is minimal - we need to configure GoBGP via gRPC after start
+        let gobgp = GenericImage::new("jauderho/gobgp", "latest")
+            .with_exposed_port(50051.tcp())
+            .with_exposed_port(179.tcp())
+            .with_wait_for(WaitFor::seconds(3))
+            .with_cmd([
+                "/usr/local/bin/gobgpd",
+                "-p",
+                "--api-hosts=0.0.0.0:50051",
+            ])
+            .start()
+            .await
+            .expect("Failed to start GoBGP container");
+
+        // Additional wait for gRPC server to be ready
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        let gobgp_host = gobgp.get_host().await.expect("Failed to get GoBGP host");
+        let gobgp_port = gobgp
+            .get_host_port_ipv4(50051)
+            .await
+            .expect("Failed to get GoBGP port");
+
+        let gobgp_endpoint = format!("{}:{}", gobgp_host, gobgp_port);
+
+        // Initialize Postgres
+        let pool = init_postgres_pool(&connection_string)
+            .await
+            .expect("Failed to init pool");
+
+        let repo: Arc<dyn RepositoryTrait> = Arc::new(Repository::new(pool.clone()));
+
+        // Configure GoBGP via gRPC StartBgp
+        configure_gobgp(&gobgp_endpoint).await;
+
+        // Create REAL GoBGP announcer
+        let mut announcer = GoBgpAnnouncer::new(gobgp_endpoint.clone());
+        announcer.connect().await.expect("Failed to connect to GoBGP");
+        let announcer = Arc::new(announcer);
+
+        // Settings configured for ENFORCED mode (not dry-run)
+        let mut settings = test_settings();
+        settings.storage.connection_string = connection_string;
+        settings.mode = OperationMode::Enforced; // Actually announce!
+        settings.bgp.mode = BgpMode::Sidecar;
+        settings.bgp.gobgp_grpc = gobgp_endpoint.clone();
+
+        let state = AppState::new(
+            settings,
+            test_inventory(),
+            test_playbooks(),
+            repo.clone(),
+            announcer.clone(),
+            std::path::PathBuf::from("."),
+        )
+        .expect("Failed to create app state");
+
+        Self {
+            state,
+            repo,
+            announcer,
+            pool,
+            gobgp_endpoint,
+            _postgres: postgres,
+            _gobgp: gobgp,
+        }
+    }
+
+    pub async fn router(&self) -> axum::Router {
+        let auth_layer = create_auth_layer(self.pool.clone(), self.repo.clone(), false).await;
+        prefixd::api::create_router(self.state.clone(), auth_layer)
+    }
+}
+
+/// Configure GoBGP via gRPC StartBgp call
+async fn configure_gobgp(endpoint: &str) {
+    use prefixd::bgp::apipb::{
+        go_bgp_service_client::GoBgpServiceClient, Global, StartBgpRequest,
+    };
+    use tonic::transport::Channel;
+
+    let channel = Channel::from_shared(format!("http://{}", endpoint))
+        .expect("Invalid endpoint")
+        .connect()
+        .await
+        .expect("Failed to connect to GoBGP gRPC");
+
+    let mut client = GoBgpServiceClient::new(channel);
+
+    let request = StartBgpRequest {
+        global: Some(Global {
+            asn: 65010,
+            router_id: "10.10.0.10".to_string(),
+            listen_port: -1, // Disable BGP listener (we only need gRPC)
+            listen_addresses: vec![],
+            families: vec![],
+            use_multiple_paths: false,
+            route_selection_options: None,
+            default_route_distance: None,
+            confederation: None,
+            graceful_restart: None,
+            bind_to_device: String::new(),
+        }),
+    };
+
+    client
+        .start_bgp(request)
+        .await
+        .expect("Failed to start GoBGP");
 }
