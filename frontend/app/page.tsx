@@ -27,16 +27,16 @@ export default function OverviewPage() {
           <BgpSessionStatus />
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard title="Active Mitigations" value={stats?.active_mitigations ?? activeMitigations.length} />
+            <StatCard title="Active Mitigations" value={stats?.total_active ?? activeMitigations.length} />
             <StatCard title="Police Actions" value={policeActions.length} accent="primary" />
             <StatCard title="Discard Actions" value={discardActions.length} accent="destructive" />
-            <StatCard title="Events (24h)" value={stats?.events_24h ?? 0} />
+            <StatCard title="Total Events" value={stats?.total_events ?? 0} />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
             <QuotaGauge
               title="Global Quota"
-              current={stats?.active_mitigations ?? 0}
+              current={stats?.total_active ?? 0}
               max={500}
               secondary={{
                 title: "Total Events",

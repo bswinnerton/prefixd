@@ -1,11 +1,12 @@
 use axum::{
-    http::{header, HeaderValue},
+    http::{header, HeaderValue, Method},
     response::IntoResponse,
     routing::{any, get, post},
     Json, Router,
 };
 use axum_login::AuthManagerLayer;
 use std::sync::Arc;
+use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_sessions_sqlx_store::PostgresStore;
@@ -72,6 +73,14 @@ pub fn create_router(
         ))
         // Request body size limit (1MB)
         .layer(RequestBodyLimitLayer::new(1024 * 1024))
+        // CORS for dashboard
+        .layer(
+            CorsLayer::new()
+                .allow_origin("http://localhost:3000".parse::<HeaderValue>().unwrap())
+                .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION, header::COOKIE])
+                .allow_credentials(true),
+        )
 }
 
 async fn openapi_json() -> impl IntoResponse {

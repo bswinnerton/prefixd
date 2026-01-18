@@ -156,6 +156,35 @@
   - [x] Config page (system status, BGP, quotas, safelist viewer)
   - [x] Loading/error states throughout
 
+## v0.7 - Authentication & Real-Time Dashboard (Done)
+
+**Goal:** Session-based auth for dashboard, WebSocket real-time updates, production-ready frontend.
+
+### Authentication (Done)
+- [x] Operators table with argon2 password hashing
+- [x] PostgreSQL session store via tower-sessions
+- [x] Login/logout/me endpoints
+- [x] Hybrid auth model (session for browser, bearer for CLI)
+- [x] `prefixdctl operators create` command
+- [x] Secure cookies configurable (auto-detect TLS)
+- [x] CORS support for dashboard
+
+### WebSocket Real-Time (Done)
+- [x] WebSocket endpoint `/v1/ws/feed`
+- [x] Message types: MitigationCreated/Updated/Expired/Withdrawn, EventIngested, ResyncRequired
+- [x] Broadcast channel in handlers and reconciliation loop
+- [x] Lag detection with ResyncRequired
+
+### Frontend Auth & Real-Time (Done)
+- [x] Login page with form validation
+- [x] `useAuth` hook with AuthProvider
+- [x] `useWebSocket` hook with reconnection
+- [x] `RequireAuth` protected route wrapper
+- [x] ConnectionStatus indicator
+- [x] UserMenu with logout
+- [x] SWR cache invalidation on WS messages
+- [x] Fix API response type mismatches
+
 ## v1.1 - Integration Tests & Bug Fixes
 
 **Goal:** Comprehensive integration test coverage and critical bug fixes.

@@ -100,17 +100,19 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
           }
 
           // Invalidate relevant caches based on message type
+          // SWR keys match hook keys: "mitigations", "stats", "events"
           if (message.type === "MitigationCreated" || 
               message.type === "MitigationUpdated" ||
               message.type === "MitigationExpired" ||
               message.type === "MitigationWithdrawn") {
-            mutate("/v1/mitigations")
-            mutate("/v1/stats")
+            // Invalidate all mitigation-related keys (including those with params)
+            mutate((key) => typeof key === "string" && key.startsWith("mitigations") || Array.isArray(key) && key[0] === "mitigations")
+            mutate("stats")
           }
 
           if (message.type === "EventIngested") {
-            mutate("/v1/events")
-            mutate("/v1/stats")
+            mutate((key) => typeof key === "string" && key.startsWith("events") || Array.isArray(key) && key[0] === "events")
+            mutate("stats")
           }
         } catch (e) {
           console.error("Failed to parse WebSocket message:", e)

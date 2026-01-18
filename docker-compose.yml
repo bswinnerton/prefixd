@@ -26,7 +26,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_PREFIXD_API=http://prefixd:8080
+      - NEXT_PUBLIC_PREFIXD_API=http://localhost:8080
       - NEXT_PUBLIC_PREFIXD_TOKEN=${PREFIXD_API_TOKEN:-}
     depends_on:
       - prefixd

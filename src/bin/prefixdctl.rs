@@ -606,7 +606,7 @@ async fn cmd_operators(cmd: OperatorCommands, format: OutputFormat) -> Result<()
                 r#"
                 INSERT INTO operators (username, password_hash, role)
                 VALUES ($1, $2, $3)
-                RETURNING id
+                RETURNING operator_id
                 "#
             )
             .bind(&username)

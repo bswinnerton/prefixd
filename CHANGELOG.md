@@ -5,7 +5,7 @@ All notable changes to prefixd will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-01-18
 
 ### Added
 
@@ -46,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Security**
   - Request body size limit (1MB) via tower-http
   - Fix SQL injection in `list_mitigations` queries (now uses parameterized queries)
+  - Hybrid auth on all API routes (session OR bearer token)
+  - Secure cookies configurable based on TLS presence
+
+- **CORS Support**
+  - CORS headers for dashboard cross-origin requests
+  - Credentials support for session cookies
 
 - **Reliability**
   - GoBGP gRPC timeout handling (10s connect, 30s request)
@@ -84,6 +90,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Min TTL enforcement via `guardrails.min_ttl_seconds` config
 
 ### Fixed
+
+- **Frontend API Integration**
+  - Fix API response unwrapping (mitigations/events return `{items, count}` wrapper)
+  - Fix Stats type to match backend (`total_active` instead of `active_mitigations`)
+  - Fix HealthResponse type to match backend (structured `bgp_sessions`, `gobgp` object)
+  - Fix PopInfo type (`{pop, active_mitigations}` objects instead of strings)
+  - Fix SWR cache invalidation keys in WebSocket hook
+  - Fix status filter query param (comma-separated instead of repeated)
 
 - **Startup validation** - `auth.mode=bearer` without token now fails fast at startup (was returning 500 on every request)
 

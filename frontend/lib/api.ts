@@ -48,26 +48,35 @@ export interface Event {
 }
 
 export interface Stats {
+  total_active: number
   total_mitigations: number
-  active_mitigations: number
-  events_24h: number
   total_events: number
-  pops: string[]
+  pops: PopInfo[]
+}
+
+export interface PopInfo {
+  pop: string
+  active_mitigations: number
+  last_seen: string
 }
 
 export interface HealthResponse {
   status: string
-  version: string
-  pop: string
-  uptime_seconds: number
-  bgp_session_up: boolean
+  bgp_sessions: Record<string, string>
+  active_mitigations: number
+  database: string
+  gobgp: {
+    status: string
+    error?: string
+  }
 }
 
 export interface SafelistEntry {
   prefix: string
-  reason: string
+  reason: string | null
   added_by: string
   added_at: string
+  expires_at: string | null
 }
 
 async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -102,7 +111,10 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
 }
 
 async function doFetch<T>(url: string, options: RequestInit): Promise<T> {
-  const res = await fetch(url, options)
+  const res = await fetch(url, {
+    ...options,
+    credentials: "include", // Send session cookies for hybrid auth
+  })
 
   if (!res.ok) {
     const error = await res.text()
@@ -128,8 +140,9 @@ export async function getMitigations(params?: {
   offset?: number
 }): Promise<Mitigation[]> {
   const searchParams = new URLSearchParams()
-  if (params?.status) {
-    params.status.forEach((s) => searchParams.append("status", s))
+  if (params?.status && params.status.length > 0) {
+    // Backend expects comma-separated status values
+    searchParams.set("status", params.status.join(","))
   }
   if (params?.customer_id) searchParams.set("customer_id", params.customer_id)
   if (params?.pop) searchParams.set("pop", params.pop)
@@ -137,7 +150,8 @@ export async function getMitigations(params?: {
   if (params?.offset) searchParams.set("offset", params.offset.toString())
 
   const query = searchParams.toString()
-  return fetchApi<Mitigation[]>(`/v1/mitigations${query ? `?${query}` : ""}`)
+  const response = await fetchApi<{ mitigations: Mitigation[]; count: number }>(`/v1/mitigations${query ? `?${query}` : ""}`)
+  return response.mitigations
 }
 
 export async function getMitigation(id: string): Promise<Mitigation> {
@@ -164,7 +178,8 @@ export async function getEvents(params?: {
   if (params?.offset) searchParams.set("offset", params.offset.toString())
 
   const query = searchParams.toString()
-  return fetchApi<Event[]>(`/v1/events${query ? `?${query}` : ""}`)
+  const response = await fetchApi<{ events: Event[]; count: number }>(`/v1/events${query ? `?${query}` : ""}`)
+  return response.events
 }
 
 export interface AuditEntry {
@@ -212,8 +227,8 @@ export async function removeSafelist(prefix: string): Promise<void> {
   })
 }
 
-export async function getPops(): Promise<string[]> {
-  return fetchApi<string[]>("/v1/pops")
+export async function getPops(): Promise<PopInfo[]> {
+  return fetchApi<PopInfo[]>("/v1/pops")
 }
 
 export async function reloadConfig(): Promise<void> {
