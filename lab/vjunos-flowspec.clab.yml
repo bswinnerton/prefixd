@@ -1,0 +1,42 @@
+# vJunos-router FlowSpec Lab
+# 
+# Tests FlowSpec propagation: prefixd -> GoBGP -> vJunos-router
+#
+# Prerequisites:
+#   1. Download vJunos-router qcow2 from Juniper
+#   2. Import: containerlab tools vrnetlab import vjunos-router-23.2R1.15.qcow2
+#
+# Usage:
+#   sudo containerlab deploy -t vjunos-flowspec.clab.yml
+#   sudo containerlab destroy -t vjunos-flowspec.clab.yml
+
+name: vjunos-flowspec
+
+mgmt:
+  network: clab-mgmt
+  ipv4-subnet: 172.20.20.0/24
+
+topology:
+  nodes:
+    # GoBGP - FlowSpec announcer (connected to prefixd)
+    gobgp:
+      kind: linux
+      image: jauderho/gobgp:latest
+      binds:
+        - gobgp-vjunos.conf:/etc/gobgp/gobgp.conf:ro
+      exec:
+        - gobgpd -f /etc/gobgp/gobgp.conf -p --api-hosts=0.0.0.0:50051
+      mgmt-ipv4: 172.20.20.2
+      ports:
+        - 50051:50051  # gRPC API for prefixd
+
+    # vJunos-router - FlowSpec receiver/enforcer
+    router:
+      kind: juniper_vjunosrouter
+      image: vrnetlab/juniper_vjunosrouter:23.2R1
+      mgmt-ipv4: 172.20.20.3
+      startup-config: vjunos-config.txt
+
+  links:
+    # eBGP peering link between GoBGP and vJunos
+    - endpoints: ["gobgp:eth1", "router:eth1"]

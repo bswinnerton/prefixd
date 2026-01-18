@@ -1,0 +1,45 @@
+# cJunosEvolved FlowSpec Lab
+# 
+# Tests FlowSpec propagation: prefixd -> GoBGP -> cJunosEvolved
+# cJunosEvolved is PTX-based Junos Evolved - Juniper's future direction
+#
+# Prerequisites:
+#   1. Download cJunosEvolved qcow2 from Juniper
+#   2. Import: containerlab tools vrnetlab import cjunosevolved-24.2R1.17.qcow2
+#
+# Usage:
+#   sudo containerlab deploy -t cjunos-flowspec.clab.yml
+#   sudo containerlab destroy -t cjunos-flowspec.clab.yml
+#
+# Note: cJunosEvolved takes ~15 min to boot and requires 8GB RAM
+
+name: cjunos-flowspec
+
+mgmt:
+  network: clab-mgmt-evo
+  ipv4-subnet: 172.20.21.0/24
+
+topology:
+  nodes:
+    # GoBGP - FlowSpec announcer (connected to prefixd)
+    gobgp:
+      kind: linux
+      image: jauderho/gobgp:latest
+      binds:
+        - gobgp-cjunos.conf:/etc/gobgp/gobgp.conf:ro
+      exec:
+        - gobgpd -f /etc/gobgp/gobgp.conf -p --api-hosts=0.0.0.0:50051
+      mgmt-ipv4: 172.20.21.2
+      ports:
+        - 50052:50051  # Different port to avoid conflict with vjunos lab
+
+    # cJunosEvolved - FlowSpec receiver/enforcer
+    router:
+      kind: juniper_vjunosevolved
+      image: vrnetlab/juniper_vjunosevolved:24.2R1
+      mgmt-ipv4: 172.20.21.3
+      startup-config: cjunos-config.txt
+
+  links:
+    # eBGP peering link between GoBGP and cJunosEvolved
+    - endpoints: ["gobgp:eth1", "router:eth1"]

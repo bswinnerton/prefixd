@@ -1,0 +1,83 @@
+## vJunos-router FlowSpec configuration
+## AS 65002 - receives FlowSpec from GoBGP (AS 65001)
+
+system {
+    host-name vjunos-flowspec;
+    root-authentication {
+        encrypted-password "$6$rounds=5000$abc123$xyz"; /* admin@123 */
+    }
+    login {
+        user admin {
+            class super-user;
+            authentication {
+                encrypted-password "$6$rounds=5000$abc123$xyz"; /* admin@123 */
+            }
+        }
+    }
+    services {
+        ssh;
+        netconf {
+            ssh;
+        }
+    }
+}
+
+interfaces {
+    ge-0/0/0 {
+        description "Link to GoBGP";
+        unit 0 {
+            family inet {
+                address 10.0.0.2/30;
+            }
+        }
+    }
+    lo0 {
+        unit 0 {
+            family inet {
+                address 192.0.2.1/32;
+            }
+        }
+    }
+}
+
+routing-options {
+    router-id 192.0.2.1;
+    autonomous-system 65002;
+    flow {
+        /* Enable FlowSpec route installation */
+        validation;
+        /* Install FlowSpec as firewall filters */
+        term-order standard;
+    }
+}
+
+policy-options {
+    policy-statement FLOWSPEC-IMPORT {
+        term accept-all {
+            then accept;
+        }
+    }
+}
+
+protocols {
+    bgp {
+        group GOBGP {
+            type external;
+            description "FlowSpec from prefixd via GoBGP";
+            import FLOWSPEC-IMPORT;
+            peer-as 65001;
+            neighbor 10.0.0.1 {
+                family inet {
+                    flow {
+                        /* Receive IPv4 FlowSpec */
+                        no-validate FLOWSPEC-IMPORT;
+                    }
+                }
+            }
+        }
+    }
+}
+
+firewall {
+    /* FlowSpec-generated filters will appear as __flowspec_default_inet__ */
+}
