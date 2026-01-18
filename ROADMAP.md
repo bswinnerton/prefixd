@@ -501,9 +501,11 @@ prefixd implements a **signal-driven** architecture where detection is decoupled
 6. **No Tbps scale** - Requires scrubber integration for serious volumetric attacks
 
 ### Tier 1: Ship Blockers (Can't Call It Credible Without These)
-1. [ ] **Implement `parse_flowspec_path()`** - Without this, reconciliation is theater
+1. [x] **Implement `parse_flowspec_path()`** - Decodes GoBGP RIB for reconciliation
 2. [x] **WebSocket for dashboard** - Real-time updates via /v1/ws/feed
-3. [ ] **One real router test** - Even just Juniper vMX in a lab; document quirks
+3. [x] **GoBGP v4.2.0 integration** - 8 integration tests passing
+4. [x] **End-to-end reconciliation test** - Announce → delete → detect drift → re-announce
+5. [ ] **One real router test** - Juniper vMX via containerlab; document quirks
 
 ### Tier 1.5: Nice-to-Have Before Launch
 - [ ] Ship Grafana dashboards (prefixd metrics + BGP session health)
