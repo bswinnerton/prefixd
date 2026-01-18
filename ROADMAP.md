@@ -1,557 +1,157 @@
 # Roadmap
 
-## v0.1 - MVP (Current)
+What's next for prefixd.
 
-- [x] HTTP API with event ingestion
-- [x] Policy engine with YAML playbooks
-- [x] Guardrails (TTL, /32, quotas, safelist)
-- [x] PostgreSQL state store
-- [x] MockAnnouncer for testing
-- [x] Reconciliation loop
-- [x] Dry-run mode
-- [x] Structured logging
+---
 
-## v0.2 - Production BGP (Done)
+## Current Status: v0.7.0
 
-- [x] GoBGP gRPC client implementation
-  - [x] Generate protos from gobgp/api
-  - [x] Implement `announce()` with FlowSpec NLRI construction
-  - [x] Implement `withdraw()` with exact NLRI matching
-  - [x] Implement `list_active()` for RIB queries
-  - [x] Session status monitoring
-- [x] Bearer token authentication middleware
-- [x] mTLS authentication option (moved to v1.0, now complete)
-- [x] API rate limiting (token bucket)
-- [x] Prometheus metrics endpoint
-  - [x] `prefixd_events_ingested_total`
-  - [x] `prefixd_mitigations_active`
-  - [x] `prefixd_announcements_total`
-  - [x] `prefixd_bgp_session_up`
-  - [x] `prefixd_guardrail_rejections_total`
+Core functionality is stable:
 
-## v0.3 - Escalation & Correlation (Done)
+- Event ingestion and policy engine
+- GoBGP v4.x FlowSpec (IPv4/IPv6)
+- Reconciliation loop with drift detection
+- PostgreSQL state storage
+- Session auth + bearer tokens
+- WebSocket real-time dashboard
+- CLI tool (prefixdctl)
 
-- [x] Escalation logic (police → discard)
-  - [x] Persistence tracking
-  - [x] Confidence thresholds
-  - [x] Policy profile support (strict/normal/relaxed)
-- [x] Improved event correlation
-  - [x] Port superset/subset handling
-  - [x] Parallel mitigation for disjoint ports
-- [x] Audit log file writer (JSON Lines)
-- [x] Alerting webhooks (PagerDuty, Slack)
+See [CHANGELOG](CHANGELOG.md) for version history.
 
-## v0.4 - Operational Tooling (Done)
+---
 
-- [x] CLI subcommands (prefixdctl binary)
-  - [x] `prefixdctl status` - show active mitigations
-  - [x] `prefixdctl mitigations withdraw <id>` - manual withdrawal
-  - [x] `prefixdctl safelist add/remove`
-  - [x] `prefixdctl peers` - BGP session status
-  - [x] `prefixdctl reload` - hot-reload config
-- [x] Configuration hot-reload (inventory, playbooks)
-- [x] Graceful shutdown with announcement preservation
+## Ship Blockers (Before v1.0)
 
-## v0.5 - Docker & PostgreSQL (Done)
+### Real Router Testing
 
-- [x] PostgreSQL backend option
-  - [x] Postgres migrations
-  - [x] Connection pooling
-- [x] Docker deployment
-  - [x] Multi-stage Dockerfile
-  - [x] docker-compose.yml (prefixd, postgres, gobgp)
-  - [x] Example postgres config
+- [ ] Test with Juniper vMX (containerlab)
+- [ ] Test with Arista cEOS
+- [ ] Test with Cisco XRd
+- [ ] Document vendor-specific quirks and import policies
 
-## v0.6 - PostgreSQL-Only & Test Infrastructure (Done)
+### Documentation Polish
 
-- [x] Remove SQLite support (PostgreSQL-only)
-  - [x] Extract `RepositoryTrait` from `Repository`
-  - [x] Remove all SQLite code paths (~800 lines removed)
-  - [x] Remove `DbPool` enum, use `PgPool` directly
-  - [x] Remove `StorageDriver` enum from config
-  - [x] Update `storage.path` → `storage.connection_string`
-- [x] Mock repository for testing
-  - [x] Create `MockRepository` implementing `RepositoryTrait`
-  - [x] Migrate unit tests to use `MockRepository`
-  - [x] Add testcontainers dev-dependencies
-- [x] Update documentation (remove SQLite references)
+- [ ] Review all docs for accuracy
+- [ ] Add example Grafana dashboards
+- [ ] Record demo video: attack → detection → mitigation → recovery
 
-## v1.0 - Production Ready
+### Frontend Testing
 
-**Goal:** Enterprise-ready foundation with comprehensive testing, documentation, and security.
+- [ ] Vitest setup
+- [ ] Component tests
+- [ ] Hook tests
+- [ ] Error boundaries
 
-### Features (Done)
-- [x] IPv6 FlowSpec support
-  - [x] IpVersion detection for IPv4/IPv6 prefixes
-  - [x] IPv6 FlowSpec NLRI construction (AFI=2, SAFI=133)
-  - [x] IPv6-aware guardrails (configurable prefix lengths)
-  - [x] IPv6 customer prefix/asset support in inventory
-- [x] Multi-POP coordination (shared PostgreSQL approach)
-  - [x] `GET /v1/stats` - aggregate stats across all POPs
-  - [x] `GET /v1/pops` - list known POPs from database
-  - [x] `GET /v1/mitigations?pop=all` - cross-POP visibility
-  - See "Multi-POP Architecture" section below for evolution path
-- [x] OpenAPI spec generation (`/openapi.json`)
+---
 
-### Testing (Done)
-- [x] Unit tests for BGP logic (`gobgp.rs`) - 16 tests
-  - [x] NLRI construction (IPv4/IPv6)
-  - [x] Path attribute building
-  - [x] RFC constant validation
-- [x] Unit tests for guardrails (`guardrails/mod.rs`) - 18 tests
-  - [x] Prefix validation
-  - [x] TTL validation
-  - [x] Port count limits
-  - [x] IPv6 detection
-- [x] Unit tests for repository (`repository.rs`) - 18 tests
-  - [x] CRUD operations
-  - [x] Query filtering
-  - [x] Multi-POP queries
-  - [x] Safelist operations
-- [x] Unit tests for policy engine - 13 tests
-  - [x] Playbook evaluation
-  - [x] Port intersection logic
-  - [x] Protocol detection
-  - [x] TTL handling
+## v1.0: Production Ready
 
-**Total: 84 unit tests**
+Target: Stable API, comprehensive testing, production-proven.
 
-### Security & Auth (Done)
-- [x] mTLS authentication option (rustls 0.23, client cert verification)
-- [x] Security headers (X-Content-Type-Options, X-Frame-Options, Cache-Control)
-- [x] Security audit
-  - [x] Dependency audit with cargo-audit (2 CVEs fixed)
-  - [x] 2026 stable dependency upgrades
-  - [x] Auth integration tests (5 tests)
-- [ ] Formal penetration testing (future)
+### Stability
 
-### Documentation (Done)
-- [x] Configuration guide (`docs/configuration.md` - all YAML options)
-- [x] Deployment guide (`docs/deployment.md` - Docker, bare metal, mTLS)
-- [x] Troubleshooting runbook (`docs/troubleshooting.md`)
-- [ ] API stability guarantees (defer to v1.0 release)
+- [ ] API versioning and deprecation policy
+- [ ] Database migration tooling
+- [ ] Upgrade path documentation
 
-### Performance (Done)
-- [x] Benchmark suite (criterion)
-  - [x] Inventory lookup throughput (~5.6M ops/sec)
-  - [x] Database query performance (~6K ops/sec)
-  - [x] Serialization benchmarks (~1M ops/sec)
-  - [x] Scaling analysis (DB list, inventory lookup)
-- [x] Benchmark documentation (`docs/benchmarks.md`)
+### Hardening
 
-### Web Dashboard (Done)
-- [x] Next.js frontend (`frontend/`)
-  - [x] Dashboard overview (stats, BGP status, quota gauges)
-  - [x] Mitigations list with filtering, sorting, pagination
-  - [x] Events list with filtering, sorting, pagination
-  - [x] Audit log viewer with filtering
-  - [x] Real-time updates (SWR with 5s polling)
-  - [x] Docker deployment support
-- [x] API integration
-  - [x] Connect to prefixd REST API
-  - [x] `GET /v1/events` endpoint
-  - [x] `GET /v1/audit` endpoint
-- [x] Frontend polish
-  - [x] Live activity feed (replaces mock data)
-  - [x] Config page (system status, BGP, quotas, safelist viewer)
-  - [x] Loading/error states throughout
-
-## v0.7 - Authentication & Real-Time Dashboard (Done)
-
-**Goal:** Session-based auth for dashboard, WebSocket real-time updates, production-ready frontend.
-
-### Authentication (Done)
-- [x] Operators table with argon2 password hashing
-- [x] PostgreSQL session store via tower-sessions
-- [x] Login/logout/me endpoints
-- [x] Hybrid auth model (session for browser, bearer for CLI)
-- [x] `prefixdctl operators create` command
-- [x] Secure cookies configurable (auto-detect TLS)
-- [x] CORS support for dashboard
-
-### WebSocket Real-Time (Done)
-- [x] WebSocket endpoint `/v1/ws/feed`
-- [x] Message types: MitigationCreated/Updated/Expired/Withdrawn, EventIngested, ResyncRequired
-- [x] Broadcast channel in handlers and reconciliation loop
-- [x] Lag detection with ResyncRequired
-
-### Frontend Auth & Real-Time (Done)
-- [x] Login page with form validation
-- [x] `useAuth` hook with AuthProvider
-- [x] `useWebSocket` hook with reconnection
-- [x] `RequireAuth` protected route wrapper
-- [x] ConnectionStatus indicator
-- [x] UserMenu with logout
-- [x] SWR cache invalidation on WS messages
-- [x] Fix API response type mismatches
-
-## v1.1 - Integration Tests & Bug Fixes
-
-**Goal:** Comprehensive integration test coverage and critical bug fixes.
-
-### Integration Tests (using testcontainers) - Done
-- [x] Full event ingestion flow (event → policy → mitigation → BGP)
-- [x] Mitigation withdrawal via API
-- [x] Duplicate event extends TTL
-- [x] TTL expiry via reconciliation loop
-- [x] Configuration hot-reload
-- [x] Pagination and filtering queries
-- [x] Safelist blocks mitigation
-- [x] Migration verification (clean Postgres → migrations)
-
-### Bug Fixes (Done)
-- [x] Fix `is_safelisted()` performance
-  - [x] Replace load-all with PostgreSQL inet operators (`<<=`)
-- [x] Add IPv6 support in `is_safelisted()`
-- [x] Add timeout handling for GoBGP gRPC calls (10s connect, 30s request)
-- [x] Add retry logic for transient BGP failures
-  - [x] Exponential backoff (3 retries, 100ms-400ms)
-- [x] Fix SQL injection in list_mitigations queries
-  - [x] Use parameterized queries for status/customer filters
-
-### Security Hardening
-- [x] Request body size limit (1MB via tower-http)
-- [ ] Request header count limits
-- [ ] API key rotation support (multiple valid tokens)
-- [ ] Audit log for authentication failures
-
-## v1.2 - Observability & DevOps
-
-**Goal:** Production-grade observability and CI/CD infrastructure.
+- [ ] Chaos testing (kill GoBGP mid-mitigation, kill Postgres during ingestion)
+- [ ] Load testing (sustained event volume)
+- [ ] Security audit (dependencies, input validation)
 
 ### Observability
-- [x] HTTP metrics
-  - [x] `prefixd_http_request_duration_seconds` histogram
-  - [x] `prefixd_http_requests_total` counter (by endpoint, status)
-  - [x] `prefixd_http_in_flight_requests` gauge
-- [ ] Database metrics
-  - [ ] `prefixd_db_query_duration_seconds` histogram
-  - [ ] `prefixd_db_connections_active` gauge
-- [x] Operational metrics
-  - [x] `prefixd_config_reload_total` counter
-  - [x] `prefixd_escalations_total` counter
-- [ ] Tracing
-  - [ ] Request correlation with trace IDs
-  - [ ] Span instrumentation for key operations
-- [x] Health checks
-  - [x] Database connectivity check in `/v1/health`
-  - [x] GoBGP connectivity check
-  - [x] Detailed `/v1/health` response (status: healthy/degraded)
 
-### DevOps
-- [x] GitHub Actions CI
-  - [x] Test (unit + integration with testcontainers)
-  - [x] Lint (clippy, rustfmt)
-  - [x] Build (release binary, Docker image)
-  - [x] Security audit (cargo-audit)
-- [ ] Kubernetes manifests
-  - [ ] Deployment, Service, ConfigMap, Secret
-  - [ ] PodDisruptionBudget
-  - [ ] HorizontalPodAutoscaler
-- [ ] Helm chart
-- [x] Pre-commit hooks configuration
-- [x] Dependabot configuration
+- [ ] Database metrics (query latency, connection pool)
+- [ ] Request tracing with correlation IDs
+- [ ] Grafana dashboard templates
 
-## v1.3 - Frontend Maturity & API Polish
+---
 
-**Goal:** Production-quality frontend and API refinements.
+## v1.5: Multi-Signal Correlation
 
-### Frontend Testing & Features
-- [ ] Vitest test setup
-- [ ] API client tests
-- [ ] React hooks tests
-- [ ] Error boundaries throughout
-- [x] WebSocket support (replace 5s polling)
-  - [x] Real-time mitigation updates
-  - [x] Live event stream
-  - [x] useWebSocket hook with reconnection
-  - [x] SWR cache invalidation on messages
-- [x] Authentication
-  - [x] Login page
-  - [x] useAuth hook with AuthProvider
-  - [x] RequireAuth protected routes
-  - [x] UserMenu with logout
+**The killer feature.** Combine weak signals from multiple detectors into high-confidence decisions.
 
-### API Polish
-- [ ] OpenAPI enhancements
-  - [ ] Descriptions for all endpoints
-  - [ ] Request/response examples
-  - [ ] Error response schemas
-- [ ] Bulk operations
-  - [ ] `POST /v1/mitigations/bulk-withdraw`
-  - [ ] `POST /v1/safelist/bulk-add`
-- [x] API validation improvements
-  - [x] Tighten `create_mitigation` validation (protocol/action/rate)
-  - [x] Clarify `total` semantics (page size vs total count) - renamed to `count`
-  - [x] Add max TTL enforcement in guardrails (config-driven)
-- [x] Pagination hardening
-  - [x] Add hard upper bound on `limit` param (1000)
-  - [x] Wrap `list_events` in `EventsListResponse` with `count`
-  - [x] Clamp limits in all list endpoints
-- [ ] Status code consistency
-  - [ ] Decide sync vs async semantics for `create_mitigation` (201 vs 202)
+Example: FastNetMon says UDP flood at 0.6 confidence + router CPU spiking + host conntrack exhaustion = **high-confidence mitigation**.
 
-### BGP Improvements
-- [ ] Implement `parse_flowspec_path()` for reconciliation
-  - [ ] Decode FlowSpec NLRI from GoBGP RIB
-  - [ ] Enable desired vs actual state comparison
-  - [ ] Document limitation if not implemented
+### Signal Adapters
 
-### Domain Model Hardening
-- [x] `Mitigation::from_row` - fail instead of defaulting on parse errors
-  - [x] Return Result instead of silently defaulting to Police/Pending
-  - [x] Log/alert on data corruption
-- [x] `MatchCriteria::compute_scope_hash` - dedup ports before sorting
-- [x] `validate_prefix_length` - use `IpAddr` parsing instead of contains(':') heuristic
-  - [x] Handle IPv4-mapped IPv6 correctly
-
-### Policy & Guardrails Consistency
-- [ ] `compute_port_intersection` - apply port guardrail to non-UDP/TCP or document exception
-- [ ] Reconciliation: decide if `Pending` status should be announced (Active/Escalated only currently)
-- [ ] Reconciliation: handle >1000 active mitigations (current limit=1000 causes partial state)
-  - [ ] Add dedicated `list_all_active_mitigations()` method or pagination
-
-### Auth & Performance
-- [x] Cache bearer token at startup instead of `getenv` per request
-- [x] Emit startup error on auth misconfiguration instead of per-request log
-- [ ] Document rate limiter scope (global vs per-client) and keying strategy
-
-### Observability Improvements
-- [ ] `AuditLogWriter` - buffer writes instead of flush per entry (throughput)
-- [ ] `AlertingClient::new` - surface HTTP client creation errors explicitly
-
-### Documentation
-- [ ] Inline code documentation
-  - [ ] BGP NLRI construction comments
-  - [ ] Escalation logic comments
-- [ ] Operations guides
-  - [ ] Connection pool tuning
-  - [ ] PostgreSQL performance tuning
-- [ ] Architecture Decision Records (ADRs)
-
-## v1.5 - Multi-Signal Correlation (Killer Feature)
-
-**Goal:** Combine weak signals from multiple sources into high-confidence mitigation decisions.
-
-**This is what differentiates prefixd from "just let FastNetMon announce directly."**
-
-Example: FastNetMon says UDP flood at 0.6 confidence + router CPU spiking + host conntrack exhaustion = **high-confidence mitigation**. No single detector should have that power, but correlated signals can.
-
-### Signal Source Adapters
-- [ ] FastNetMon adapter (current HTTP webhook, enhanced)
-  - [ ] Configurable confidence mapping
-  - [ ] Threshold-based confidence derivation
-- [ ] Prometheus/VictoriaMetrics adapter
-  - [ ] Pull-based metric queries
-  - [ ] Alertmanager webhook receiver
-  - [ ] Host metrics → synthetic events (SYN backlog, conntrack exhaustion)
-- [ ] Router telemetry adapter
-  - [ ] Junos JTI/streaming telemetry
-  - [ ] Control-plane stress signals (CPU, memory, flow table pressure)
-  - [ ] gNMI support for multi-vendor
+- [ ] Enhanced FastNetMon adapter (configurable confidence mapping)
+- [ ] Prometheus/Alertmanager adapter (metric queries, webhook receiver)
+- [ ] Router telemetry adapter (JTI, gNMI)
 
 ### Correlation Engine
-- [ ] Time-windowed event correlation
-  - [ ] Group events for same victim within N seconds
-  - [ ] Aggregate confidence across sources
-- [ ] Source weighting configuration
-  - [ ] Per-source confidence multipliers
-  - [ ] Source reliability scoring
-- [ ] Corroboration requirements
-  - [ ] "Require 2+ sources" mode for low-confidence signals
-  - [ ] Escalation requires corroborating signal
 
-### Enhanced Confidence Model
-- [ ] Derived confidence calculation
-  - [ ] BPS/PPS ratio to baseline
-  - [ ] Port entropy analysis
-  - [ ] Traffic pattern scoring
+- [ ] Time-windowed event grouping
+- [ ] Source weighting and reliability scoring
+- [ ] Corroboration requirements ("require 2+ sources")
+
+### Confidence Model
+
+- [ ] Derived confidence from traffic patterns
 - [ ] Confidence decay over time
-- [ ] Per-playbook confidence thresholds
-
-## v2.0 - Multi-Vendor Support
-
-- [ ] Vendor capability profiles
-  - [ ] Define per-vendor match/action support matrix
-  - [ ] Graceful degradation for unsupported features
-- [ ] Arista EOS support
-  - [ ] Validation with EOS 4.20+
-  - [ ] Reference import policy documentation
-- [ ] Cisco IOS-XR support
-  - [ ] Validation with XR 6.x/7.x
-  - [ ] Reference `flowspec` address-family config
-- [ ] Nokia SR OS support
-  - [ ] Validation with SR OS 19+
-  - [ ] Reference policy documentation
-- [ ] FRR support (receive-only enforcement)
-  - [ ] iptables/nftables integration for Linux enforcement
-  - [ ] Alternative: XDP/eBPF enforcement
-- [ ] Vendor-specific guardrails (ASIC limits, action support)
-
-## v2.5+ - Advanced Features
-
-- [ ] Redirect/diversion actions (redirect-to-IP, redirect-to-VRF)
-- [ ] Scrubber integration with diversion orchestration
-- [ ] Extended match criteria
-  - [ ] Packet length matching
-  - [ ] TCP flags matching
-  - [ ] Fragment matching
-  - [ ] DSCP/traffic class
-- [ ] NetBox integration for inventory sync
-- [ ] Customer self-service portal
-  - [ ] Read-only mitigation visibility
-  - [ ] Manual mitigation requests (with approval workflow)
+- [ ] Per-playbook thresholds
 
 ---
 
-## Multi-POP Architecture
+## v2.0: Multi-Vendor Validation
 
-### v1.0 Approach: Shared PostgreSQL
+Validated FlowSpec with major router vendors.
 
-Multiple prefixd instances share a single PostgreSQL database. Each instance:
-- Filters mitigations by its own `pop` field
-- Announces FlowSpec rules to its local GoBGP peer
-- Has visibility into all POPs via `/v1/stats`, `/v1/pops`, and `?pop=all`
+### Vendor Testing
 
-**Pros:**
-- Simple to deploy and operate
-- No new infrastructure required
-- Cross-POP visibility for free
-- Each POP operates independently (resilient)
+- [ ] Juniper MX/PTX (primary target)
+- [ ] Arista 7xxx (EOS 4.20+)
+- [ ] Cisco IOS-XR (ASR 9000, NCS)
+- [ ] Nokia SR OS
 
-**Cons:**
-- Single database = potential single region latency
-- Database becomes SPOF (mitigated by Postgres HA)
+### Vendor Profiles
 
-### Future Evolution Paths
-
-**Option A: Event Replication (for global deployment)**
-- Each POP has local database
-- Publish mitigation events to message bus (NATS, Kafka, Redis Streams)
-- Other POPs subscribe and replicate state
-- Good for: Global deployment, eventual consistency OK
-
-**Option B: Leader-Based Coordination**
-- One POP is "leader" for a given victim IP or customer
-- Leader makes decisions, replicates to followers
-- Good for: Consistent policy enforcement across POPs
-
-**Option C: API Federation**
-- POPs expose APIs to each other
-- Coordinator service aggregates state
-- Good for: Heterogeneous deployments, multi-tenant
-
-**Migration Path:**
-1. Start with shared PostgreSQL (v1.0)
-2. Add message bus for real-time sync when needed
-3. Keep `pop` field on all records (already done)
-4. APIs designed to be compatible with future coordination modes
+- [ ] Capability matrix per vendor
+- [ ] Graceful degradation for unsupported features
+- [ ] Reference import policies per vendor
 
 ---
 
----
+## Future Ideas
 
-## Signal-Driven Architecture
+Not committed, but on the radar:
 
-prefixd implements a **signal-driven** architecture where detection is decoupled from enforcement:
+### Advanced FlowSpec
 
-```
-[ Signal Sources ]          [ prefixd ]                    [ Enforcement ]
-                                 |
-  FastNetMon ─────────┐          v
-  Prometheus/Alerts ──┼──► Signal Ingest ──► Policy Engine ──► GoBGP ──► Routers
-  Router Telemetry ───┤          │                │
-  Host Metrics ───────┘          v                v
-                          Guardrails        FlowSpec NLRI
-                               │
-                               v
-                         Audit + State
-```
+- Redirect actions (redirect-to-IP, redirect-to-VRF)
+- Extended match criteria (packet length, TCP flags, DSCP)
+- Scrubber integration with diversion orchestration
 
-**Key Principles:**
-- Detection systems signal intent, not enforce mitigation
-- No detector ever speaks BGP directly
-- Multiple weak signals can combine into high-confidence actions
-- Mitigation scope derived from inventory, not detector guesses
-- prefixd is authoritative for rule lifecycle (create, escalate, withdraw)
+### Integrations
 
-**Supported Signal Sources (v1.0):**
-- HTTP POST webhook (FastNetMon, custom scripts)
-- Any system that can emit the `AttackEvent` schema
+- NetBox inventory sync
+- Customer self-service portal
+- Native BGP speaker (replace GoBGP dependency)
 
-**Future Signal Sources (v1.5+):**
-- Prometheus/Alertmanager
-- Router streaming telemetry (JTI, gNMI)
-- Host kernel metrics (node_exporter)
-- Load balancer metrics (HAProxy, Envoy)
+### Scale
 
----
-
-## Maturity Tiers
-
-**Goal:** Transform prefixd from functional to production-proven.
-
-### Known Limitations (Honest Assessment)
-
-1. **Reconciliation is blind** - `parse_flowspec_path()` not implemented; can't compare desired vs actual RIB state
-2. **GoBGP is SPOF** - If GoBGP crashes/hangs, mitigations don't happen; we're trusting a sidecar
-3. **Never tested with real routers** - Juniper/Arista/Cisco FlowSpec import policies are finicky; bugs will surface
-4. **Detection quality is everything** - Garbage signals in = garbage mitigations out (guardrails help but don't fix bad data)
-5. **5s polling during attacks** - Operators will be frustrated; WebSocket is more important than ranked
-6. **No Tbps scale** - Requires scrubber integration for serious volumetric attacks
-
-### Tier 1: Ship Blockers (Can't Call It Credible Without These)
-1. [x] **Implement `parse_flowspec_path()`** - Decodes GoBGP RIB for reconciliation
-2. [x] **WebSocket for dashboard** - Real-time updates via /v1/ws/feed
-3. [x] **GoBGP v4.2.0 integration** - 8 integration tests passing
-4. [x] **End-to-end reconciliation test** - Announce → delete → detect drift → re-announce
-5. [ ] **One real router test** - Juniper vMX via containerlab; document quirks
-
-### Tier 1.5: Nice-to-Have Before Launch
-- [ ] Ship Grafana dashboards (prefixd metrics + BGP session health)
-- [ ] Record demo video: attack → detection → mitigation → recovery
-- [ ] Test additional routers (Arista 7xxx, Cisco XR)
-
-### Tier 2: Remove Weaknesses
-- [ ] GoBGP hardening (reduce SPOF risk)
-  - [x] Connection timeout (10s) and request timeout (30s)
-  - [x] Retry with exponential backoff (3 retries)
-  - [ ] Automatic reconnection on disconnect with state re-sync
-  - [ ] Circuit breaker pattern for sustained failures
-  - [ ] Metrics: `prefixd_gobgp_reconnects_total`, `prefixd_gobgp_latency_seconds`
-  - [ ] Alert on GoBGP disconnect (webhook/PagerDuty)
-- [ ] Chaos testing suite
-  - [ ] Kill GoBGP mid-mitigation → verify reconnect + re-announce
-  - [ ] Kill Postgres during event ingestion → verify graceful degradation
-  - [ ] Flood events beyond rate limits → verify backpressure
-- [ ] Input validation hardening
-  - [ ] Document expected signal quality from detectors
-  - [ ] Add confidence threshold filtering (reject low-confidence events)
-- [ ] Native BGP speaker (future/optional)
-  - [ ] Evaluate zettabgp or bgp-rs if GoBGP proves inadequate
-
-### Tier 3: Differentiation
-- [ ] Multi-signal correlation (see v1.5 roadmap) - killer feature
-- [ ] Scrubber integration (redirect-to-VRF) - required for Tbps scale
-- [ ] FlowSpec action visualization (show exactly what rules are in RIB)
-- [ ] "Dry-run replay" - replay historical events with new playbooks
-
-### Tier 4: Community
-- [ ] "Why prefixd exists" blog post (signal-driven architecture)
-- [ ] Example integrations
-  - [ ] FastNetMon → prefixd (with quality tuning guide)
-  - [ ] Prometheus alerts → prefixd
-- [ ] Operator testimonials after production use
+- Event batching for high-volume detectors
+- Distributed coordination for multi-region
 
 ---
 
 ## Non-Goals
 
-These are explicitly out of scope:
+Explicitly out of scope:
 
-- **Inline packet scrubbing** - prefixd is control-plane only
-- **L7/WAF analysis** - focus is L3/L4 volumetric attacks
-- **FlowSpec "match everything" rules** - blocked by guardrails
-- **Tbps-scale scrubbing** - requires upstream/scrubber integration
-- **Competing with commercial platforms** - prefixd is infrastructure glue, not a product
-- **Detection algorithm development** - use existing detectors, prefixd handles policy
+- **Inline packet scrubbing** - Control-plane only
+- **L7/WAF analysis** - Focus is L3/L4 volumetric
+- **Detection algorithms** - Use existing detectors
+- **Tbps-scale scrubbing** - Requires upstream integration
+- **FlowSpec "match everything" rules** - Blocked by guardrails
+
+---
+
+## Contributing
+
+Want to help? Check:
+
+1. [Issues](https://github.com/lance0/prefixd/issues) labeled `good first issue`
+2. Items in this roadmap
+3. [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines

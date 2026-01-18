@@ -3,227 +3,456 @@
 ## Quick Diagnostics
 
 ```bash
-# Check prefixd status
-systemctl status prefixd
-prefixdctl status
+# Check health
+curl http://localhost:8080/v1/health | jq
 
-# Check BGP sessions
+# Check status
+prefixdctl status
+prefixdctl health
 prefixdctl peers
 
 # Check logs
+docker compose logs -f prefixd
 journalctl -u prefixd -f
-tail -f /var/log/prefixd/audit.jsonl | jq
 
 # Check metrics
 curl -s localhost:9090/metrics | grep prefixd_
 ```
 
-## Common Issues
+---
 
-### 1. Events Not Creating Mitigations
+## Event Ingestion Issues
 
-**Symptoms:** Events accepted (202) but no mitigations created.
+### Events Not Creating Mitigations
 
-**Check audit log:**
+**Symptoms:** Events return 202 but no mitigations appear.
+
+**Check the response:**
 ```bash
-tail -100 /var/log/prefixd/audit.jsonl | jq 'select(.action == "event_rejected")'
+curl -v -X POST http://localhost:8080/v1/events \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $PREFIXD_API_TOKEN" \
+  -d '{"source":"test","victim_ip":"203.0.113.10","vector":"udp_flood"}'
 ```
 
 **Common causes:**
 
-| Cause | Solution |
-|-------|----------|
-| IP not in inventory | Add customer/prefix to `inventory.yaml` |
-| IP is safelisted | Check safelist: `prefixdctl safelist list` |
-| Quota exceeded | Check quotas: `prefixdctl status` |
-| Guardrail rejection | Check logs for specific guardrail error |
-| Duplicate event | Same external_event_id within correlation window |
+| Response | Cause | Fix |
+|----------|-------|-----|
+| 403 Forbidden | IP is safelisted | `prefixdctl safelist list` |
+| 422 Unprocessable | Guardrail rejection | Check error message |
+| 201 but no mitigation | IP not in inventory | Add to `inventory.yaml` |
+| 429 Too Many Requests | Rate limited | Wait or increase limits |
 
-**Debug:**
+**Debug inventory lookup:**
 ```bash
 # Check if IP is in inventory
-curl -s localhost:8080/v1/health | jq
+grep -r "203.0.113" configs/inventory.yaml
 
-# Check if IP is safelisted
-prefixdctl safelist list | grep "203.0.113.10"
-
-# Check current quotas
-curl -s localhost:8080/v1/stats | jq
+# Check safelist
+prefixdctl safelist list
 ```
 
-### 2. BGP Session Not Established
+### Guardrail Rejections
 
-**Symptoms:** `prefixdctl peers` shows session down.
+**Symptoms:** Events rejected with 422 status.
+
+**Common rejections:**
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `prefix too broad` | Not a /32 | Detector must send specific IPs |
+| `TTL too short/long` | Outside bounds | Check `guardrails.min_ttl_seconds` |
+| `quota exceeded` | Too many mitigations | Increase quota or wait for expiry |
+| `too many ports` | >8 ports | Reduce ports in event |
+
+---
+
+## BGP Issues
+
+### Session Not Established
 
 **Check GoBGP:**
 ```bash
-# GoBGP status
-gobgp global
+# Docker
+docker compose exec gobgp gobgp neighbor
+
+# Bare metal
 gobgp neighbor
-
-# GoBGP logs
-journalctl -u gobgpd -f
 ```
 
-**Common causes:**
+**Expected output:**
+```
+Peer            AS  Up/Down State       |#Received  Accepted
+10.0.0.1     65000 01:23:45 Establ      |        0         0
+```
 
-| Cause | Solution |
-|-------|----------|
-| Firewall blocking port 179 | Allow TCP 179 between GoBGP and router |
-| ASN mismatch | Verify ASN in gobgp.conf matches router config |
-| Router ID conflict | Ensure unique router-id |
-| Router not configured | Add FlowSpec neighbor config on router |
-| TCP MD5 password mismatch | Check password configuration both sides |
+**If State is not "Establ":**
 
-**Debug:**
+| State | Cause | Fix |
+|-------|-------|-----|
+| Idle | No route to peer | Check network/firewall |
+| Active | TCP connection failing | Firewall, wrong IP |
+| OpenSent | Capability mismatch | Check AFI/SAFI config |
+| OpenConfirm | Authentication failed | Check MD5 password |
+
+**Debug connectivity:**
 ```bash
-# Test connectivity
+# Test TCP 179
 telnet 10.0.0.1 179
+nc -zv 10.0.0.1 179
 
-# Check BGP on router (Juniper)
-show bgp neighbor 10.10.0.10
-
-# Force GoBGP to retry
-gobgp neighbor 10.0.0.1 reset
+# Check firewall
+iptables -L -n | grep 179
 ```
 
-### 3. FlowSpec Rules Not Applied on Router
+### FlowSpec Not Reaching Router
 
-**Symptoms:** Mitigation active in prefixd but traffic not filtered.
+**Check GoBGP RIB:**
+```bash
+# IPv4 FlowSpec
+docker compose exec gobgp gobgp global rib -a ipv4-flowspec
 
-**Check router:**
+# IPv6 FlowSpec
+docker compose exec gobgp gobgp global rib -a ipv6-flowspec
+```
+
+**If rules are in GoBGP but not on router:**
+
+1. Check BGP session includes FlowSpec AFI/SAFI
+2. Check router import policy accepts FlowSpec
+3. Check FlowSpec validation settings
+
+---
+
+## Router-Specific Issues
+
+### Juniper (Junos)
+
+#### Check FlowSpec Routes
+
 ```junos
-# Juniper - show received FlowSpec
+# Show FlowSpec table
 show route table inetflow.0
+show route table inet6flow.0
+
+# Detailed view
 show route table inetflow.0 extensive
 
-# Check if FlowSpec is being validated/rejected
-show bgp neighbor 10.10.0.10 | match "FlowSpec"
+# Show specific prefix
+show route table inetflow.0 match-prefix 203.0.113.10
 ```
 
-**Common causes:**
+#### Check BGP Session
 
-| Cause | Solution |
-|-------|----------|
-| FlowSpec validation rejecting | Disable validation or configure properly |
-| No import policy | Add FlowSpec import policy |
-| TCAM full | Check `show pfe statistics traffic` |
-| Wrong AFI/SAFI | Ensure ipv4-flowspec or ipv6-flowspec enabled |
+```junos
+# Session status
+show bgp neighbor 10.10.0.10
 
-**Debug:**
-```bash
-# Check what prefixd thinks is announced
-prefixdctl mitigations list --status active
+# FlowSpec-specific
+show bgp neighbor 10.10.0.10 | match "NLRI|flowspec"
 
-# Compare with GoBGP RIB
-gobgp global rib -a ipv4-flowspec
+# Received routes
+show route receive-protocol bgp 10.10.0.10 table inetflow.0
 ```
 
-### 4. High Memory Usage
+#### Common Juniper Issues
 
-**Symptoms:** prefixd using excessive memory.
+**FlowSpec validation rejecting routes:**
+```junos
+# Check validation status
+show route table inetflow.0 extensive | match "validation"
 
-**Check:**
-```bash
-# Process memory
-ps aux | grep prefixd
-
-# Active mitigations count
-curl -s localhost:8080/v1/stats | jq '.active_mitigations'
-
-# Database size
-ls -lh /var/lib/prefixd/prefixd.db
+# Disable validation (for testing)
+set protocols bgp group FLOWSPEC neighbor 10.10.0.10 family inet flow no-validate FLOWSPEC-IMPORT
 ```
 
-**Solutions:**
-
-1. **Reduce quotas** - Lower `max_active_global` in config
-2. **Shorter TTLs** - Reduce `max_ttl_seconds`
-3. **Database cleanup** - Old data accumulates
-   ```sql
-   -- PostgreSQL: clean old data
-   DELETE FROM events WHERE ingested_at < NOW() - INTERVAL '7 days';
-   DELETE FROM mitigations WHERE status = 'expired' AND updated_at < NOW() - INTERVAL '7 days';
-   VACUUM ANALYZE;
-   ```
-
-### 5. Reconciliation Loop Errors
-
-**Symptoms:** Logs show reconciliation failures.
-
-**Check logs:**
-```bash
-journalctl -u prefixd | grep -i reconcil
+**No import policy:**
+```junos
+# Add FlowSpec import policy
+set policy-options policy-statement FLOWSPEC-IMPORT term accept from family inet-flow
+set policy-options policy-statement FLOWSPEC-IMPORT term accept then accept
+set protocols bgp group FLOWSPEC neighbor 10.10.0.10 import FLOWSPEC-IMPORT
 ```
 
-**Common causes:**
+**FlowSpec not applied to forwarding:**
+```junos
+# Enable FlowSpec forwarding
+set routing-options flow term-order standard
+commit
+```
 
-| Cause | Solution |
-|-------|----------|
-| GoBGP unreachable | Check GoBGP gRPC endpoint (port 50051) |
-| Database locked | Restart prefixd, check disk space |
-| Stale announcements | Will self-heal on next reconciliation |
+#### Debug FlowSpec Processing
 
-### 6. Authentication Failures
+```junos
+# Trace BGP updates
+set protocols bgp traceoptions file bgp-trace
+set protocols bgp traceoptions flag update detail
+commit
 
-**Symptoms:** 401 Unauthorized responses.
+# View trace
+show log bgp-trace | match flowspec
 
-**Bearer token issues:**
+# Clean up
+deactivate protocols bgp traceoptions
+commit
+```
+
+### Arista (EOS)
+
+#### Check FlowSpec Routes
+
+```eos
+! Show FlowSpec table
+show bgp flow-spec ipv4
+
+! Detailed view
+show bgp flow-spec ipv4 detail
+
+! Check counters
+show flow-spec ipv4 counters
+```
+
+#### Check BGP Session
+
+```eos
+! Session status
+show bgp neighbor 10.10.0.10
+
+! FlowSpec capability
+show bgp neighbor 10.10.0.10 | include flow-spec
+```
+
+#### Common Arista Issues
+
+**FlowSpec not enabled:**
+```eos
+router bgp 65000
+  address-family flow-spec ipv4
+    neighbor 10.10.0.10 activate
+```
+
+**TCAM exhausted:**
+```eos
+! Check TCAM usage
+show hardware capacity
+
+! May need to adjust TCAM profile
+```
+
+### Cisco IOS-XR
+
+#### Check FlowSpec Routes
+
+```cisco
+! Show FlowSpec table
+show bgp ipv4 flowspec
+
+! Detailed view
+show bgp ipv4 flowspec detail
+
+! Check applied rules
+show flowspec summary
+```
+
+#### Check BGP Session
+
+```cisco
+! Session status
+show bgp ipv4 flowspec neighbor 10.10.0.10
+
+! Capability exchange
+show bgp ipv4 flowspec neighbor 10.10.0.10 | include capability
+```
+
+#### Common IOS-XR Issues
+
+**FlowSpec not enabled:**
+```cisco
+router bgp 65000
+  neighbor 10.10.0.10
+    address-family ipv4 flowspec
+```
+
+**No service policy:**
+```cisco
+flowspec
+  address-family ipv4
+    service-policy type pbr FLOWSPEC-POLICY
+```
+
+---
+
+## Authentication Issues
+
+### Dashboard Login Fails
+
+**Check operators exist:**
 ```bash
-# Check token is set
+prefixdctl operators list
+```
+
+**Create operator:**
+```bash
+prefixdctl operators create --username admin --role admin --password
+```
+
+**Check session cookies:**
+- Browser: Check Developer Tools > Application > Cookies
+- Ensure `session` cookie is set after login
+- If using HTTPS, ensure `secure_cookies: true` in config
+
+### API Bearer Token Rejected
+
+**Check token is set:**
+```bash
 echo $PREFIXD_API_TOKEN
+```
 
-# Test with explicit token
-curl -H "Authorization: Bearer $PREFIXD_API_TOKEN" \
+**Test authentication:**
+```bash
+curl -v -H "Authorization: Bearer $PREFIXD_API_TOKEN" \
   http://localhost:8080/v1/health
 ```
 
-**mTLS issues:**
-```bash
-# Test certificate
-openssl x509 -in client.crt -text -noout
-
-# Test connection
-openssl s_client -connect localhost:8443 \
-  -cert client.crt -key client.key -CAfile ca.crt
+**Check config:**
+```yaml
+http:
+  auth:
+    mode: bearer
+    token: "${PREFIXD_API_TOKEN}"
 ```
 
-### 7. Slow Event Processing
+### CORS Errors (Dashboard)
 
-**Symptoms:** High latency on event ingestion.
+**Symptoms:** Browser console shows CORS errors.
+
+**Fix:** Add dashboard origin to config:
+```yaml
+http:
+  cors_origins: "http://localhost:3000"
+```
+
+---
+
+## Performance Issues
+
+### Slow Event Processing
+
+**Check metrics:**
+```bash
+curl -s localhost:9090/metrics | grep prefixd_http_request_duration
+```
+
+**Common causes:**
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| High DB latency | Slow queries | Add indexes, vacuum |
+| High GoBGP latency | Network issues | Check connectivity |
+| Rate limiting | Too many events | Increase limits |
+
+### High Memory Usage
+
+**Check active mitigations:**
+```bash
+curl -s localhost:8080/v1/stats | jq '.total_active'
+```
+
+**Reduce memory:**
+1. Lower `quotas.max_active_global`
+2. Reduce TTLs
+3. Clean old data from database
+
+### Database Growth
+
+**Check table sizes (PostgreSQL):**
+```sql
+SELECT relname, pg_size_pretty(pg_total_relation_size(relid))
+FROM pg_stat_user_tables
+ORDER BY pg_total_relation_size(relid) DESC;
+```
+
+**Clean old data:**
+```sql
+DELETE FROM events WHERE created_at < NOW() - INTERVAL '7 days';
+DELETE FROM mitigations WHERE status IN ('expired', 'withdrawn')
+  AND updated_at < NOW() - INTERVAL '7 days';
+VACUUM ANALYZE;
+```
+
+---
+
+## Reconciliation Issues
+
+### Reconciliation Loop Errors
+
+**Check logs:**
+```bash
+docker compose logs prefixd 2>&1 | grep -i reconcil
+```
+
+**Common causes:**
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| GoBGP unreachable | Container/service down | Restart GoBGP |
+| Database error | Connection issue | Check PostgreSQL |
+| Parse error | Unknown FlowSpec format | Check GoBGP version |
+
+### Orphan Rules in GoBGP
+
+**Symptoms:** Rules in GoBGP RIB that aren't in prefixd database.
 
 **Check:**
 ```bash
-# Event processing time in metrics
-curl -s localhost:9090/metrics | grep prefixd_event_processing
+# GoBGP RIB
+docker compose exec gobgp gobgp global rib -a ipv4-flowspec
 
-# Database performance
-psql -h localhost -U prefixd -c "SELECT count(*) FROM mitigations;"
+# prefixd active mitigations
+prefixdctl mitigations list --status active
 ```
 
-**Solutions:**
+**Fix:** Reconciliation will clean orphans on next run (30s default).
 
-1. **Index check** - Ensure database has proper indexes
-2. **Connection pool** - Increase pool size for PostgreSQL
-3. **Rate limiting** - May be hitting rate limits
+**Manual cleanup:**
+```bash
+docker compose exec gobgp gobgp global rib -a ipv4-flowspec del all
+```
+
+---
+
+## WebSocket Issues
+
+### Dashboard Not Updating in Real-Time
+
+**Check WebSocket connection:**
+- Browser: Developer Tools > Network > WS
+- Look for connection to `/v1/ws/feed`
+
+**Common causes:**
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| No WS connection | Not logged in | Login first |
+| Connection drops | Network issues | Check for proxies |
+| No updates | Backend not emitting | Check prefixd logs |
+
+**Test WebSocket manually:**
+```bash
+# Requires wscat (npm install -g wscat)
+wscat -c ws://localhost:8080/v1/ws/feed -H "Cookie: session=..."
+```
+
+---
 
 ## Log Analysis
-
-### Log Levels
-
-| Level | When to Use |
-|-------|-------------|
-| `error` | Something failed, needs attention |
-| `warn` | Potential issue, guardrail rejection |
-| `info` | Normal operations (default) |
-| `debug` | Detailed flow, useful for debugging |
-| `trace` | Very verbose, includes all data |
 
 ### Enable Debug Logging
 
 ```bash
-# Temporarily via environment
-RUST_LOG=debug prefixd --config /etc/prefixd
+# Environment variable
+RUST_LOG=debug docker compose up prefixd
 
 # Or in config
 observability:
@@ -232,107 +461,81 @@ observability:
 
 ### Key Log Messages
 
-**Event accepted:**
-```json
-{"level":"INFO","msg":"event accepted","event_id":"...","victim_ip":"203.0.113.10"}
+**Successful flow:**
+```
+INFO event accepted event_id=... victim_ip=203.0.113.10
+INFO mitigation created mitigation_id=... action=police
+INFO flowspec announced nlri_hash=...
 ```
 
-**Mitigation created:**
-```json
-{"level":"INFO","msg":"created mitigation","mitigation_id":"...","victim_ip":"203.0.113.10","action":"police"}
+**Rejection:**
+```
+WARN guardrail rejected error="quota exceeded: customer acme has 10 active"
 ```
 
-**Guardrail rejection:**
-```json
-{"level":"WARN","msg":"guardrail rejected mitigation","error":"prefix too broad: /24 (max /32)"}
+**BGP issue:**
 ```
-
-**BGP announcement:**
-```json
-{"level":"INFO","msg":"announced flowspec","mitigation_id":"...","nlri":"..."}
+ERROR GoBGP announcement failed error="connection refused"
 ```
 
 ### Audit Log Queries
 
 ```bash
-# All mitigations created today
-cat audit.jsonl | jq 'select(.action == "mitigation_created" and .timestamp > "2026-01-16")'
+# All events today
+cat audit.jsonl | jq 'select(.timestamp > "2026-01-18")'
 
-# All withdrawals by operator
-cat audit.jsonl | jq 'select(.action == "mitigation_withdrawn" and .actor_type == "operator")'
+# Withdrawals by operator
+cat audit.jsonl | jq 'select(.action == "mitigation_withdrawn")'
 
-# Events from specific source
+# Events from FastNetMon
 cat audit.jsonl | jq 'select(.details.source == "fastnetmon")'
 ```
 
-## Metrics Reference
+---
 
-### Counters
+## Emergency Procedures
 
-| Metric | Labels | Description |
-|--------|--------|-------------|
-| `prefixd_events_ingested_total` | `source`, `vector` | Events received |
-| `prefixd_announcements_total` | `action` | FlowSpec announcements |
-| `prefixd_withdrawals_total` | `reason` | FlowSpec withdrawals |
-| `prefixd_guardrail_rejections_total` | `reason` | Rejected events |
-
-### Gauges
-
-| Metric | Labels | Description |
-|--------|--------|-------------|
-| `prefixd_mitigations_active` | `action`, `customer` | Active mitigations |
-| `prefixd_bgp_session_up` | `peer` | BGP session status |
-
-### Histograms
-
-| Metric | Description |
-|--------|-------------|
-| `prefixd_event_processing_seconds` | Event processing latency |
-| `prefixd_bgp_announcement_seconds` | BGP announcement latency |
-
-## Recovery Procedures
-
-### Database Issues (PostgreSQL)
-
-```bash
-# Check database connectivity
-psql -h localhost -U prefixd -c "SELECT 1;"
-
-# Check for locked queries
-psql -h localhost -U prefixd -c "SELECT * FROM pg_stat_activity WHERE state = 'active';"
-
-# Vacuum and analyze (run during low traffic)
-psql -h localhost -U prefixd -c "VACUUM ANALYZE;"
-
-# Check table sizes
-psql -h localhost -U prefixd -c "SELECT relname, pg_size_pretty(pg_total_relation_size(relid)) FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC;"
-```
-
-### Emergency Withdrawal of All Rules
+### Withdraw All Mitigations
 
 ```bash
 # Via CLI
-prefixdctl mitigations list --status active | \
-  jq -r '.[].mitigation_id' | \
+prefixdctl mitigations list --status active -f json | \
+  jq -r '.[].id' | \
   xargs -I{} prefixdctl mitigations withdraw {} --reason "emergency"
 
-# Or directly via GoBGP
-gobgp global rib -a ipv4-flowspec del all
+# Direct GoBGP (nuclear option)
+docker compose exec gobgp gobgp global rib -a ipv4-flowspec del all
+docker compose exec gobgp gobgp global rib -a ipv6-flowspec del all
 ```
 
-### Force Reconciliation
+### Stop All New Mitigations
 
 ```bash
-# Restart prefixd (reconciliation runs on startup)
-systemctl restart prefixd
+# Switch to dry-run mode (edit config)
+mode: dry-run
 
-# Or wait for next reconciliation interval (default 30s)
+# Restart
+docker compose restart prefixd
 ```
+
+### Force Database Reconnection
+
+```bash
+# Restart prefixd
+docker compose restart prefixd
+```
+
+---
 
 ## Getting Help
 
-1. **Check logs** - Most issues are visible in logs
+1. **Check logs first** - Most issues are visible in logs
 2. **Enable debug logging** - More detail when needed
-3. **Check metrics** - Prometheus metrics show trends
-4. **Audit log** - Full history of all actions
-5. **GitHub Issues** - Report bugs with logs attached
+3. **Check metrics** - `/metrics` endpoint shows trends
+4. **Audit log** - Complete history of all actions
+5. **GitHub Issues** - Report bugs with:
+   - prefixd version
+   - GoBGP version
+   - Router vendor/version
+   - Relevant logs
+   - Steps to reproduce
