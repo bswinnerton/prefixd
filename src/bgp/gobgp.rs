@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use prost::Message;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -8,12 +7,12 @@ use tokio::sync::RwLock;
 use tonic::transport::Channel;
 
 use super::apipb::{
-    gobgp_api_client::GobgpApiClient, AddPathRequest, DeletePathRequest, Family,
-    FlowSpecComponent, FlowSpecComponentItem, FlowSpecNlri as ProtoFlowSpecNlri,
-    FlowSpecIpPrefix,
-    ListPathRequest, ListPeerRequest, OriginAttribute, Path, TableType, TrafficRateExtended,
-    ExtendedCommunitiesAttribute,
+    go_bgp_service_client::GoBgpServiceClient, AddPathRequest, Attribute, DeletePathRequest,
+    ExtendedCommunitiesAttribute, ExtendedCommunity, Family, FlowSpecComponent,
+    FlowSpecComponentItem, FlowSpecIpPrefix, FlowSpecNlri as ProtoFlowSpecNlri, FlowSpecRule as ProtoFlowSpecRule,
+    ListPathRequest, ListPeerRequest, MpReachNlriAttribute, Nlri, OriginAttribute, Path, TableType, TrafficRateExtended,
 };
+use super::apipb::{attribute, extended_community, flow_spec_rule, nlri};
 use super::{FlowSpecAnnouncer, PeerStatus, SessionState};
 use crate::domain::{ActionType, FlowSpecAction, FlowSpecNlri, FlowSpecRule, IpVersion};
 use crate::error::{PrefixdError, Result};
@@ -31,7 +30,7 @@ const INITIAL_BACKOFF: Duration = Duration::from_millis(100);
 /// GoBGP gRPC client for FlowSpec announcements
 pub struct GoBgpAnnouncer {
     endpoint: String,
-    client: Arc<RwLock<Option<GobgpApiClient<Channel>>>>,
+    client: Arc<RwLock<Option<GoBgpServiceClient<Channel>>>>,
 }
 
 impl GoBgpAnnouncer {
@@ -65,7 +64,7 @@ impl GoBgpAnnouncer {
                 error: e.to_string(),
             })?;
 
-        let client = GobgpApiClient::new(channel);
+        let client = GoBgpServiceClient::new(channel);
         *self.client.write().await = Some(client);
 
         tracing::info!("connected to GoBGP");
@@ -106,7 +105,7 @@ impl GoBgpAnnouncer {
         }))
     }
 
-    async fn get_client(&self) -> Result<GobgpApiClient<Channel>> {
+    async fn get_client(&self) -> Result<GoBgpServiceClient<Channel>> {
         self.client
             .read()
             .await
@@ -117,50 +116,68 @@ impl GoBgpAnnouncer {
             })
     }
 
+    /// Build a FlowSpec Path for GoBGP v4 API (uses typed oneof fields, not Any)
     fn build_flowspec_path(&self, rule: &FlowSpecRule) -> Result<Path> {
         let is_v6 = rule.nlri.ip_version() == IpVersion::V6;
         let afi = if is_v6 { AFI_IP6 } else { AFI_IP };
 
-        let nlri = if is_v6 {
+        let flowspec_nlri = if is_v6 {
             self.build_flowspec_nlri_v6(&rule.nlri)?
         } else {
             self.build_flowspec_nlri_v4(&rule.nlri)?
         };
-        let pattrs = self.build_path_attributes(&rule.actions)?;
+
+        // Wrap FlowSpecNlri in the NLRI oneof
+        let nlri = Nlri {
+            nlri: Some(nlri::Nlri::FlowSpec(flowspec_nlri.clone())),
+        };
+
+        let family = Family {
+            afi,
+            safi: SAFI_FLOWSPEC,
+        };
+
+        let mut pattrs = self.build_path_attributes(&rule.actions)?;
+
+        // GoBGP v4 requires MpReachNLRI with nexthop for FlowSpec
+        // For FlowSpec, the nexthop is typically 0.0.0.0 (IPv4) or :: (IPv6)
+        let mp_reach = MpReachNlriAttribute {
+            family: Some(family.clone()),
+            next_hops: vec![if is_v6 { "::".to_string() } else { "0.0.0.0".to_string() }],
+            nlris: vec![Nlri {
+                nlri: Some(nlri::Nlri::FlowSpec(flowspec_nlri)),
+            }],
+        };
+        pattrs.push(Attribute {
+            attr: Some(attribute::Attr::MpReach(mp_reach)),
+        });
 
         Ok(Path {
             nlri: Some(nlri),
             pattrs,
-            family: Some(Family {
-                afi,
-                safi: SAFI_FLOWSPEC,
-            }),
+            family: Some(family),
             ..Default::default()
         })
     }
 
-    fn build_flowspec_nlri_v4(&self, nlri: &FlowSpecNlri) -> Result<prost_types::Any> {
+    fn build_flowspec_nlri_v4(&self, nlri: &FlowSpecNlri) -> Result<ProtoFlowSpecNlri> {
         let (prefix_u32, prefix_len) = self.parse_prefix_v4(&nlri.dst_prefix)?;
 
-        // Build FlowSpec NLRI components per RFC 5575 as Any
-        let mut rules: Vec<prost_types::Any> = Vec::new();
+        // Build FlowSpec NLRI components per RFC 5575 using typed FlowSpecRule
+        let mut rules: Vec<ProtoFlowSpecRule> = Vec::new();
 
-        // Type 1: Destination Prefix
+        // Type 1: Destination Prefix - use FlowSpecIPPrefix for proper encoding
         let prefix_bytes = prefix_u32.to_be_bytes();
-        let dst_prefix_component = FlowSpecComponent {
+        let addr = Ipv4Addr::new(prefix_bytes[0], prefix_bytes[1], prefix_bytes[2], prefix_bytes[3]);
+        let dst_prefix = FlowSpecIpPrefix {
             r#type: 1, // FLOWSPEC_TYPE_DST_PREFIX
-            items: vec![FlowSpecComponentItem {
-                op: prefix_len as u32,
-                value: u64::from_be_bytes([
-                    0, 0, 0, 0,
-                    prefix_bytes[0],
-                    prefix_bytes[1],
-                    prefix_bytes[2],
-                    prefix_bytes[3],
-                ]),
-            }],
+            prefix_len: prefix_len as u32,
+            prefix: addr.to_string(),
+            offset: 0, // IPv4 doesn't use offset
         };
-        rules.push(self.encode_any("apipb.FlowSpecComponent", &dst_prefix_component)?);
+        rules.push(ProtoFlowSpecRule {
+            rule: Some(flow_spec_rule::Rule::IpPrefix(dst_prefix)),
+        });
 
         // Type 3: IP Protocol (if specified)
         if let Some(proto) = nlri.protocol {
@@ -171,7 +188,9 @@ impl GoBgpAnnouncer {
                     value: proto as u64,
                 }],
             };
-            rules.push(self.encode_any("apipb.FlowSpecComponent", &proto_component)?);
+            rules.push(ProtoFlowSpecRule {
+                rule: Some(flow_spec_rule::Rule::Component(proto_component)),
+            });
         }
 
         // Type 5: Destination Port
@@ -197,28 +216,19 @@ impl GoBgpAnnouncer {
                 r#type: 5, // FLOWSPEC_TYPE_DST_PORT
                 items,
             };
-            rules.push(self.encode_any("apipb.FlowSpecComponent", &port_component)?);
+            rules.push(ProtoFlowSpecRule {
+                rule: Some(flow_spec_rule::Rule::Component(port_component)),
+            });
         }
 
-        let flowspec_nlri = ProtoFlowSpecNlri { rules };
-
-        // Encode as Any
-        let mut buf = Vec::new();
-        flowspec_nlri.encode(&mut buf).map_err(|e| {
-            PrefixdError::BgpAnnouncementFailed(format!("failed to encode NLRI: {}", e))
-        })?;
-
-        Ok(prost_types::Any {
-            type_url: "type.googleapis.com/apipb.FlowSpecNLRI".to_string(),
-            value: buf,
-        })
+        Ok(ProtoFlowSpecNlri { rules })
     }
 
-    fn build_flowspec_nlri_v6(&self, nlri: &FlowSpecNlri) -> Result<prost_types::Any> {
+    fn build_flowspec_nlri_v6(&self, nlri: &FlowSpecNlri) -> Result<ProtoFlowSpecNlri> {
         let (addr, prefix_len) = self.parse_prefix_v6(&nlri.dst_prefix)?;
 
         // Build FlowSpec NLRI components for IPv6 per RFC 8956
-        let mut rules: Vec<prost_types::Any> = Vec::new();
+        let mut rules: Vec<ProtoFlowSpecRule> = Vec::new();
 
         // Type 1: Destination Prefix (IPv6) - use FlowSpecIPPrefix for v6
         let dst_prefix_component = FlowSpecIpPrefix {
@@ -227,7 +237,9 @@ impl GoBgpAnnouncer {
             prefix: addr.to_string(),
             offset: 0,
         };
-        rules.push(self.encode_any("apipb.FlowSpecIPPrefix", &dst_prefix_component)?);
+        rules.push(ProtoFlowSpecRule {
+            rule: Some(flow_spec_rule::Rule::IpPrefix(dst_prefix_component)),
+        });
 
         // Type 3: Next Header (equivalent to IP Protocol for IPv6)
         if let Some(proto) = nlri.protocol {
@@ -238,7 +250,9 @@ impl GoBgpAnnouncer {
                     value: proto as u64,
                 }],
             };
-            rules.push(self.encode_any("apipb.FlowSpecComponent", &proto_component)?);
+            rules.push(ProtoFlowSpecRule {
+                rule: Some(flow_spec_rule::Rule::Component(proto_component)),
+            });
         }
 
         // Type 5: Destination Port
@@ -264,31 +278,25 @@ impl GoBgpAnnouncer {
                 r#type: 5,
                 items,
             };
-            rules.push(self.encode_any("apipb.FlowSpecComponent", &port_component)?);
+            rules.push(ProtoFlowSpecRule {
+                rule: Some(flow_spec_rule::Rule::Component(port_component)),
+            });
         }
 
-        let flowspec_nlri = ProtoFlowSpecNlri { rules };
-
-        let mut buf = Vec::new();
-        flowspec_nlri.encode(&mut buf).map_err(|e| {
-            PrefixdError::BgpAnnouncementFailed(format!("failed to encode IPv6 NLRI: {}", e))
-        })?;
-
-        Ok(prost_types::Any {
-            type_url: "type.googleapis.com/apipb.FlowSpecNLRI".to_string(),
-            value: buf,
-        })
+        Ok(ProtoFlowSpecNlri { rules })
     }
 
-    fn build_path_attributes(&self, actions: &[FlowSpecAction]) -> Result<Vec<prost_types::Any>> {
+    fn build_path_attributes(&self, actions: &[FlowSpecAction]) -> Result<Vec<Attribute>> {
         let mut pattrs = Vec::new();
 
         // Origin attribute (IGP)
         let origin = OriginAttribute { origin: 0 };
-        pattrs.push(self.encode_any("apipb.OriginAttribute", &origin)?);
+        pattrs.push(Attribute {
+            attr: Some(attribute::Attr::Origin(origin)),
+        });
 
         // Extended communities for FlowSpec actions
-        let mut communities = Vec::new();
+        let mut communities: Vec<ExtendedCommunity> = Vec::new();
 
         for action in actions {
             match action.action_type {
@@ -298,13 +306,8 @@ impl GoBgpAnnouncer {
                         asn: 0,
                         rate: 0.0,
                     };
-                    let mut buf = Vec::new();
-                    traffic_rate.encode(&mut buf).map_err(|e| {
-                        PrefixdError::BgpAnnouncementFailed(format!("encode error: {}", e))
-                    })?;
-                    communities.push(prost_types::Any {
-                        type_url: "type.googleapis.com/apipb.TrafficRateExtended".to_string(),
-                        value: buf,
+                    communities.push(ExtendedCommunity {
+                        extcom: Some(extended_community::Extcom::TrafficRate(traffic_rate)),
                     });
                 }
                 ActionType::Police => {
@@ -315,13 +318,8 @@ impl GoBgpAnnouncer {
                             asn: 0,
                             rate: rate_bytes,
                         };
-                        let mut buf = Vec::new();
-                        traffic_rate.encode(&mut buf).map_err(|e| {
-                            PrefixdError::BgpAnnouncementFailed(format!("encode error: {}", e))
-                        })?;
-                        communities.push(prost_types::Any {
-                            type_url: "type.googleapis.com/apipb.TrafficRateExtended".to_string(),
-                            value: buf,
+                        communities.push(ExtendedCommunity {
+                            extcom: Some(extended_community::Extcom::TrafficRate(traffic_rate)),
                         });
                     }
                 }
@@ -330,20 +328,12 @@ impl GoBgpAnnouncer {
 
         if !communities.is_empty() {
             let ext_comm = ExtendedCommunitiesAttribute { communities };
-            pattrs.push(self.encode_any("apipb.ExtendedCommunitiesAttribute", &ext_comm)?);
+            pattrs.push(Attribute {
+                attr: Some(attribute::Attr::ExtendedCommunities(ext_comm)),
+            });
         }
 
         Ok(pattrs)
-    }
-
-    fn encode_any<M: Message>(&self, type_name: &str, msg: &M) -> Result<prost_types::Any> {
-        let mut buf = Vec::new();
-        msg.encode(&mut buf)
-            .map_err(|e| PrefixdError::BgpAnnouncementFailed(format!("encode error: {}", e)))?;
-        Ok(prost_types::Any {
-            type_url: format!("type.googleapis.com/{}", type_name),
-            value: buf,
-        })
     }
 
     fn parse_prefix_v4(&self, prefix: &str) -> Result<(u32, u8)> {
@@ -540,13 +530,14 @@ impl GoBgpAnnouncer {
     /// Parse a FlowSpec path from GoBGP's RIB into our domain FlowSpecRule.
     /// This is the inverse of build_flowspec_path - used by reconciliation to compare
     /// desired state (DB) vs actual state (BGP RIB).
+    /// Updated for GoBGP v4 API which uses typed oneof instead of Any.
     fn parse_flowspec_path(&self, path: &Path) -> Result<FlowSpecRule> {
-        // 1. Parse NLRI
-        let nlri_any = path.nlri.as_ref().ok_or_else(|| {
+        // 1. Parse NLRI (now a typed Nlri message with oneof)
+        let nlri_wrapper = path.nlri.as_ref().ok_or_else(|| {
             PrefixdError::Internal("Path has no NLRI".to_string())
         })?;
 
-        let flowspec_nlri = self.decode_flowspec_nlri(nlri_any)?;
+        let flowspec_nlri = self.decode_flowspec_nlri(nlri_wrapper)?;
 
         // 2. Parse path attributes for action (traffic-rate extended community)
         let action = self.parse_flowspec_action(&path.pattrs)?;
@@ -554,73 +545,63 @@ impl GoBgpAnnouncer {
         Ok(FlowSpecRule::new(flowspec_nlri, action))
     }
 
-    /// Decode FlowSpecNLRI from Any and extract match criteria
-    fn decode_flowspec_nlri(&self, nlri_any: &prost_types::Any) -> Result<FlowSpecNlri> {
-        // Verify it's a FlowSpecNLRI
-        if !nlri_any.type_url.ends_with("FlowSpecNLRI") {
-            return Err(PrefixdError::Internal(format!(
-                "Unexpected NLRI type: {}",
-                nlri_any.type_url
-            )));
-        }
-
-        // Decode the FlowSpecNLRI
-        let proto_nlri = ProtoFlowSpecNlri::decode(nlri_any.value.as_slice()).map_err(|e| {
-            PrefixdError::Internal(format!("Failed to decode FlowSpecNLRI: {}", e))
-        })?;
+    /// Decode FlowSpecNLRI from typed Nlri and extract match criteria
+    /// GoBGP v4 uses oneof instead of Any for type safety
+    fn decode_flowspec_nlri(&self, nlri_wrapper: &Nlri) -> Result<FlowSpecNlri> {
+        // Extract FlowSpec from the oneof
+        let proto_nlri = match &nlri_wrapper.nlri {
+            Some(nlri::Nlri::FlowSpec(fs)) => fs,
+            Some(other) => {
+                return Err(PrefixdError::Internal(format!(
+                    "Unexpected NLRI type: expected FlowSpec, got {:?}",
+                    std::mem::discriminant(other)
+                )));
+            }
+            None => {
+                return Err(PrefixdError::Internal(
+                    "NLRI has no inner type".to_string()
+                ));
+            }
+        };
 
         let mut dst_prefix = String::new();
         let mut protocol: Option<u8> = None;
         let mut dst_ports: Vec<u16> = Vec::new();
 
-        // Parse each rule (component) in the NLRI
-        for rule_any in &proto_nlri.rules {
-            if rule_any.type_url.ends_with("FlowSpecIPPrefix") {
-                // IPv6 style prefix
-                let ip_prefix = FlowSpecIpPrefix::decode(rule_any.value.as_slice()).map_err(|e| {
-                    PrefixdError::Internal(format!("Failed to decode FlowSpecIPPrefix: {}", e))
-                })?;
-                if ip_prefix.r#type == 1 {
-                    // Destination prefix
-                    dst_prefix = format!("{}/{}", ip_prefix.prefix, ip_prefix.prefix_len);
+        // Parse each rule in the NLRI - now typed with oneof
+        for rule in &proto_nlri.rules {
+            match &rule.rule {
+                Some(flow_spec_rule::Rule::IpPrefix(ip_prefix)) => {
+                    // FlowSpecIPPrefix for destination/source prefix
+                    if ip_prefix.r#type == 1 {
+                        // Destination prefix (type 1)
+                        dst_prefix = format!("{}/{}", ip_prefix.prefix, ip_prefix.prefix_len);
+                    }
+                    // type 2 would be source prefix, which we don't support
                 }
-            } else if rule_any.type_url.ends_with("FlowSpecComponent") {
-                let component = FlowSpecComponent::decode(rule_any.value.as_slice()).map_err(|e| {
-                    PrefixdError::Internal(format!("Failed to decode FlowSpecComponent: {}", e))
-                })?;
-
-                match component.r#type {
-                    1 => {
-                        // Destination prefix (IPv4 encoding)
-                        // Items contain: op=prefix_len, value=prefix as u64
-                        if let Some(item) = component.items.first() {
-                            let prefix_len = item.op as u8;
-                            let prefix_bytes = (item.value as u32).to_be_bytes();
-                            let addr = Ipv4Addr::new(
-                                prefix_bytes[0],
-                                prefix_bytes[1],
-                                prefix_bytes[2],
-                                prefix_bytes[3],
-                            );
-                            dst_prefix = format!("{}/{}", addr, prefix_len);
+                Some(flow_spec_rule::Rule::Component(component)) => {
+                    match component.r#type {
+                        3 => {
+                            // IP Protocol
+                            if let Some(item) = component.items.first() {
+                                protocol = Some(item.value as u8);
+                            }
                         }
-                    }
-                    3 => {
-                        // IP Protocol
-                        if let Some(item) = component.items.first() {
-                            protocol = Some(item.value as u8);
+                        5 => {
+                            // Destination ports
+                            for item in &component.items {
+                                dst_ports.push(item.value as u16);
+                            }
                         }
-                    }
-                    5 => {
-                        // Destination ports
-                        for item in &component.items {
-                            dst_ports.push(item.value as u16);
+                        _ => {
+                            // Ignore other component types (src port, TCP flags, etc.)
                         }
-                    }
-                    _ => {
-                        // Ignore other component types (src prefix, src port, etc.)
                     }
                 }
+                Some(flow_spec_rule::Rule::Mac(_)) => {
+                    // L2 FlowSpec MAC - not supported for our use case
+                }
+                None => {}
             }
         }
 
@@ -638,27 +619,12 @@ impl GoBgpAnnouncer {
     }
 
     /// Parse extended communities to extract the FlowSpec action (traffic-rate)
-    fn parse_flowspec_action(&self, pattrs: &[prost_types::Any]) -> Result<FlowSpecAction> {
-        for attr_any in pattrs {
-            if attr_any.type_url.ends_with("ExtendedCommunitiesAttribute") {
-                let ext_comm = ExtendedCommunitiesAttribute::decode(attr_any.value.as_slice())
-                    .map_err(|e| {
-                        PrefixdError::Internal(format!(
-                            "Failed to decode ExtendedCommunitiesAttribute: {}",
-                            e
-                        ))
-                    })?;
-
-                for comm_any in &ext_comm.communities {
-                    if comm_any.type_url.ends_with("TrafficRateExtended") {
-                        let traffic_rate =
-                            TrafficRateExtended::decode(comm_any.value.as_slice()).map_err(|e| {
-                                PrefixdError::Internal(format!(
-                                    "Failed to decode TrafficRateExtended: {}",
-                                    e
-                                ))
-                            })?;
-
+    /// GoBGP v4 uses typed Attribute with oneof instead of Any
+    fn parse_flowspec_action(&self, pattrs: &[Attribute]) -> Result<FlowSpecAction> {
+        for attr in pattrs {
+            if let Some(attribute::Attr::ExtendedCommunities(ext_comm)) = &attr.attr {
+                for community in &ext_comm.communities {
+                    if let Some(extended_community::Extcom::TrafficRate(traffic_rate)) = &community.extcom {
                         // rate == 0 means discard, otherwise it's police with rate
                         if traffic_rate.rate == 0.0 {
                             return Ok(FlowSpecAction {
@@ -792,9 +758,10 @@ mod tests {
         let result = announcer.build_flowspec_nlri_v4(&nlri);
         assert!(result.is_ok());
 
-        let any = result.unwrap();
-        assert!(any.type_url.contains("FlowSpecNLRI"));
-        assert!(!any.value.is_empty());
+        let proto_nlri = result.unwrap();
+        // Should have dst prefix component, protocol component, port component
+        assert!(!proto_nlri.rules.is_empty());
+        assert_eq!(proto_nlri.rules.len(), 3); // dst, proto, port
     }
 
     #[test]
@@ -838,9 +805,10 @@ mod tests {
         let result = announcer.build_flowspec_nlri_v6(&nlri);
         assert!(result.is_ok());
 
-        let any = result.unwrap();
-        assert!(any.type_url.contains("FlowSpecNLRI"));
-        assert!(!any.value.is_empty());
+        let proto_nlri = result.unwrap();
+        // Should have dst prefix (IpPrefix for v6), protocol component, port component
+        assert!(!proto_nlri.rules.is_empty());
+        assert_eq!(proto_nlri.rules.len(), 3);
     }
 
     // ==========================================================================
@@ -1085,13 +1053,17 @@ mod tests {
 
     #[test]
     fn test_parse_flowspec_path_invalid_nlri_type() {
+        use crate::bgp::apipb::IpAddressPrefix;
+
         let announcer = make_announcer();
 
-        // Create a path with wrong NLRI type
+        // Create a path with wrong NLRI type (IPAddressPrefix instead of FlowSpec)
         let path = Path {
-            nlri: Some(prost_types::Any {
-                type_url: "type.googleapis.com/apipb.IPAddressPrefix".to_string(),
-                value: vec![],
+            nlri: Some(Nlri {
+                nlri: Some(nlri::Nlri::Prefix(IpAddressPrefix {
+                    prefix_len: 32,
+                    prefix: "192.168.1.1".to_string(),
+                })),
             }),
             ..Default::default()
         };

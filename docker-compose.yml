@@ -51,15 +51,14 @@ services:
     restart: unless-stopped
 
   gobgp:
-    image: osrg/gobgp:latest
+    image: jauderho/gobgp:latest
     container_name: prefixd-gobgp
     ports:
       - "50051:50051"  # gRPC API
       - "179:179"      # BGP
     volumes:
       - ./configs/gobgp.conf:/etc/gobgp/gobgp.conf:ro
-    entrypoint: ["/go/bin/gobgpd"]
-    command: ["-f", "/etc/gobgp/gobgp.conf", "-p", "--api-hosts=0.0.0.0:50051"]
+    command: ["/usr/local/bin/gobgpd", "-f", "/etc/gobgp/gobgp.conf", "-p", "--api-hosts=0.0.0.0:50051"]
     restart: unless-stopped
 
 volumes:

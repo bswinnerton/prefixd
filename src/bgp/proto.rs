@@ -1,3 +1,4 @@
 pub mod apipb {
-    tonic::include_proto!("apipb");
+    // GoBGP v4.x uses "api" package name
+    tonic::include_proto!("api");
 }
