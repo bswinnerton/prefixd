@@ -49,7 +49,7 @@ prefixdctl -a http://localhost:8080 -t $TOKEN <command>
 prefixdctl status
 
 # Example output:
-# prefixd v0.7.0 (iad1)
+# prefixd v0.8.0 (iad1)
 # Status: healthy
 # Uptime: 2d 4h 30m
 # Active mitigations: 12

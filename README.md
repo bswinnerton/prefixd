@@ -166,7 +166,7 @@ See [Router Setup](docs/deployment.md#router-configuration) for import policy ex
 
 ## Project status
 
-prefixd is under active development. Current version: **v0.7.0**
+prefixd is under active development. Current version: **v0.8.0**
 
 - Core functionality is stable and tested
 - Used internally, preparing for public release

@@ -367,7 +367,7 @@ GET /v1/health
 ```json
 {
   "status": "healthy",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "pop": "iad1",
   "uptime_seconds": 86400,
   "database": {
