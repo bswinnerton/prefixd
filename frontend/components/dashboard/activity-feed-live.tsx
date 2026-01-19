@@ -1,8 +1,10 @@
 "use client"
 
+import { motion } from "motion/react"
 import { Shield, AlertTriangle, User, FileText, RefreshCw, AlertCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useEvents, useAuditLog } from "@/hooks/use-api"
+import { useReducedMotion } from "@/hooks/use-reduced-motion"
 
 interface ActivityItem {
   id: string
@@ -46,6 +48,7 @@ function getActivityIcon(type: ActivityItem["type"]) {
 export function ActivityFeedLive() {
   const { data: events, error: eventsError, isLoading: eventsLoading } = useEvents({ limit: 10 })
   const { data: audit, error: auditError, isLoading: auditLoading } = useAuditLog({ limit: 10 })
+  const reducedMotion = useReducedMotion()
 
   const isLoading = eventsLoading || auditLoading
   const hasError = eventsError || auditError
@@ -130,10 +133,13 @@ export function ActivityFeedLive() {
       <h3 className="text-xs font-mono uppercase tracking-wide text-muted-foreground mb-3">Recent Activity</h3>
       <div className="space-y-0">
         {displayActivities.map((activity, index) => (
-          <div
+          <motion.div
             key={activity.id}
+            initial={reducedMotion ? false : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.15, ease: "easeOut", delay: reducedMotion ? 0 : index * 0.03 }}
             className={cn(
-              "flex items-start gap-3 py-2 transition-colors hover:bg-secondary/50",
+              "flex items-start gap-3 py-2 hover:bg-secondary/50",
               index !== displayActivities.length - 1 && "border-b border-border/50"
             )}
           >
@@ -147,7 +153,7 @@ export function ActivityFeedLive() {
               </div>
               {activity.ip && <span className="font-mono text-[10px] text-primary">{activity.ip}</span>}
             </div>
-          </div>
+          </motion.div>
         ))}
       </div>
     </div>

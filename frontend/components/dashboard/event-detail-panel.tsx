@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { motion } from "motion/react"
 import { X, Copy, Check, ExternalLink } from "lucide-react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -9,6 +10,7 @@ import { SourceBadge } from "./source-badge"
 import { ConfidenceBar } from "./confidence-bar"
 import type { Event } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { useReducedMotion } from "@/hooks/use-reduced-motion"
 
 interface EventDetailPanelProps {
   event: Event | null
@@ -78,6 +80,7 @@ function parsePorts(portsJson: string): number[] {
 
 export function EventDetailPanel({ event, onClose }: EventDetailPanelProps) {
   const [copied, setCopied] = useState<string | null>(null)
+  const reducedMotion = useReducedMotion()
 
   if (!event) return null
 
@@ -90,7 +93,13 @@ export function EventDetailPanel({ event, onClose }: EventDetailPanelProps) {
   const ports = parsePorts(event.top_dst_ports_json)
 
   return (
-    <div className="fixed inset-y-0 right-0 z-50 w-full max-w-lg bg-background border-l border-border shadow-xl overflow-y-auto">
+    <motion.div
+      initial={reducedMotion ? false : { x: "100%", opacity: 0.5 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={reducedMotion ? undefined : { x: "100%", opacity: 0.5 }}
+      transition={{ duration: 0.15, ease: "easeOut" }}
+      className="fixed inset-y-0 right-0 z-50 w-full max-w-lg bg-background border-l border-border shadow-xl overflow-y-auto"
+    >
       <div className="sticky top-0 bg-background border-b border-border px-6 py-4 flex items-center justify-between z-10">
         <div className="flex items-center gap-3">
           <SourceBadge source={event.source} />
@@ -224,7 +233,7 @@ export function EventDetailPanel({ event, onClose }: EventDetailPanelProps) {
           </Link>
         </div>
       </div>
-    </div>
+    </motion.div>
   )
 }
 

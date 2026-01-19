@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { motion } from "motion/react"
 import { X, Copy, Check, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,6 +10,7 @@ import { ActionBadge } from "./action-badge"
 import type { Mitigation } from "@/lib/api"
 import { withdrawMitigation } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { useReducedMotion } from "@/hooks/use-reduced-motion"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -82,6 +84,7 @@ export function MitigationDetailPanel({ mitigation, onClose, onWithdraw }: Mitig
   const [withdrawReason, setWithdrawReason] = useState("")
   const [isWithdrawing, setIsWithdrawing] = useState(false)
   const [withdrawError, setWithdrawError] = useState<string | null>(null)
+  const reducedMotion = useReducedMotion()
 
   if (!mitigation) return null
 
@@ -110,7 +113,13 @@ export function MitigationDetailPanel({ mitigation, onClose, onWithdraw }: Mitig
 
   return (
     <>
-      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-lg bg-background border-l border-border shadow-xl overflow-y-auto">
+      <motion.div
+        initial={reducedMotion ? false : { x: "100%", opacity: 0.5 }}
+        animate={{ x: 0, opacity: 1 }}
+        exit={reducedMotion ? undefined : { x: "100%", opacity: 0.5 }}
+        transition={{ duration: 0.15, ease: "easeOut" }}
+        className="fixed inset-y-0 right-0 z-50 w-full max-w-lg bg-background border-l border-border shadow-xl overflow-y-auto"
+      >
         <div className="sticky top-0 bg-background border-b border-border px-6 py-4 flex items-center justify-between z-10">
           <div className="flex items-center gap-3">
             <StatusBadge status={mitigation.status} />
@@ -267,7 +276,7 @@ export function MitigationDetailPanel({ mitigation, onClose, onWithdraw }: Mitig
             )}
           </div>
         </div>
-      </div>
+      </motion.div>
 
       {/* Withdraw Confirmation Dialog */}
       <AlertDialog open={showWithdrawDialog} onOpenChange={setShowWithdrawDialog}>
