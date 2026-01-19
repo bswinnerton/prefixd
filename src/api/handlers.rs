@@ -43,6 +43,10 @@ pub struct MitigationResponse {
     pub status: String,
     /// Customer ID from inventory
     pub customer_id: Option<String>,
+    /// Service ID from inventory
+    pub service_id: Option<String>,
+    /// POP where mitigation is active
+    pub pop: String,
     /// Victim IP address being protected
     pub victim_ip: String,
     /// Attack vector type
@@ -51,12 +55,26 @@ pub struct MitigationResponse {
     pub action_type: String,
     /// Rate limit in bps (for police action)
     pub rate_bps: Option<u64>,
+    /// Destination prefix (CIDR)
+    pub dst_prefix: String,
+    /// IP protocol number (6=TCP, 17=UDP, 1=ICMP)
+    pub protocol: Option<u8>,
+    /// Destination ports
+    pub dst_ports: Vec<u16>,
     /// When the mitigation was created
     pub created_at: String,
+    /// When the mitigation was last updated
+    pub updated_at: String,
     /// When the mitigation expires
     pub expires_at: String,
+    /// When the mitigation was withdrawn (if applicable)
+    pub withdrawn_at: Option<String>,
+    /// ID of the event that triggered this mitigation
+    pub triggering_event_id: Uuid,
     /// Scope hash for deduplication
     pub scope_hash: String,
+    /// Reason for the mitigation
+    pub reason: String,
 }
 
 impl From<&Mitigation> for MitigationResponse {
@@ -65,13 +83,22 @@ impl From<&Mitigation> for MitigationResponse {
             mitigation_id: m.mitigation_id,
             status: m.status.to_string(),
             customer_id: m.customer_id.clone(),
+            service_id: m.service_id.clone(),
+            pop: m.pop.clone(),
             victim_ip: m.victim_ip.clone(),
             vector: m.vector.to_string(),
             action_type: m.action_type.to_string(),
             rate_bps: m.action_params.rate_bps,
+            dst_prefix: m.match_criteria.dst_prefix.clone(),
+            protocol: m.match_criteria.protocol,
+            dst_ports: m.match_criteria.dst_ports.clone(),
             created_at: m.created_at.to_rfc3339(),
+            updated_at: m.updated_at.to_rfc3339(),
             expires_at: m.expires_at.to_rfc3339(),
+            withdrawn_at: m.withdrawn_at.map(|t| t.to_rfc3339()),
+            triggering_event_id: m.triggering_event_id,
             scope_hash: m.scope_hash.clone(),
+            reason: m.reason.clone(),
         }
     }
 }

@@ -8,12 +8,21 @@ export interface Mitigation {
   scope_hash: string
   status: "pending" | "active" | "escalated" | "expired" | "withdrawn" | "rejected"
   customer_id: string | null
+  service_id: string | null
+  pop: string
   victim_ip: string
   vector: string
   action_type: "police" | "discard"
   rate_bps: number | null
+  dst_prefix: string
+  protocol: number | null
+  dst_ports: number[]
   created_at: string
+  updated_at: string
   expires_at: string
+  withdrawn_at: string | null
+  triggering_event_id: string
+  reason: string
 }
 
 export interface Event {

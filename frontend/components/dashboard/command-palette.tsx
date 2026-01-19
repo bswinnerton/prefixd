@@ -14,7 +14,8 @@ import {
   CommandShortcut,
 } from "@/components/ui/command"
 import { LayoutDashboard, Shield, Activity, FileText, Settings, Zap, Clock, XCircle } from "lucide-react"
-import { mockMitigations, mockEvents, type Mitigation } from "@/lib/mock-data"
+import { useMitigations, useEvents } from "@/hooks/use-api"
+import type { Mitigation } from "@/lib/api"
 
 interface CommandPaletteProps {
   open: boolean
@@ -24,6 +25,9 @@ interface CommandPaletteProps {
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const router = useRouter()
   const [search, setSearch] = useState("")
+  
+  const { data: mitigations } = useMitigations({ limit: 50 })
+  const { data: events } = useEvents({ limit: 50 })
 
   const runCommand = useCallback(
     (command: () => void) => {
@@ -33,21 +37,21 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     [onOpenChange],
   )
 
-  const filteredMitigations = mockMitigations
+  const filteredMitigations = (mitigations || [])
     .filter(
       (m) =>
-        m.id.toLowerCase().includes(search.toLowerCase()) ||
-        m.victimIp.includes(search) ||
+        m.mitigation_id.toLowerCase().includes(search.toLowerCase()) ||
+        m.victim_ip.includes(search) ||
         m.vector.toLowerCase().includes(search.toLowerCase()) ||
-        m.customer.toLowerCase().includes(search.toLowerCase()),
+        (m.customer_id && m.customer_id.toLowerCase().includes(search.toLowerCase())),
     )
     .slice(0, 5)
 
-  const filteredEvents = mockEvents
+  const filteredEvents = (events || [])
     .filter(
       (e) =>
-        e.id.toLowerCase().includes(search.toLowerCase()) ||
-        e.victimIp.includes(search) ||
+        e.event_id.toLowerCase().includes(search.toLowerCase()) ||
+        e.victim_ip.includes(search) ||
         e.vector.toLowerCase().includes(search.toLowerCase()),
     )
     .slice(0, 5)
@@ -62,6 +66,8 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         return <Clock className="h-3 w-3 text-muted-foreground" />
       case "withdrawn":
         return <XCircle className="h-3 w-3 text-muted-foreground" />
+      default:
+        return <span className="h-1.5 w-1.5 bg-muted-foreground" />
     }
   }
 
@@ -113,14 +119,14 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
               <CommandGroup heading="Mitigations">
                 {filteredMitigations.map((m) => (
                   <CommandItem
-                    key={m.id}
-                    onSelect={() => runCommand(() => router.push(`/mitigations?id=${m.id}`))}
+                    key={m.mitigation_id}
+                    onSelect={() => runCommand(() => router.push(`/mitigations?id=${m.mitigation_id}`))}
                     className="flex items-center gap-3 font-mono text-xs"
                   >
                     {getStatusIcon(m.status)}
-                    <span>{m.victimIp}</span>
-                    <span className="text-muted-foreground">{m.vector}</span>
-                    <span className="ml-auto text-muted-foreground">{m.customer}</span>
+                    <span>{m.victim_ip}</span>
+                    <span className="text-muted-foreground">{m.vector.replace(/_/g, " ")}</span>
+                    <span className="ml-auto text-muted-foreground">{m.customer_id || "N/A"}</span>
                   </CommandItem>
                 ))}
               </CommandGroup>
@@ -133,14 +139,16 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
               <CommandGroup heading="Events">
                 {filteredEvents.map((e) => (
                   <CommandItem
-                    key={e.id}
-                    onSelect={() => runCommand(() => router.push(`/events?id=${e.id}`))}
+                    key={e.event_id}
+                    onSelect={() => runCommand(() => router.push(`/events?id=${e.event_id}`))}
                     className="flex items-center gap-3 font-mono text-xs"
                   >
                     <span className="h-1.5 w-1.5 bg-muted-foreground" />
-                    <span>{e.victimIp}</span>
-                    <span className="text-muted-foreground">{e.vector}</span>
-                    <span className="ml-auto text-muted-foreground tabular-nums">{e.confidence}%</span>
+                    <span>{e.victim_ip}</span>
+                    <span className="text-muted-foreground">{e.vector.replace(/_/g, " ")}</span>
+                    <span className="ml-auto text-muted-foreground tabular-nums">
+                      {e.confidence ? `${Math.round(e.confidence * 100)}%` : "N/A"}
+                    </span>
                   </CommandItem>
                 ))}
               </CommandGroup>

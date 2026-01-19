@@ -1,10 +1,10 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { ExternalLink, Search, ChevronDown, ChevronUp, Filter, RefreshCw, AlertCircle } from "lucide-react"
-import Link from "next/link"
+import { Eye, Search, ChevronDown, ChevronUp, Filter, RefreshCw, AlertCircle } from "lucide-react"
 import { SourceBadge } from "@/components/dashboard/source-badge"
 import { ConfidenceBar } from "@/components/dashboard/confidence-bar"
+import { EventDetailPanel } from "@/components/dashboard/event-detail-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -49,6 +49,7 @@ export function EventsContentLive() {
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
   const [currentPage, setCurrentPage] = useState(1)
   const [showFilters, setShowFilters] = useState(false)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const itemsPerPage = 20
 
   const { data: events, error, isLoading, mutate } = useEvents({ limit: 200 })
@@ -272,12 +273,13 @@ export function EventsContentLive() {
                       <SortIcon field="confidence" />
                     </span>
                   </th>
+                  <th className="text-center px-4 py-3 font-medium text-muted-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {paginatedEvents.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                       No events found
                     </td>
                   </tr>
@@ -286,9 +288,10 @@ export function EventsContentLive() {
                     <tr
                       key={event.event_id}
                       className={cn(
-                        "border-b border-border/50 hover:bg-secondary/50 transition-colors",
+                        "border-b border-border/50 hover:bg-secondary/50 transition-colors cursor-pointer",
                         index % 2 === 1 && "bg-secondary/20"
                       )}
+                      onClick={() => setSelectedId(event.event_id)}
                     >
                       <td className="px-4 py-3 font-mono text-muted-foreground whitespace-nowrap">
                         {formatTimestamp(event.event_timestamp)}
@@ -308,6 +311,20 @@ export function EventsContentLive() {
                       </td>
                       <td className="px-4 py-3">
                         <ConfidenceBar value={event.confidence || 0} />
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setSelectedId(event.event_id)
+                          }}
+                          aria-label="View event details"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
                       </td>
                     </tr>
                   ))
@@ -345,6 +362,14 @@ export function EventsContentLive() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Detail Panel */}
+      {selectedId && (
+        <EventDetailPanel
+          event={events?.find(e => e.event_id === selectedId) || null}
+          onClose={() => setSelectedId(null)}
+        />
       )}
     </div>
   )

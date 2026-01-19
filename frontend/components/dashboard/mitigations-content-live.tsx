@@ -4,6 +4,7 @@ import { useState, useMemo } from "react"
 import { Eye, Search, ChevronDown, ChevronUp, Filter, RefreshCw, AlertCircle } from "lucide-react"
 import { StatusBadge } from "@/components/dashboard/status-badge"
 import { ActionBadge } from "@/components/dashboard/action-badge"
+import { MitigationDetailPanel } from "@/components/dashboard/mitigation-detail-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -303,7 +304,9 @@ export function MitigationsContentLive() {
                           />
                         </td>
                         <td className="px-4 py-3 font-mono text-muted-foreground">
-                          -
+                          {mitigation.dst_ports.length > 0
+                            ? mitigation.dst_ports.join(", ")
+                            : "any"}
                         </td>
                         <td className="px-4 py-3 text-muted-foreground">
                           {formatRelativeTime(mitigation.created_at)}
@@ -367,6 +370,15 @@ export function MitigationsContentLive() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Detail Panel */}
+      {selectedId && (
+        <MitigationDetailPanel
+          mitigation={mitigations?.find(m => m.mitigation_id === selectedId) || null}
+          onClose={() => setSelectedId(null)}
+          onWithdraw={() => mutate()}
+        />
       )}
     </div>
   )
