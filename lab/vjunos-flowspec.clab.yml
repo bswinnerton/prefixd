@@ -1,20 +1,28 @@
 # vJunos-router FlowSpec Lab
-# 
+#
 # Tests FlowSpec propagation: prefixd -> GoBGP -> vJunos-router
 #
+# IMPORTANT: Requires Intel CPU with nested virtualization (VMX).
+#            Will NOT work on AMD CPUs. Use frr-flowspec.clab.yml instead.
+#
 # Prerequisites:
-#   1. Download vJunos-router qcow2 from Juniper
-#   2. Import: containerlab tools vrnetlab import vjunos-router-23.2R1.15.qcow2
+#   1. Intel CPU with nested virt: cat /sys/module/kvm_intel/parameters/nested
+#   2. Download vJunos-router qcow2 from Juniper (free account)
+#   3. Build vrnetlab image:
+#      git clone https://github.com/hellt/vrnetlab.git ~/vrnetlab
+#      cp vJunos-router-*.qcow2 ~/vrnetlab/juniper/vjunosrouter/
+#      cd ~/vrnetlab/juniper/vjunosrouter && make
 #
 # Usage:
 #   sudo containerlab deploy -t vjunos-flowspec.clab.yml
+#   # Wait 5-10 min for router to boot
 #   sudo containerlab destroy -t vjunos-flowspec.clab.yml
 
 name: vjunos-flowspec
 
 mgmt:
   network: clab-mgmt
-  ipv4-subnet: 172.20.20.0/24
+  ipv4-subnet: 172.30.30.0/24
 
 topology:
   nodes:
@@ -22,19 +30,20 @@ topology:
     gobgp:
       kind: linux
       image: jauderho/gobgp:latest
+      mgmt-ipv4: 172.30.30.2
       binds:
         - gobgp-vjunos.conf:/etc/gobgp/gobgp.conf:ro
-      exec:
-        - gobgpd -f /etc/gobgp/gobgp.conf -p --api-hosts=0.0.0.0:50051
-      mgmt-ipv4: 172.20.20.2
       ports:
-        - 50051:50051  # gRPC API for prefixd
+        - 50052:50051  # gRPC API for prefixd (50052 to avoid conflict)
+      exec:
+        - ip addr add 10.0.0.1/30 dev eth1
+        - gobgpd -f /etc/gobgp/gobgp.conf -p --api-hosts=0.0.0.0:50051 &
 
     # vJunos-router - FlowSpec receiver/enforcer
     router:
       kind: juniper_vjunosrouter
-      image: vrnetlab/juniper_vjunosrouter:23.2R1
-      mgmt-ipv4: 172.20.20.3
+      image: vrnetlab/juniper_vjunos-router:25.4R1.12
+      mgmt-ipv4: 172.30.30.3
       startup-config: vjunos-config.txt
 
   links:

@@ -1,0 +1,35 @@
+# FRR FlowSpec Lab
+#
+# Tests FlowSpec propagation: prefixd -> GoBGP -> FRR
+#
+# FRR (Free Range Routing) supports BGP FlowSpec and runs natively in containers
+# without requiring nested virtualization.
+#
+# Prerequisites:
+#   1. Start prefixd stack: docker compose up -d (in prefixd root)
+#
+# Usage:
+#   cd /path/to/prefixd/lab
+#   sudo containerlab deploy -t frr-flowspec.clab.yml
+#   docker network connect clab-mgmt prefixd-gobgp  # Gets 172.30.30.2
+#   sudo containerlab destroy -t frr-flowspec.clab.yml
+
+name: frr-flowspec
+
+mgmt:
+  network: clab-mgmt
+  ipv4-subnet: 172.30.30.0/24
+
+topology:
+  nodes:
+    # FRR router - FlowSpec receiver
+    # Peers with prefixd-gobgp (172.30.30.10) over management network
+    router:
+      kind: linux
+      image: quay.io/frrouting/frr:10.3.1
+      mgmt-ipv4: 172.30.30.3
+      binds:
+        - frr-daemons:/etc/frr/daemons:ro
+        - frr-bgpd.conf:/etc/frr/bgpd.conf:ro
+      exec:
+        - /usr/lib/frr/frrinit.sh start
