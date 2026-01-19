@@ -24,7 +24,8 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 
 ### Real Router Testing
 
-- [ ] Test with Juniper vMX (containerlab)
+- [x] FRR FlowSpec lab (containerlab) - fully working
+- [ ] Test with Juniper vMX (requires Intel VMX)
 - [ ] Test with Arista cEOS
 - [ ] Test with Cisco XRd
 - [ ] Document vendor-specific quirks and import policies

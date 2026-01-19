@@ -1,5 +1,5 @@
 pop: iad1
-mode: dry-run
+mode: enforced
 
 http:
   listen: "0.0.0.0:8080"

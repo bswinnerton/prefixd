@@ -299,13 +299,11 @@ export function MitigationsContentLive() {
                         <td className="px-4 py-3">
                           <ActionBadge
                             type={mitigation.action_type}
-                            rate={mitigation.action_params.rate_bps || undefined}
+                            rate={mitigation.rate_bps || undefined}
                           />
                         </td>
                         <td className="px-4 py-3 font-mono text-muted-foreground">
-                          {mitigation.match_criteria.dst_ports.length > 0
-                            ? mitigation.match_criteria.dst_ports.join(", ")
-                            : "any"}
+                          -
                         </td>
                         <td className="px-4 py-3 text-muted-foreground">
                           {formatRelativeTime(mitigation.created_at)}

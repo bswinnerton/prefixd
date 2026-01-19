@@ -5,6 +5,37 @@ All notable changes to prefixd will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-01-19
+
+### Added
+
+- **FRR FlowSpec Lab**
+  - Containerlab topology with FRR 10.3.1 as FlowSpec receiver
+  - Works on any Linux host (no nested virtualization required)
+  - Full end-to-end testing: event ingestion → policy → GoBGP → FRR
+  - Documented Juniper labs for Intel VMX users
+
+- **GoBGP Connection Fix**
+  - Call `connect()` on GoBGP announcer at startup
+  - Fixed BGP showing "not connected" in dashboard
+
+- **Docker Compose Integration**
+  - prefixd now connects to GoBGP and PostgreSQL via service names
+  - BGP mode changed from `mock` to `sidecar` for real FlowSpec
+
+### Fixed
+
+- `confidence` field type mismatch: changed from `f64` to `f32` to match PostgreSQL `REAL`
+- Events API was returning 500 due to sqlx type deserialization error
+
+### Changed
+
+- Default mode changed to `enforced` for lab testing (was `dry-run`)
+- Removed dual-router lab configs for simplicity
+- Updated lab README with Intel VMX requirements for Juniper
+
+---
+
 ## [0.7.0] - 2026-01-18
 
 ### Added

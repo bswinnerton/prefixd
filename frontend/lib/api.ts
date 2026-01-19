@@ -6,30 +6,14 @@ const requestCache = new Map<string, Promise<unknown>>()
 export interface Mitigation {
   mitigation_id: string
   scope_hash: string
-  pop: string
+  status: "pending" | "active" | "escalated" | "expired" | "withdrawn" | "rejected"
   customer_id: string | null
-  service_id: string | null
   victim_ip: string
   vector: string
-  match_criteria: {
-    dst_prefix: string
-    protocol: number | null
-    dst_ports: number[]
-  }
   action_type: "police" | "discard"
-  action_params: {
-    rate_bps: number | null
-  }
-  status: "pending" | "active" | "escalated" | "expired" | "withdrawn" | "rejected"
+  rate_bps: number | null
   created_at: string
-  updated_at: string
   expires_at: string
-  withdrawn_at: string | null
-  triggering_event_id: string
-  last_event_id: string
-  escalated_from_id: string | null
-  reason: string
-  rejection_reason: string | null
 }
 
 export interface Event {
