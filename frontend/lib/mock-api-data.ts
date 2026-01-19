@@ -8,9 +8,10 @@ const inFuture = (minutes: number) => new Date(now.getTime() + minutes * 60 * 10
 
 export const mockHealth: HealthResponse = {
   status: "healthy",
-  version: "1.0.0",
-  pop: "iad1",
-  uptime_seconds: 86423,
+  bgp_sessions: { "172.30.30.3": "established" },
+  active_mitigations: 6,
+  database: "connected",
+  gobgp: { status: "connected" },
   bgp_session_up: true,
 }
 

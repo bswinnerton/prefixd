@@ -73,7 +73,7 @@ pub struct AttackEventInput {
     #[serde(default)]
     pub top_dst_ports: Option<Vec<u16>>,
     #[serde(default)]
-    pub confidence: Option<f64>,
+    pub confidence: Option<f32>,
 }
 
 /// Internal event representation
@@ -90,7 +90,7 @@ pub struct AttackEvent {
     pub bps: Option<i64>,
     pub pps: Option<i64>,
     pub top_dst_ports_json: String,
-    pub confidence: Option<f64>,
+    pub confidence: Option<f32>,  // REAL in PostgreSQL
 }
 
 impl AttackEvent {

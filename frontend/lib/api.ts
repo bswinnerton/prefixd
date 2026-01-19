@@ -69,6 +69,8 @@ export interface HealthResponse {
     status: string
     error?: string
   }
+  // Computed from gobgp.status for UI convenience
+  bgp_session_up: boolean
 }
 
 export interface SafelistEntry {
@@ -125,7 +127,11 @@ async function doFetch<T>(url: string, options: RequestInit): Promise<T> {
 }
 
 export async function getHealth(): Promise<HealthResponse> {
-  return fetchApi<HealthResponse>("/v1/health")
+  const data = await fetchApi<Omit<HealthResponse, 'bgp_session_up'>>("/v1/health")
+  return {
+    ...data,
+    bgp_session_up: data.gobgp?.status === "connected",
+  }
 }
 
 export async function getStats(): Promise<Stats> {
