@@ -43,6 +43,17 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 - [ ] Hook tests
 - [ ] Error boundaries
 
+### Authentication
+
+- [ ] Credentials auth mode (username/password)
+  - Users table in PostgreSQL
+  - Argon2id password hashing
+  - Session cookies (HttpOnly, Secure, SameSite=Strict)
+  - Roles: admin, operator, viewer
+- [ ] User management UI in Admin page
+- [ ] Real login form (replace placeholder)
+- [ ] LDAP/AD support (optional, no callback needed)
+
 ---
 
 ## v1.0: Production Ready
