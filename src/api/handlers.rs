@@ -235,6 +235,133 @@ pub async fn ingest_event(
     State(state): State<Arc<AppState>>,
     Json(input): Json<AttackEventInput>,
 ) -> impl IntoResponse {
+    // Branch on action type
+    match input.action.as_str() {
+        "unban" => handle_unban(state, input).await,
+        "ban" | _ => handle_ban(state, input).await,
+    }
+}
+
+/// Handle unban action - withdraw mitigation by external_event_id
+async fn handle_unban(
+    state: Arc<AppState>,
+    input: AttackEventInput,
+) -> Result<(StatusCode, Json<EventResponse>), AppError> {
+    let ext_id = match &input.event_id {
+        Some(id) => id.clone(),
+        None => {
+            // No external ID, can't find the original event
+            tracing::warn!(source = %input.source, "unban without event_id, ignoring");
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(EventResponse {
+                    event_id: Uuid::new_v4(),
+                    external_event_id: None,
+                    status: "ignored_no_event_id".to_string(),
+                    mitigation_id: None,
+                }),
+            ));
+        }
+    };
+
+    // Find original ban event
+    let original_event = match state
+        .repo
+        .find_event_by_external_id(&input.source, &ext_id)
+        .await
+    {
+        Ok(Some(e)) => e,
+        Ok(None) => {
+            tracing::debug!(source = %input.source, external_id = %ext_id, "unban for unknown event");
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(EventResponse {
+                    event_id: Uuid::new_v4(),
+                    external_event_id: Some(ext_id),
+                    status: "not_found".to_string(),
+                    mitigation_id: None,
+                }),
+            ));
+        }
+        Err(e) => return Err(AppError(e)),
+    };
+
+    // Find active mitigation for this event
+    let mut mitigation = match state
+        .repo
+        .find_active_by_triggering_event(original_event.event_id)
+        .await
+    {
+        Ok(Some(m)) => m,
+        Ok(None) => {
+            tracing::debug!(event_id = %original_event.event_id, "no active mitigation for event");
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(EventResponse {
+                    event_id: original_event.event_id,
+                    external_event_id: Some(ext_id),
+                    status: "no_active_mitigation".to_string(),
+                    mitigation_id: None,
+                }),
+            ));
+        }
+        Err(e) => return Err(AppError(e)),
+    };
+
+    // Store the unban event
+    let source = input.source.clone();
+    let unban_event = AttackEvent::from_input(input);
+    let _ = state.repo.insert_event(&unban_event).await;
+
+    // Withdraw from BGP (if not dry-run)
+    if !state.is_dry_run() {
+        let nlri = FlowSpecNlri::from(&mitigation.match_criteria);
+        let action = FlowSpecAction::from((mitigation.action_type, &mitigation.action_params));
+        let rule = FlowSpecRule::new(nlri, action);
+
+        if let Err(e) = state.announcer.withdraw(&rule).await {
+            tracing::error!(error = %e, "BGP withdrawal failed");
+            // Continue anyway - mark as withdrawn in DB
+        }
+    }
+
+    // Update mitigation status
+    mitigation.withdraw(Some(format!("Detector unban: {}", source)));
+    state
+        .repo
+        .update_mitigation(&mitigation)
+        .await
+        .map_err(AppError)?;
+
+    // Broadcast withdrawal via WebSocket
+    let _ = state
+        .ws_broadcast
+        .send(crate::ws::WsMessage::MitigationWithdrawn {
+            mitigation_id: mitigation.mitigation_id.to_string(),
+        });
+
+    tracing::info!(
+        mitigation_id = %mitigation.mitigation_id,
+        victim_ip = %mitigation.victim_ip,
+        "withdrew mitigation via detector unban"
+    );
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(EventResponse {
+            event_id: unban_event.event_id,
+            external_event_id: unban_event.external_event_id,
+            status: "withdrawn".to_string(),
+            mitigation_id: Some(mitigation.mitigation_id),
+        }),
+    ))
+}
+
+/// Handle ban action - create or extend mitigation
+async fn handle_ban(
+    state: Arc<AppState>,
+    input: AttackEventInput,
+) -> Result<(StatusCode, Json<EventResponse>), AppError> {
     // Check for duplicate
     if let Some(ref ext_id) = input.event_id {
         if let Ok(Some(_)) = state

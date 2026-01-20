@@ -137,6 +137,22 @@ impl RepositoryTrait for MockRepository {
             .collect())
     }
 
+    async fn find_active_by_triggering_event(&self, event_id: Uuid) -> Result<Option<Mitigation>> {
+        let mitigations = self.mitigations.lock().unwrap();
+        Ok(mitigations
+            .iter()
+            .find(|m| {
+                m.triggering_event_id == event_id
+                    && matches!(
+                        m.status,
+                        MitigationStatus::Pending
+                            | MitigationStatus::Active
+                            | MitigationStatus::Escalated
+                    )
+            })
+            .cloned())
+    }
+
     async fn list_mitigations(
         &self,
         status_filter: Option<&[MitigationStatus]>,

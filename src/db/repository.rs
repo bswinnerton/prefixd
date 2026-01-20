@@ -63,8 +63,9 @@ impl RepositoryTrait for Repository {
             r#"
             INSERT INTO events (
                 event_id, external_event_id, source, event_timestamp, ingested_at,
-                victim_ip, vector, protocol, bps, pps, top_dst_ports_json, confidence
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                victim_ip, vector, protocol, bps, pps, top_dst_ports_json, confidence,
+                action, raw_details
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
         .bind(event.event_id)
@@ -79,6 +80,8 @@ impl RepositoryTrait for Repository {
         .bind(event.pps)
         .bind(&event.top_dst_ports_json)
         .bind(event.confidence)
+        .bind(&event.action)
+        .bind(&event.raw_details)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -92,7 +95,8 @@ impl RepositoryTrait for Repository {
         let event = sqlx::query_as::<_, AttackEvent>(
             r#"
             SELECT event_id, external_event_id, source, event_timestamp, ingested_at,
-                   victim_ip, vector, protocol, bps, pps, top_dst_ports_json, confidence
+                   victim_ip, vector, protocol, bps, pps, top_dst_ports_json, confidence,
+                   action, raw_details
             FROM events WHERE source = $1 AND external_event_id = $2
             "#,
         )
@@ -107,7 +111,8 @@ impl RepositoryTrait for Repository {
         let events = sqlx::query_as::<_, AttackEvent>(
             r#"
             SELECT event_id, external_event_id, source, event_timestamp, ingested_at,
-                   victim_ip, vector, protocol, bps, pps, top_dst_ports_json, confidence
+                   victim_ip, vector, protocol, bps, pps, top_dst_ports_json, confidence,
+                   action, raw_details
             FROM events ORDER BY ingested_at DESC LIMIT $1 OFFSET $2
             "#,
         )
@@ -293,6 +298,26 @@ impl RepositoryTrait for Repository {
                 }
             })
             .collect())
+    }
+
+    async fn find_active_by_triggering_event(&self, event_id: Uuid) -> Result<Option<Mitigation>> {
+        let row = sqlx::query_as::<_, MitigationRow>(
+            r#"
+            SELECT mitigation_id, scope_hash, pop, customer_id, service_id, victim_ip, vector,
+                   match_json, action_type, action_params_json, status,
+                   created_at, updated_at, expires_at, withdrawn_at,
+                   triggering_event_id, last_event_id, escalated_from_id, reason, rejection_reason
+            FROM mitigations
+            WHERE triggering_event_id = $1 AND status IN ('pending', 'active', 'escalated')
+            "#,
+        )
+        .bind(event_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        match row {
+            Some(r) => Ok(Some(Mitigation::from_row(r)?)),
+            None => Ok(None),
+        }
     }
 
     async fn list_mitigations(

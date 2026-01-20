@@ -168,6 +168,8 @@ mod tests {
             pps: Some(50_000),
             top_dst_ports_json: serde_json::to_string(&ports).unwrap(),
             confidence: Some(0.9),
+            action: "ban".to_string(),
+            raw_details: None,
         }
     }
 

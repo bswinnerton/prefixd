@@ -57,6 +57,10 @@ impl std::str::FromStr for AttackVector {
     }
 }
 
+fn default_action() -> String {
+    "ban".to_string()
+}
+
 /// API input for attack events
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AttackEventInput {
@@ -74,6 +78,12 @@ pub struct AttackEventInput {
     pub top_dst_ports: Option<Vec<u16>>,
     #[serde(default)]
     pub confidence: Option<f32>,
+    /// Action type: "ban" (default) or "unban"
+    #[serde(default = "default_action")]
+    pub action: String,
+    /// Raw details from detector for forensics
+    #[serde(default)]
+    pub raw_details: Option<serde_json::Value>,
 }
 
 /// Internal event representation
@@ -90,7 +100,9 @@ pub struct AttackEvent {
     pub bps: Option<i64>,
     pub pps: Option<i64>,
     pub top_dst_ports_json: String,
-    pub confidence: Option<f32>,  // REAL in PostgreSQL
+    pub confidence: Option<f32>,
+    pub action: String,
+    pub raw_details: Option<serde_json::Value>,
 }
 
 impl AttackEvent {
@@ -111,6 +123,8 @@ impl AttackEvent {
             pps: input.pps,
             top_dst_ports_json: serde_json::to_string(&ports).unwrap_or_default(),
             confidence: input.confidence,
+            action: input.action,
+            raw_details: input.raw_details,
         }
     }
 
