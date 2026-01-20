@@ -53,6 +53,7 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 - [ ] User management UI in Admin page
 - [ ] Real login form (replace placeholder)
 - [ ] LDAP/AD support (optional, no callback needed)
+- [ ] RADIUS/ISE support (optional, map attributes to roles)
 
 ---
 
