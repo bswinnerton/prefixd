@@ -58,6 +58,9 @@ pub struct AuthConfig {
     /// LDAP configuration (placeholder, not yet implemented)
     #[serde(default)]
     pub ldap: Option<LdapConfig>,
+    /// RADIUS configuration (placeholder, not yet implemented)
+    #[serde(default)]
+    pub radius: Option<RadiusConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +92,38 @@ pub struct LdapConfig {
     /// Map LDAP groups to operator roles
     #[serde(default)]
     pub role_mapping: std::collections::HashMap<String, String>,
+}
+
+/// RADIUS configuration (placeholder for future implementation)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RadiusConfig {
+    /// Primary RADIUS server (host:port)
+    pub server: String,
+    /// Secondary RADIUS server for failover
+    #[serde(default)]
+    pub secondary_server: Option<String>,
+    /// Environment variable containing shared secret
+    pub secret_env: String,
+    /// Authentication timeout in seconds
+    #[serde(default = "default_radius_timeout")]
+    pub timeout_seconds: u32,
+    /// Number of retries before failover
+    #[serde(default = "default_radius_retries")]
+    pub retries: u32,
+    /// NAS identifier sent in Access-Request
+    #[serde(default)]
+    pub nas_identifier: Option<String>,
+    /// Map RADIUS VSA or groups to operator roles
+    #[serde(default)]
+    pub role_mapping: std::collections::HashMap<String, String>,
+}
+
+fn default_radius_timeout() -> u32 {
+    5
+}
+
+fn default_radius_retries() -> u32 {
+    3
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

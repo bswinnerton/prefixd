@@ -34,24 +34,80 @@ http:
 ```yaml
 http:
   auth:
-    # Mode: none, bearer, or hybrid
-    mode: bearer
+    # Mode: none, bearer, mtls, or credentials
+    mode: credentials
     
     # Bearer token (use env var for security)
-    token: "${PREFIXD_API_TOKEN}"
-    
-    # Secure cookies for dashboard sessions
-    # auto: secure if TLS enabled
-    # true: always secure (requires HTTPS)
-    # false: never secure (development only)
-    secure_cookies: auto
+    bearer_token_env: "PREFIXD_API_TOKEN"
 ```
 
 | Mode | Dashboard | API/CLI | Notes |
 |------|-----------|---------|-------|
 | `none` | No login | No auth | Development only |
-| `bearer` | Session login | Bearer token | Recommended |
-| `hybrid` | Session login | Session or bearer | Legacy support |
+| `bearer` | N/A | Bearer token | API-only access |
+| `mtls` | N/A | Client certificates | Machine-to-machine |
+| `credentials` | Session login | Session cookie | Recommended |
+
+### LDAP/Active Directory (Placeholder)
+
+> **Note:** LDAP authentication is not yet implemented. This schema is reserved for future use.
+
+```yaml
+http:
+  auth:
+    mode: credentials
+    ldap:
+      # LDAP server URL
+      url: "ldaps://ldap.example.com:636"
+      
+      # Service account for LDAP queries
+      bind_dn: "cn=prefixd,ou=services,dc=example,dc=com"
+      bind_password_env: "LDAP_BIND_PASSWORD"
+      
+      # Where to search for users
+      user_base_dn: "ou=users,dc=example,dc=com"
+      
+      # Filter to find user (use {username} placeholder)
+      user_filter: "(&(objectClass=user)(sAMAccountName={username}))"
+      
+      # Map LDAP groups to prefixd roles
+      role_mapping:
+        "cn=prefixd-admins,ou=groups,dc=example,dc=com": "admin"
+        "cn=noc-operators,ou=groups,dc=example,dc=com": "operator"
+        "cn=noc-viewers,ou=groups,dc=example,dc=com": "viewer"
+```
+
+### RADIUS/ISE (Placeholder)
+
+> **Note:** RADIUS authentication is not yet implemented. This schema is reserved for future use.
+
+```yaml
+http:
+  auth:
+    mode: credentials
+    radius:
+      # Primary RADIUS server
+      server: "radius.example.com:1812"
+      
+      # Backup server for failover
+      secondary_server: "radius-backup.example.com:1812"
+      
+      # Shared secret (from environment variable)
+      secret_env: "RADIUS_SECRET"
+      
+      # Timeout and retries
+      timeout_seconds: 5
+      retries: 3
+      
+      # NAS identifier for audit logs
+      nas_identifier: "prefixd-iad1"
+      
+      # Map RADIUS VSA or groups to prefixd roles
+      role_mapping:
+        "Prefixd-Admin": "admin"
+        "NOC-Operator": "operator"
+        "NOC-Viewer": "viewer"
+```
 
 ### TLS
 
