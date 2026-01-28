@@ -256,3 +256,49 @@ export async function getDashboardData(): Promise<{
   ])
   return { health, stats, mitigations }
 }
+
+// Operator management (admin only)
+
+export interface OperatorInfo {
+  operator_id: string
+  username: string
+  role: "admin" | "operator" | "viewer"
+  created_at: string
+  created_by: string | null
+  last_login_at: string | null
+}
+
+export interface OperatorListResponse {
+  operators: OperatorInfo[]
+  count: number
+}
+
+export async function getOperators(): Promise<OperatorInfo[]> {
+  const response = await fetchApi<OperatorListResponse>("/v1/operators")
+  return response.operators
+}
+
+export async function createOperator(
+  username: string,
+  password: string,
+  role: "admin" | "operator" | "viewer"
+): Promise<OperatorInfo> {
+  return fetchApi<OperatorInfo>("/v1/operators", {
+    method: "POST",
+    body: JSON.stringify({ username, password, role }),
+  })
+}
+
+export async function deleteOperator(id: string): Promise<void> {
+  await fetchApi(`/v1/operators/${id}`, { method: "DELETE" })
+}
+
+export async function changePassword(
+  id: string,
+  newPassword: string
+): Promise<void> {
+  await fetchApi(`/v1/operators/${id}/password`, {
+    method: "PUT",
+    body: JSON.stringify({ new_password: newPassword }),
+  })
+}

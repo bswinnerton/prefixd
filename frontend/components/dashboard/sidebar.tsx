@@ -5,13 +5,14 @@ import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { LayoutDashboard, Shield, Activity, FileText, Settings, X, ChevronsLeft, ChevronsRight } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { usePermissions } from "@/hooks/use-permissions"
 
 const navItems = [
-  { href: "/", label: "Overview", icon: LayoutDashboard },
-  { href: "/mitigations", label: "Mitigations", icon: Shield },
-  { href: "/events", label: "Events", icon: Activity },
-  { href: "/audit-log", label: "Audit Log", icon: FileText },
-  { href: "/admin", label: "Admin", icon: Settings },
+  { href: "/", label: "Overview", icon: LayoutDashboard, adminOnly: false },
+  { href: "/mitigations", label: "Mitigations", icon: Shield, adminOnly: false },
+  { href: "/events", label: "Events", icon: Activity, adminOnly: false },
+  { href: "/audit-log", label: "Audit Log", icon: FileText, adminOnly: false },
+  { href: "/admin", label: "Admin", icon: Settings, adminOnly: true },
 ]
 
 interface SidebarProps {
@@ -23,6 +24,10 @@ interface SidebarProps {
 
 export function Sidebar({ isOpen, onClose, isCollapsed = false, onToggleCollapse }: SidebarProps) {
   const pathname = usePathname()
+  const permissions = usePermissions()
+
+  // Filter nav items based on permissions
+  const visibleNavItems = navItems.filter(item => !item.adminOnly || permissions.isAdmin)
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -62,7 +67,7 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false, onToggleCollapse
           </div>
 
           <nav className={cn("flex-1 py-2", isCollapsed ? "px-2" : "px-2")}>
-            {navItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const isActive = pathname === item.href
 
               if (isCollapsed) {

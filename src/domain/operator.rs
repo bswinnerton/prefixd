@@ -14,16 +14,25 @@ pub struct Operator {
     pub last_login_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
 pub enum OperatorRole {
+    Viewer,
     Operator,
     Admin,
+}
+
+impl OperatorRole {
+    /// Check if this role has at least the permissions of the required role
+    pub fn has_permission(&self, required: &OperatorRole) -> bool {
+        self >= required
+    }
 }
 
 impl std::fmt::Display for OperatorRole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            OperatorRole::Viewer => write!(f, "viewer"),
             OperatorRole::Operator => write!(f, "operator"),
             OperatorRole::Admin => write!(f, "admin"),
         }
@@ -35,6 +44,7 @@ impl std::str::FromStr for OperatorRole {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
+            "viewer" => Ok(OperatorRole::Viewer),
             "operator" => Ok(OperatorRole::Operator),
             "admin" => Ok(OperatorRole::Admin),
             _ => Err(format!("invalid role: {}", s)),

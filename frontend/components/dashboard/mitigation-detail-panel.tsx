@@ -11,6 +11,7 @@ import type { Mitigation } from "@/lib/api"
 import { withdrawMitigation } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useReducedMotion } from "@/hooks/use-reduced-motion"
+import { usePermissions } from "@/hooks/use-permissions"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -85,6 +86,7 @@ export function MitigationDetailPanel({ mitigation, onClose, onWithdraw }: Mitig
   const [isWithdrawing, setIsWithdrawing] = useState(false)
   const [withdrawError, setWithdrawError] = useState<string | null>(null)
   const reducedMotion = useReducedMotion()
+  const permissions = usePermissions()
 
   if (!mitigation) return null
 
@@ -258,23 +260,25 @@ export function MitigationDetailPanel({ mitigation, onClose, onWithdraw }: Mitig
             </CardContent>
           </Card>
 
-          {/* Action Buttons */}
-          <div className="pt-4">
-            <Button
-              variant="destructive"
-              className="w-full"
-              disabled={!canWithdraw}
-              onClick={() => setShowWithdrawDialog(true)}
-            >
-              <AlertTriangle className="h-4 w-4 mr-2" />
-              Withdraw Mitigation
-            </Button>
-            {!canWithdraw && (
-              <p className="text-xs text-muted-foreground text-center mt-2">
-                Only active or escalated mitigations can be withdrawn
-              </p>
-            )}
-          </div>
+          {/* Action Buttons (hidden for viewers) */}
+          {permissions.canWithdraw && (
+            <div className="pt-4">
+              <Button
+                variant="destructive"
+                className="w-full"
+                disabled={!canWithdraw}
+                onClick={() => setShowWithdrawDialog(true)}
+              >
+                <AlertTriangle className="h-4 w-4 mr-2" />
+                Withdraw Mitigation
+              </Button>
+              {!canWithdraw && (
+                <p className="text-xs text-muted-foreground text-center mt-2">
+                  Only active or escalated mitigations can be withdrawn
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </motion.div>
 

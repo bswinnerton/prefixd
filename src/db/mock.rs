@@ -414,6 +414,21 @@ impl RepositoryTrait for MockRepository {
         Ok(())
     }
 
+    async fn update_operator_password(&self, id: Uuid, password_hash: &str) -> Result<()> {
+        let mut operators = self.operators.lock().unwrap();
+        if let Some(op) = operators.iter_mut().find(|o| o.operator_id == id) {
+            op.password_hash = password_hash.to_string();
+        }
+        Ok(())
+    }
+
+    async fn delete_operator(&self, id: Uuid) -> Result<bool> {
+        let mut operators = self.operators.lock().unwrap();
+        let len_before = operators.len();
+        operators.retain(|o| o.operator_id != id);
+        Ok(operators.len() < len_before)
+    }
+
     async fn list_operators(&self) -> Result<Vec<Operator>> {
         Ok(self.operators.lock().unwrap().clone())
     }

@@ -80,5 +80,7 @@ pub trait RepositoryTrait: Send + Sync {
         created_by: Option<&str>,
     ) -> Result<Operator>;
     async fn update_operator_last_login(&self, id: Uuid) -> Result<()>;
+    async fn update_operator_password(&self, id: Uuid, password_hash: &str) -> Result<()>;
+    async fn delete_operator(&self, id: Uuid) -> Result<bool>;
     async fn list_operators(&self) -> Result<Vec<Operator>>;
 }

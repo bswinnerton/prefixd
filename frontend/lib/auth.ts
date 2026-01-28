@@ -1,9 +1,11 @@
 const API_BASE = process.env.NEXT_PUBLIC_PREFIXD_API || "http://localhost:8080"
 
+export type OperatorRole = "admin" | "operator" | "viewer"
+
 export interface Operator {
   id: string
   username: string
-  role: "admin" | "viewer"
+  role: OperatorRole
 }
 
 export interface LoginRequest {

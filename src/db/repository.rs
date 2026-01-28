@@ -651,6 +651,23 @@ impl RepositoryTrait for Repository {
         Ok(())
     }
 
+    async fn update_operator_password(&self, id: Uuid, password_hash: &str) -> Result<()> {
+        sqlx::query("UPDATE operators SET password_hash = $1 WHERE operator_id = $2")
+            .bind(password_hash)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_operator(&self, id: Uuid) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM operators WHERE operator_id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn list_operators(&self) -> Result<Vec<Operator>> {
         let rows = sqlx::query_as::<_, OperatorRow>(
             r#"

@@ -1206,3 +1206,295 @@ pub async fn get_me(
         role: operator.role.to_string(),
     }))
 }
+
+// Operator management handlers (admin only)
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct OperatorListResponse {
+    pub operators: Vec<OperatorInfo>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct OperatorInfo {
+    pub operator_id: Uuid,
+    pub username: String,
+    pub role: String,
+    pub created_at: String,
+    pub created_by: Option<String>,
+    pub last_login_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateOperatorRequest {
+    pub username: String,
+    pub password: String,
+    pub role: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ChangePasswordRequest {
+    pub new_password: String,
+}
+
+/// List all operators (admin only)
+#[utoipa::path(
+    get,
+    path = "/v1/operators",
+    tag = "operators",
+    responses(
+        (status = 200, description = "List of operators", body = OperatorListResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Insufficient permissions")
+    )
+)]
+pub async fn list_operators(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    auth_session: crate::auth::AuthSession,
+) -> Result<Json<OperatorListResponse>, StatusCode> {
+    use super::auth::require_role;
+    use crate::domain::OperatorRole;
+
+    let auth_header = headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    require_role(&state, &auth_session, auth_header, OperatorRole::Admin)?;
+
+    let operators = state
+        .repo
+        .list_operators()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let infos: Vec<OperatorInfo> = operators
+        .into_iter()
+        .map(|op| OperatorInfo {
+            operator_id: op.operator_id,
+            username: op.username,
+            role: op.role.to_string(),
+            created_at: op.created_at.to_rfc3339(),
+            created_by: op.created_by,
+            last_login_at: op.last_login_at.map(|t| t.to_rfc3339()),
+        })
+        .collect();
+
+    Ok(Json(OperatorListResponse {
+        count: infos.len(),
+        operators: infos,
+    }))
+}
+
+/// Create a new operator (admin only)
+#[utoipa::path(
+    post,
+    path = "/v1/operators",
+    tag = "operators",
+    request_body = CreateOperatorRequest,
+    responses(
+        (status = 201, description = "Operator created", body = OperatorInfo),
+        (status = 400, description = "Invalid input"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Insufficient permissions"),
+        (status = 409, description = "Username already exists")
+    )
+)]
+pub async fn create_operator(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    auth_session: crate::auth::AuthSession,
+    Json(req): Json<CreateOperatorRequest>,
+) -> Result<(StatusCode, Json<OperatorInfo>), StatusCode> {
+    use super::auth::require_role;
+    use argon2::{Argon2, PasswordHasher, password_hash::{SaltString, rand_core::OsRng}};
+    use crate::domain::OperatorRole;
+
+    let auth_header = headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    let admin = require_role(&state, &auth_session, auth_header, OperatorRole::Admin)?;
+
+    // Validate role
+    let role: OperatorRole = req
+        .role
+        .parse()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // Validate password length
+    if req.password.len() < 8 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // Check if username exists
+    if state
+        .repo
+        .get_operator_by_username(&req.username)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .is_some()
+    {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    // Hash password
+    let salt = SaltString::generate(&mut OsRng);
+    let password_hash = Argon2::default()
+        .hash_password(req.password.as_bytes(), &salt)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .to_string();
+
+    let operator = state
+        .repo
+        .create_operator(&req.username, &password_hash, role, Some(&admin.username))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    tracing::info!(
+        username = %operator.username,
+        role = %operator.role,
+        created_by = %admin.username,
+        "operator created"
+    );
+
+    Ok((
+        StatusCode::CREATED,
+        Json(OperatorInfo {
+            operator_id: operator.operator_id,
+            username: operator.username,
+            role: operator.role.to_string(),
+            created_at: operator.created_at.to_rfc3339(),
+            created_by: operator.created_by,
+            last_login_at: None,
+        }),
+    ))
+}
+
+/// Delete an operator (admin only)
+#[utoipa::path(
+    delete,
+    path = "/v1/operators/{id}",
+    tag = "operators",
+    params(
+        ("id" = Uuid, Path, description = "Operator ID")
+    ),
+    responses(
+        (status = 204, description = "Operator deleted"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Insufficient permissions"),
+        (status = 404, description = "Operator not found")
+    )
+)]
+pub async fn delete_operator(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    auth_session: crate::auth::AuthSession,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, StatusCode> {
+    use super::auth::require_role;
+    use crate::domain::OperatorRole;
+
+    let auth_header = headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    let admin = require_role(&state, &auth_session, auth_header, OperatorRole::Admin)?;
+
+    // Prevent self-deletion
+    if admin.operator_id == id {
+        tracing::warn!(operator_id = %id, "cannot delete self");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let deleted = state
+        .repo
+        .delete_operator(id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if deleted {
+        tracing::info!(operator_id = %id, deleted_by = %admin.username, "operator deleted");
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+/// Change operator password (admin or self)
+#[utoipa::path(
+    put,
+    path = "/v1/operators/{id}/password",
+    tag = "operators",
+    params(
+        ("id" = Uuid, Path, description = "Operator ID")
+    ),
+    request_body = ChangePasswordRequest,
+    responses(
+        (status = 204, description = "Password changed"),
+        (status = 400, description = "Invalid password"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Insufficient permissions"),
+        (status = 404, description = "Operator not found")
+    )
+)]
+pub async fn change_password(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    auth_session: crate::auth::AuthSession,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<StatusCode, StatusCode> {
+    use super::auth::require_role;
+    use argon2::{Argon2, PasswordHasher, password_hash::{SaltString, rand_core::OsRng}};
+    use crate::domain::OperatorRole;
+
+    let auth_header = headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    // Allow self or admin to change password
+    let caller = require_role(&state, &auth_session, auth_header, OperatorRole::Viewer)?;
+    
+    let is_self = caller.operator_id == id;
+    let is_admin = caller.role == OperatorRole::Admin;
+    
+    if !is_self && !is_admin {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    // Validate password length
+    if req.new_password.len() < 8 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // Check operator exists
+    let target = state
+        .repo
+        .get_operator_by_id(id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    // Hash new password
+    let salt = SaltString::generate(&mut OsRng);
+    let password_hash = Argon2::default()
+        .hash_password(req.new_password.as_bytes(), &salt)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .to_string();
+
+    state
+        .repo
+        .update_operator_password(id, &password_hash)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    tracing::info!(
+        operator_id = %id,
+        username = %target.username,
+        changed_by = %caller.username,
+        "password changed"
+    );
+
+    Ok(StatusCode::NO_CONTENT)
+}

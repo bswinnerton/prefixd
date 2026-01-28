@@ -62,7 +62,20 @@ pub fn create_router(
         .route("/v1/config/reload", post(handlers::reload_config))
         .route("/v1/stats", get(handlers::get_stats))
         .route("/v1/pops", get(handlers::list_pops))
-        .route("/v1/audit", get(handlers::list_audit));
+        .route("/v1/audit", get(handlers::list_audit))
+        // Operator management (admin only)
+        .route(
+            "/v1/operators",
+            get(handlers::list_operators).post(handlers::create_operator),
+        )
+        .route(
+            "/v1/operators/{id}",
+            axum::routing::delete(handlers::delete_operator),
+        )
+        .route(
+            "/v1/operators/{id}/password",
+            axum::routing::put(handlers::change_password),
+        );
 
     // Build router - auth layer provides AuthSession for all routes
     // Auth checking is done in individual handlers via require_auth() helper
@@ -150,7 +163,20 @@ pub fn create_test_router(state: Arc<AppState>) -> Router {
         .route("/v1/config/reload", post(handlers::reload_config))
         .route("/v1/stats", get(handlers::get_stats))
         .route("/v1/pops", get(handlers::list_pops))
-        .route("/v1/audit", get(handlers::list_audit));
+        .route("/v1/audit", get(handlers::list_audit))
+        // Operator management (admin only)
+        .route(
+            "/v1/operators",
+            get(handlers::list_operators).post(handlers::create_operator),
+        )
+        .route(
+            "/v1/operators/{id}",
+            axum::routing::delete(handlers::delete_operator),
+        )
+        .route(
+            "/v1/operators/{id}/password",
+            axum::routing::put(handlers::change_password),
+        );
 
     public_routes
         .merge(session_routes)

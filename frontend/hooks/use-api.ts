@@ -154,3 +154,15 @@ export function useDashboard() {
     }
   )
 }
+
+// Operator management (admin only)
+export function useOperators() {
+  return useSWR(
+    "operators",
+    MOCK_MODE ? async () => [] : api.getOperators,
+    {
+      refreshInterval: 0, // Don't auto-refresh operator list
+      revalidateOnFocus: !MOCK_MODE,
+    }
+  )
+}

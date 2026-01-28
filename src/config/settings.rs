@@ -55,14 +55,40 @@ pub struct AuthConfig {
     pub mode: AuthMode,
     #[serde(default)]
     pub bearer_token_env: Option<String>,
+    /// LDAP configuration (placeholder, not yet implemented)
+    #[serde(default)]
+    pub ldap: Option<LdapConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthMode {
+    /// Mutual TLS - client certificates required
     Mtls,
+    /// Bearer token authentication (from environment variable)
     Bearer,
+    /// Username/password authentication with PostgreSQL-backed sessions
+    Credentials,
+    /// No authentication (development only)
     None,
+}
+
+/// LDAP configuration (placeholder for future implementation)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LdapConfig {
+    /// LDAP server URL (e.g., "ldaps://ldap.example.com:636")
+    pub url: String,
+    /// Bind DN for LDAP queries
+    pub bind_dn: String,
+    /// Environment variable containing bind password
+    pub bind_password_env: String,
+    /// Base DN for user searches
+    pub user_base_dn: String,
+    /// LDAP filter for user lookup (use {username} as placeholder)
+    pub user_filter: String,
+    /// Map LDAP groups to operator roles
+    #[serde(default)]
+    pub role_mapping: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

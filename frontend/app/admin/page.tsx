@@ -18,8 +18,26 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { useHealth, useSafelist, useStats, usePops } from "@/hooks/use-api"
-import { addSafelist, removeSafelist, reloadConfig } from "@/lib/api"
+import { useHealth, useSafelist, useStats, usePops, useOperators } from "@/hooks/use-api"
+import { addSafelist, removeSafelist, reloadConfig, createOperator, deleteOperator, changePassword, type OperatorInfo } from "@/lib/api"
+import { usePermissions } from "@/hooks/use-permissions"
+import { useAuth } from "@/hooks/use-auth"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import {
   Shield,
   Server,
@@ -32,6 +50,8 @@ import {
   Plus,
   Trash2,
   RotateCcw,
+  Users,
+  Key,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -87,10 +107,13 @@ function ErrorCard({ title, error }: { title: string; error: string }) {
 
 export default function AdminPage() {
   const { mutate } = useSWRConfig()
+  const { operator } = useAuth()
+  const permissions = usePermissions()
   const { data: health, error: healthError, isLoading: healthLoading } = useHealth()
   const { data: stats, error: statsError, isLoading: statsLoading } = useStats()
   const { data: safelist, error: safelistError, isLoading: safelistLoading, mutate: mutateSafelist } = useSafelist()
   const { data: pops, error: popsError, isLoading: popsLoading } = usePops()
+  const { data: operators, error: operatorsError, isLoading: operatorsLoading, mutate: mutateOperators } = useOperators()
 
   const [newPrefix, setNewPrefix] = useState("")
   const [newReason, setNewReason] = useState("")
@@ -98,6 +121,19 @@ export default function AdminPage() {
   const [safelistError2, setSafelistError2] = useState<string | null>(null)
   const [isReloading, setIsReloading] = useState(false)
   const [reloadStatus, setReloadStatus] = useState<"idle" | "success" | "error">("idle")
+
+  // User management state
+  const [showCreateUser, setShowCreateUser] = useState(false)
+  const [newUsername, setNewUsername] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [newRole, setNewRole] = useState<"admin" | "operator" | "viewer">("operator")
+  const [isCreatingUser, setIsCreatingUser] = useState(false)
+  const [userError, setUserError] = useState<string | null>(null)
+
+  // Change password state
+  const [passwordTarget, setPasswordTarget] = useState<OperatorInfo | null>(null)
+  const [newUserPassword, setNewUserPassword] = useState("")
+  const [isChangingPassword, setIsChangingPassword] = useState(false)
 
   const handleAddSafelist = async () => {
     if (!newPrefix.trim()) return
@@ -141,6 +177,60 @@ export default function AdminPage() {
       setTimeout(() => setReloadStatus("idle"), 3000)
     } finally {
       setIsReloading(false)
+    }
+  }
+
+  const handleCreateUser = async () => {
+    if (!newUsername.trim() || !newPassword.trim()) return
+    
+    setIsCreatingUser(true)
+    setUserError(null)
+    
+    try {
+      await createOperator(newUsername.trim(), newPassword, newRole)
+      await mutateOperators()
+      setShowCreateUser(false)
+      setNewUsername("")
+      setNewPassword("")
+      setNewRole("operator")
+    } catch (err) {
+      setUserError(err instanceof Error ? err.message : "Failed to create user")
+    } finally {
+      setIsCreatingUser(false)
+    }
+  }
+
+  const handleDeleteUser = async (op: OperatorInfo) => {
+    try {
+      await deleteOperator(op.operator_id)
+      await mutateOperators()
+    } catch (err) {
+      setUserError(err instanceof Error ? err.message : "Failed to delete user")
+    }
+  }
+
+  const handleChangePassword = async () => {
+    if (!passwordTarget || !newUserPassword.trim()) return
+    
+    setIsChangingPassword(true)
+    setUserError(null)
+    
+    try {
+      await changePassword(passwordTarget.operator_id, newUserPassword)
+      setPasswordTarget(null)
+      setNewUserPassword("")
+    } catch (err) {
+      setUserError(err instanceof Error ? err.message : "Failed to change password")
+    } finally {
+      setIsChangingPassword(false)
+    }
+  }
+
+  const getRoleBadgeVariant = (role: string) => {
+    switch (role) {
+      case "admin": return "destructive"
+      case "operator": return "default"
+      default: return "secondary"
     }
   }
 
@@ -442,6 +532,232 @@ export default function AdminPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* User Management (admin only) */}
+        {permissions.canManageUsers && (
+          <div>
+            <h2 className="text-lg font-semibold mb-3 flex items-center gap-2 text-balance">
+              <Users className="size-5" />
+              User Management
+            </h2>
+            <Card className="bg-card border-border">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardDescription className="text-pretty">
+                    Manage operator accounts and permissions.
+                  </CardDescription>
+                  <Dialog open={showCreateUser} onOpenChange={setShowCreateUser}>
+                    <DialogTrigger asChild>
+                      <Button size="sm">
+                        <Plus className="size-4 mr-1" />
+                        Add User
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Create Operator</DialogTitle>
+                        <DialogDescription>
+                          Add a new operator account.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Username</label>
+                          <Input
+                            placeholder="username"
+                            value={newUsername}
+                            onChange={(e) => setNewUsername(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Password</label>
+                          <Input
+                            type="password"
+                            placeholder="minimum 8 characters"
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Role</label>
+                          <Select value={newRole} onValueChange={(v: "admin" | "operator" | "viewer") => setNewRole(v)}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="viewer">Viewer (read-only)</SelectItem>
+                              <SelectItem value="operator">Operator (can withdraw)</SelectItem>
+                              <SelectItem value="admin">Admin (full access)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {userError && (
+                          <div className="flex items-center gap-2 text-destructive text-sm">
+                            <AlertCircle className="size-4" />
+                            {userError}
+                          </div>
+                        )}
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowCreateUser(false)}>
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={handleCreateUser}
+                          disabled={!newUsername.trim() || newPassword.length < 8 || isCreatingUser}
+                        >
+                          {isCreatingUser ? (
+                            <RefreshCw className="size-4 animate-spin" />
+                          ) : (
+                            "Create"
+                          )}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {operatorsLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <RefreshCw className="size-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : operatorsError ? (
+                  <div className="flex items-center gap-2 text-destructive py-4">
+                    <AlertCircle className="size-4" />
+                    <span className="text-sm">Failed to load operators</span>
+                  </div>
+                ) : operators && operators.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border">
+                          <th className="text-left py-2 px-2 font-medium text-muted-foreground">Username</th>
+                          <th className="text-left py-2 px-2 font-medium text-muted-foreground">Role</th>
+                          <th className="text-left py-2 px-2 font-medium text-muted-foreground">Created</th>
+                          <th className="text-left py-2 px-2 font-medium text-muted-foreground">Last Login</th>
+                          <th className="w-20"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {operators.map((op) => (
+                          <tr key={op.operator_id} className="border-b border-border/50 hover:bg-secondary/50">
+                            <td className="py-2 px-2 text-foreground">
+                              {op.username}
+                              {operator?.id === op.operator_id && (
+                                <span className="ml-2 text-xs text-muted-foreground">(you)</span>
+                              )}
+                            </td>
+                            <td className="py-2 px-2">
+                              <Badge variant={getRoleBadgeVariant(op.role) as "default" | "destructive" | "secondary"}>
+                                {op.role}
+                              </Badge>
+                            </td>
+                            <td className="py-2 px-2 text-muted-foreground font-mono text-xs tabular-nums">
+                              {new Date(op.created_at).toLocaleDateString()}
+                            </td>
+                            <td className="py-2 px-2 text-muted-foreground font-mono text-xs tabular-nums">
+                              {op.last_login_at ? new Date(op.last_login_at).toLocaleDateString() : "-"}
+                            </td>
+                            <td className="py-2 px-2 flex gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="size-8 p-0 text-muted-foreground hover:text-foreground"
+                                onClick={() => setPasswordTarget(op)}
+                                aria-label={`Change password for ${op.username}`}
+                              >
+                                <Key className="size-4" />
+                              </Button>
+                              {operator?.id !== op.operator_id && (
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="size-8 p-0 text-muted-foreground hover:text-destructive"
+                                      aria-label={`Delete ${op.username}`}
+                                    >
+                                      <Trash2 className="size-4" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Delete operator?</AlertDialogTitle>
+                                      <AlertDialogDescription className="text-pretty">
+                                        This will permanently delete the operator <span className="font-medium">{op.username}</span>.
+                                        This action cannot be undone.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={() => handleDeleteUser(op)}
+                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                      >
+                                        Delete
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground py-4">No operators configured</p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Change Password Dialog */}
+            <Dialog open={!!passwordTarget} onOpenChange={(open) => !open && setPasswordTarget(null)}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Change Password</DialogTitle>
+                  <DialogDescription>
+                    Set a new password for <span className="font-medium">{passwordTarget?.username}</span>.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">New Password</label>
+                    <Input
+                      type="password"
+                      placeholder="minimum 8 characters"
+                      value={newUserPassword}
+                      onChange={(e) => setNewUserPassword(e.target.value)}
+                    />
+                  </div>
+                  {userError && (
+                    <div className="flex items-center gap-2 text-destructive text-sm">
+                      <AlertCircle className="size-4" />
+                      {userError}
+                    </div>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setPasswordTarget(null)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleChangePassword}
+                    disabled={newUserPassword.length < 8 || isChangingPassword}
+                  >
+                    {isChangingPassword ? (
+                      <RefreshCw className="size-4 animate-spin" />
+                    ) : (
+                      "Change Password"
+                    )}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   )
