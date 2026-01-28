@@ -4,83 +4,172 @@
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-prefixd is a BGP FlowSpec policy daemon for automated DDoS mitigation. It receives attack signals from detectors, applies policy-driven playbooks, and announces FlowSpec rules to routers via GoBGP.
+**prefixd** is a BGP FlowSpec policy daemon for automated DDoS mitigation. It receives attack signals from detectors, applies policy-driven playbooks, and announces FlowSpec rules to routers via GoBGP.
 
 ![Dashboard Overview](docs/images/dashboard-overview.png)
 
-```
-Detector ──► prefixd ──► GoBGP ──► Routers
-   │            │
-   │            ├── Policy Engine (playbooks)
-   │            ├── Guardrails (quotas, safelist, /32-only)
-   │            └── Reconciliation (auto-expire, drift repair)
-   │
-   └── FastNetMon, Kentik, Prometheus alerts, custom scripts
-```
+---
 
-**Detector integrations:** [FastNetMon](docs/detectors/fastnetmon.md) | More coming soon
+## Why prefixd?
+
+You have detectors (FastNetMon, Kentik, Prometheus alerts) that know when you're under attack. You have routers (Juniper, Arista, Cisco) that can filter traffic at line rate with FlowSpec. But there's a gap:
+
+| Problem | Without prefixd | With prefixd |
+|---------|-----------------|--------------|
+| **Detector → Router** | Manual CLI or fragile scripts | Automated policy engine |
+| **Response time** | Minutes (operator intervention) | Seconds (API-driven) |
+| **Safety** | Easy to fat-finger, no guardrails | Quotas, safelist, /32-only, TTLs |
+| **Visibility** | Scattered logs, no audit trail | Dashboard, metrics, audit log |
+| **Expiry** | Forget to remove rules | Auto-expire via TTL |
 
 **Key idea:** Detectors signal intent, prefixd decides policy. No detector ever speaks BGP directly.
 
+```
+Detector ──► prefixd ──► GoBGP ──► Routers
+                │
+                ├── Policy Engine (playbooks)
+                ├── Guardrails (quotas, safelist)
+                └── Reconciliation (auto-expire)
+```
+
 ---
 
-## Install
+## Quick Start
 
-### Docker (recommended)
+### 1. Clone and configure
 
 ```bash
 git clone https://github.com/lance0/prefixd.git
 cd prefixd
+
+# Copy example environment file
+cp .env.example .env
+
+# Edit .env to set your passwords (optional for local testing)
+# POSTGRES_PASSWORD=your-secure-password
+```
+
+### 2. Start the stack
+
+```bash
 docker compose up -d
+```
 
-# Check health
+This starts 4 services:
+
+| Service | Purpose | Ports |
+|---------|---------|-------|
+| **prefixd** | Policy daemon | 8080 (API), 9090 (metrics) |
+| **dashboard** | Web UI | 3000 |
+| **gobgp** | BGP route server | 179 (BGP), 50051 (gRPC) |
+| **postgres** | State storage | 5432 |
+
+### 3. Verify it's running
+
+```bash
+# Check all services are healthy
+docker compose ps
+
+# Test the API
 curl http://localhost:8080/v1/health
+# {"status":"healthy","version":"0.8.0",...}
+```
 
-# Open dashboard
+### 4. Create an admin account
+
+```bash
+docker compose exec prefixd prefixdctl operators create \
+  --username admin --role admin
+# Enter password when prompted
+```
+
+### 5. Open the dashboard
+
+```bash
 open http://localhost:3000
 ```
 
-### From source
+Login with the admin credentials you just created.
+
+### Troubleshooting
 
 ```bash
-cargo build --release
-./target/release/prefixd --config ./configs
-./target/release/prefixdctl status
+# View prefixd logs
+docker compose logs prefixd
+
+# View GoBGP logs
+docker compose logs gobgp
+
+# Restart everything
+docker compose restart
 ```
 
-### Binary releases
-
-See [Releases](https://github.com/lance0/prefixd/releases) for pre-built binaries.
+**Common issues:**
+- Port 5432 in use → Stop local PostgreSQL or change port in docker-compose.yml
+- Port 179 in use → Another BGP daemon is running
+- "connection refused" → Wait a few seconds for services to start
 
 ---
 
-## Documentation
+## Next Steps
 
-### Getting Started
+Once you have prefixd running locally:
 
-- [Quick Start](docs/deployment.md#quick-start) - Docker Compose setup
-- [Configuration Guide](docs/configuration.md) - All YAML options explained
-- [Deployment Guide](docs/deployment.md) - Docker, bare metal, GoBGP, router setup
+### 1. Configure your inventory
 
-### Using prefixd
+Edit `configs/inventory.yaml` to map your IP space to customers:
 
-- [CLI Reference](docs/cli.md) - `prefixdctl` commands
-- [API Reference](docs/api.md) - REST endpoints
-- [Playbooks](docs/configuration.md#playbooks) - Attack response policies
-- [Guardrails](docs/configuration.md#guardrails) - Safety limits and quotas
+```yaml
+customers:
+  - customer_id: acme
+    name: "ACME Corp"
+    prefixes:
+      - "203.0.113.0/24"
+    services:
+      - service_id: dns
+        assets:
+          - ip: "203.0.113.10"
+        allowed_ports:
+          udp: [53]
+```
 
-### Operations
+### 2. Define playbooks
 
-- [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
-- [Router Setup](docs/deployment.md#router-configuration) - Juniper, Arista, Cisco FlowSpec import
-- [Monitoring](docs/deployment.md#monitoring) - Prometheus metrics, Grafana
+Edit `configs/playbooks.yaml` to set response policies:
 
-### Reference
+```yaml
+playbooks:
+  - name: udp_flood
+    match:
+      vector: udp_flood
+    steps:
+      - action: police
+        rate_bps: 10000000    # 10 Mbps
+        ttl_seconds: 120
+      - action: discard       # Escalate if attack persists
+        ttl_seconds: 300
+```
 
-- [Architecture](docs/architecture.md) - Design decisions and data flow
-- [Benchmarks](docs/benchmarks.md) - Performance analysis
-- [CHANGELOG](CHANGELOG.md) - Version history
-- [ROADMAP](ROADMAP.md) - Future plans
+### 3. Connect a detector
+
+Point your detector at prefixd's API:
+
+```bash
+curl -X POST http://localhost:8080/v1/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "fastnetmon",
+    "victim_ip": "203.0.113.10",
+    "vector": "udp_flood",
+    "bps": 5000000000
+  }'
+```
+
+See [FastNetMon Integration](docs/detectors/fastnetmon.md) for a complete setup guide.
+
+### 4. Peer with your routers
+
+Configure GoBGP neighbors in `configs/gobgp.conf` and set up FlowSpec import policies on your routers. See [Router Setup](docs/deployment.md#router-configuration).
 
 ---
 
@@ -88,65 +177,48 @@ See [Releases](https://github.com/lance0/prefixd/releases) for pre-built binarie
 
 | Category | What it does |
 |----------|--------------|
-| **Signal Ingestion** | HTTP API accepts attack events from any detector (FastNetMon, Prometheus, custom) |
-| **Policy Engine** | YAML playbooks define per-vector responses (rate-limit, then escalate to drop) |
-| **Guardrails** | Quotas, safelist protection, /32-only enforcement, mandatory TTLs |
-| **BGP FlowSpec** | Announces IPv4/IPv6 FlowSpec via GoBGP gRPC (traffic-rate, discard actions) |
-| **Reconciliation** | Auto-expires mitigations, detects RIB drift, re-announces missing rules |
-| **Dashboard** | Next.js web UI with real-time WebSocket updates |
-| **Authentication** | Session-based auth for dashboard, bearer tokens for API/CLI |
-| **Observability** | Prometheus metrics, structured JSON logging, audit trail |
+| **Signal Ingestion** | HTTP API accepts attack events from any detector |
+| **Policy Engine** | YAML playbooks define per-vector responses |
+| **Guardrails** | Quotas, safelist, /32-only enforcement, mandatory TTLs |
+| **BGP FlowSpec** | Announces via GoBGP (traffic-rate, discard actions) |
+| **Reconciliation** | Auto-expires mitigations, repairs RIB drift |
+| **Dashboard** | Real-time web UI with WebSocket updates |
+| **Authentication** | Three roles: admin, operator, viewer |
+| **Observability** | Prometheus metrics, structured logs, audit trail |
 
 ---
 
-## How it works
+## How It Works
 
-1. **Detector sends attack event** → `POST /v1/events` with victim IP, vector, confidence
-2. **Inventory lookup** → Find customer/service context for the victim
-3. **Playbook evaluation** → Match vector to policy, determine action (police/discard)
-4. **Guardrails check** → Validate quotas, safelist, prefix length, TTL bounds
-5. **FlowSpec announcement** → Build NLRI, send to GoBGP via gRPC
-6. **Router enforcement** → Juniper/Arista/Cisco applies traffic filtering at line rate
-7. **Auto-expiry** → Reconciliation loop withdraws rules when TTL expires
+1. **Detector sends event** → `POST /v1/events` with victim IP, vector, confidence
+2. **Inventory lookup** → Find customer/service owning the IP
+3. **Playbook match** → Determine action (police/discard) based on vector
+4. **Guardrails check** → Validate quotas, safelist, prefix length
+5. **FlowSpec announce** → Send rule to GoBGP via gRPC
+6. **Router enforcement** → Traffic filtered at line rate
+7. **Auto-expiry** → Rule withdrawn when TTL expires
 
-**Fail-open design:** If prefixd dies, mitigations auto-expire via TTL. No permanent rules, no operator intervention required.
-
----
-
-## Example
-
-### Submit an attack event
-
-```bash
-curl -X POST http://localhost:8080/v1/events \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $PREFIXD_API_TOKEN" \
-  -d '{
-    "source": "fastnetmon",
-    "victim_ip": "203.0.113.10",
-    "vector": "udp_flood",
-    "bps": 1200000000,
-    "confidence": 0.95
-  }'
-```
-
-### What happens
-
-prefixd looks up `203.0.113.10` in inventory, finds it belongs to customer `acme` with allowed UDP ports `[53]`. The `udp_flood` playbook says: police to 10 Mbps for 2 minutes, escalate to discard if attack persists.
-
-GoBGP announces:
-```
-FlowSpec: dst 203.0.113.10/32, proto UDP, dport !53
-Action: traffic-rate 10000000 (10 Mbps)
-```
-
-The router drops UDP traffic to that IP except DNS. After 2 minutes, if no new events arrive, the rule auto-withdraws.
+**Fail-open design:** If prefixd dies, mitigations auto-expire. No permanent rules, no stuck state.
 
 ---
 
-## Supported routers
+## Documentation
 
-FlowSpec is a standard (RFC 5575, RFC 8955) supported by:
+| Topic | Link |
+|-------|------|
+| Full deployment guide | [docs/deployment.md](docs/deployment.md) |
+| Configuration reference | [docs/configuration.md](docs/configuration.md) |
+| API reference | [docs/api.md](docs/api.md) |
+| CLI reference | [docs/cli.md](docs/cli.md) |
+| Router setup | [docs/deployment.md#router-configuration](docs/deployment.md#router-configuration) |
+| Grafana dashboards | [docs/grafana.md](docs/grafana.md) |
+| Architecture | [docs/architecture.md](docs/architecture.md) |
+
+---
+
+## Supported Routers
+
+FlowSpec (RFC 5575, RFC 8955) is supported by:
 
 | Vendor | Platform | Notes |
 |--------|----------|-------|
@@ -155,39 +227,34 @@ FlowSpec is a standard (RFC 5575, RFC 8955) supported by:
 | Cisco | IOS-XR | ASR 9000, NCS |
 | Nokia | SR OS | 19.x+ |
 
-See [Router Setup](docs/deployment.md#router-configuration) for import policy examples.
-
 ---
 
 ## Requirements
 
-- **Rust 1.85+** (for building from source)
-- **GoBGP v4.x** (FlowSpec route server)
-- **PostgreSQL 14+** (state storage)
-- **Docker** (recommended deployment)
+- **Docker** (recommended) or Rust 1.85+ for building from source
+- **PostgreSQL 14+** for state storage
+- **GoBGP** is included in Docker Compose
 
 ---
 
-## Project status
+## Project Status
 
-prefixd is under active development. Current version: **v0.8.0**
+Current version: **v0.8.0**
 
-- Core functionality is stable and tested
-- Used internally, preparing for public release
+- Core functionality stable and tested
 - API may change before v1.0
-
-See [ROADMAP](ROADMAP.md) for planned features.
+- See [ROADMAP.md](ROADMAP.md) for planned features
 
 ---
 
 ## Community
 
-- **Issues:** Bug reports and feature requests welcome
-- **Pull requests:** See [CONTRIBUTING.md](CONTRIBUTING.md)
-- **Questions:** Open a discussion or issue
+- **Issues:** [GitHub Issues](https://github.com/lance0/prefixd/issues)
+- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Security:** [SECURITY.md](SECURITY.md)
 
 ---
 
 ## License
 
-MIT - See [LICENSE](LICENSE) for details.
+MIT - See [LICENSE](LICENSE)
