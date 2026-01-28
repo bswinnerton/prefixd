@@ -350,14 +350,37 @@ export PREFIXD_API_TOKEN=your-token-here
 ### Operators
 
 ```sql
--- Created via CLI or direct insert
+-- Created via CLI or Admin UI
 prefixdctl operators create --username admin --password --role admin
 ```
 
-Roles:
-- `admin` - Full access
-- `operator` - Read + withdraw mitigations
-- `viewer` - Read-only
+### Role-Based Access Control
+
+| Role | Dashboard | Mitigations | Withdraw | Safelist | Users | Config |
+|------|-----------|-------------|----------|----------|-------|--------|
+| `viewer` | Read | Read | No | Read | No | No |
+| `operator` | Read | Read | Yes | Read | No | No |
+| `admin` | Read | Read | Yes | Full | Full | Full |
+
+**Permission hierarchy:** `admin > operator > viewer`
+
+### User Management API (Admin Only)
+
+```bash
+# List all operators
+GET /v1/operators
+
+# Create operator
+POST /v1/operators
+{"username": "jsmith", "password": "...", "role": "operator"}
+
+# Delete operator (cannot delete self)
+DELETE /v1/operators/{id}
+
+# Change password (self or admin)
+PUT /v1/operators/{id}/password
+{"new_password": "..."}
+```
 
 ### Security Features
 

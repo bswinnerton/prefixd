@@ -5,9 +5,28 @@ All notable changes to prefixd will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.0] - 2026-01-19
+## [0.8.0] - 2026-01-28
 
 ### Added
+
+- **Three-Role RBAC System**
+  - `viewer` role: read-only access to dashboard and API
+  - `operator` role: can withdraw mitigations
+  - `admin` role: full access including user management
+  - `require_role()` RBAC helper with hierarchical permission checks
+  - Operator CRUD API: `GET/POST /v1/operators`, `DELETE /v1/operators/{id}`, `PUT /v1/operators/{id}/password`
+  - `AuthMode::Credentials` for session-based authentication
+  - LDAP config placeholder struct for future implementation
+
+- **User Management UI**
+  - Admin page User Management section (admin only)
+  - Create operator form with username, password, role selection
+  - Delete operator with confirmation dialog (prevents self-delete)
+  - Change password dialog (admin can change any, users can change own)
+  - Role badges with color coding (admin=red, operator=blue, viewer=gray)
+  - `usePermissions()` hook for frontend role checks
+  - Admin nav link hidden for non-admin users
+  - Withdraw button hidden for viewers in mitigation detail panel
 
 - **Unified Detector Events API**
   - `POST /v1/events` now accepts `action` field: `"ban"` (default) or `"unban"`

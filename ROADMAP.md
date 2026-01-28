@@ -45,14 +45,14 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 
 ### Authentication
 
-- [ ] Credentials auth mode (username/password)
+- [x] Credentials auth mode (username/password)
   - Users table in PostgreSQL
   - Argon2id password hashing
   - Session cookies (HttpOnly, Secure, SameSite=Strict)
   - Roles: admin, operator, viewer
-- [ ] User management UI in Admin page
-- [ ] Real login form (replace placeholder)
-- [ ] LDAP/AD support (optional, no callback needed)
+- [x] User management UI in Admin page
+- [x] Real login form (replace placeholder)
+- [ ] LDAP/AD support (optional, config placeholder ready)
 - [ ] RADIUS/ISE support (optional, map attributes to roles)
 
 ---
