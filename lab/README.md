@@ -6,31 +6,87 @@ Containerlab topologies for testing FlowSpec with routers.
 
 | Lab | Router | Virtualization | Notes |
 |-----|--------|----------------|-------|
-| `frr-flowspec.clab.yml` | FRR | None (native container) | **Recommended** - works everywhere |
-| `vjunos-flowspec.clab.yml` | vJunos-router | Nested KVM (Intel only) | Requires Intel CPU with VMX |
-| `cjunos-flowspec.clab.yml` | cJunosEvolved | Nested KVM (Intel only) | Requires Intel CPU with VMX |
+| `frr-flowspec.clab.yml` | FRR | None (native container) | Works everywhere |
+| `cjunos-flowspec.clab.yml` | cJunosEvolved | KVM (Intel or AMD) | **Recommended for Juniper testing** |
+| `vjunos-flowspec.clab.yml` | vJunos-router | Nested KVM | Bare metal only (no VMs) |
 
-## FRR Lab (Recommended)
+## cJunosEvolved Lab (Juniper PTX)
 
-FRR (Free Range Routing) runs natively in containers without nested virtualization. Works on any Linux host.
+cJunosEvolved is a containerized Junos Evolved router emulating a PTX10002-36QDD. It peers with the prefixd docker-compose GoBGP instance over a shared Docker network.
+
+```
+prefixd -> prefixd-gobgp (AS 65010) -> cJunosEvolved (AS 65003)
+                 │                            │
+                 └── clab-mgmt-evo network ───┘
+                     172.30.31.0/24
+```
+
+### Prerequisites
+
+1. **KVM support**: `ls /dev/kvm`
+2. **Download cJunosEvolved** from [Juniper](https://support.juniper.net/support/downloads/?p=cjunos-evolved) (free, no account)
+3. **Load image**: `docker load -i cJunosEvolved-25.4R1.13-EVO.tar.gz`
+4. **prefixd stack running**: `docker compose up -d`
+
+### Quick Start
+
+```bash
+# Deploy cJunos lab
+cd lab
+sudo clab deploy -t cjunos-flowspec.clab.yml
+
+# Connect prefixd-gobgp to clab network
+docker network connect clab-mgmt-evo prefixd-gobgp --ip 172.30.31.10
+
+# Restart GoBGP to load cJunos neighbor config
+docker restart prefixd-gobgp
+
+# Wait ~3-5 min for cJunos to boot, then verify BGP session
+docker exec prefixd-gobgp gobgp neighbor
+# Should show 172.30.31.3 as Established
+
+# Inject test FlowSpec rule
+docker exec prefixd-gobgp gobgp global rib add -a ipv4-flowspec \
+  match destination 192.168.1.100/32 protocol tcp destination-port 80 \
+  then discard
+
+# Verify on cJunos (admin/admin@123)
+ssh admin@172.30.31.3
+show route table inetflow.0
+```
+
+### Important Notes
+
+- cJunos shows "License key missing; requires 'BGP' license" - this is a warning only, FlowSpec still works
+- GoBGP neighbors must be configured with `family ipv4-flowspec` ONLY - cJunos rejects `inet-unicast` capability in the Open message (Open Message Error subcode 7)
+- The `FXP0ADDR` token in startup config is replaced by the entrypoint with the mgmt IP (note: it's `FXP0ADDR`, NOT `FXP0ADDRESS`)
+- Boot time is ~3 minutes on modern hardware
+
+### Cleanup
+
+```bash
+docker network disconnect clab-mgmt-evo prefixd-gobgp
+sudo clab destroy -t cjunos-flowspec.clab.yml --cleanup
+```
+
+---
+
+## FRR Lab
+
+FRR (Free Range Routing) runs natively in containers without KVM. Works on any Linux host.
 
 ### Quick Start
 
 ```bash
 # Start prefixd stack first
-cd /path/to/prefixd
 docker compose up -d
 
 # Deploy FRR lab
 cd lab
-sudo containerlab deploy -t frr-flowspec.clab.yml
+sudo clab deploy -t frr-flowspec.clab.yml
 
-# Connect prefixd-gobgp to lab network (if not already connected)
+# Connect prefixd-gobgp to lab network
 docker network connect clab-mgmt prefixd-gobgp 2>/dev/null || true
-
-# Add FRR as GoBGP neighbor
-docker exec prefixd-gobgp gobgp neighbor add 172.30.30.3 as 65002
-docker exec prefixd-gobgp gobgp neighbor 172.30.30.3 afi-safi add ipv4-flowspec
 
 # Verify BGP session
 docker exec prefixd-gobgp gobgp neighbor
@@ -39,145 +95,41 @@ docker exec prefixd-gobgp gobgp neighbor
 docker exec clab-frr-flowspec-router vtysh -c "show bgp ipv4 flowspec"
 ```
 
-### Testing FlowSpec
-
-```bash
-# Inject a test event
-curl -X POST http://localhost:8080/v1/events \
-  -H "Content-Type: application/json" \
-  -d '{
-    "timestamp": "2026-01-18T00:00:00Z",
-    "source": "lab_test",
-    "victim_ip": "203.0.113.10",
-    "vector": "udp_flood",
-    "bps": 1000000000,
-    "pps": 1000000,
-    "top_dst_ports": [53],
-    "confidence": 0.9
-  }'
-
-# Verify FlowSpec received by FRR
-docker exec clab-frr-flowspec-router vtysh -c "show bgp ipv4 flowspec"
-docker exec clab-frr-flowspec-router vtysh -c "show bgp ipv4 flowspec detail"
-```
-
 ### Cleanup
 
 ```bash
 docker network disconnect clab-mgmt prefixd-gobgp
-sudo containerlab destroy -t frr-flowspec.clab.yml
+sudo clab destroy -t frr-flowspec.clab.yml
 ```
 
 ---
 
-## Juniper Labs (Intel CPU Required)
+## vJunos-router Lab
 
-> **Warning**: Juniper vJunos and cJunosEvolved require nested KVM virtualization with Intel VMX. They will not work on AMD processors due to the VMs checking specifically for VMX (not SVM).
+> **Warning**: vJunos-router **cannot run inside a VM** (documented Juniper limitation). It requires a bare-metal server with Intel or AMD KVM support.
 
-### Prerequisites
+See `vjunos-flowspec.clab.yml` for the topology definition.
 
-1. **Intel CPU with nested virtualization enabled**:
-   ```bash
-   # Check if nested virt is enabled
-   cat /sys/module/kvm_intel/parameters/nested
-   # Should show "Y" or "1"
-   
-   # Enable if needed
-   sudo modprobe -r kvm_intel
-   sudo modprobe kvm_intel nested=1
-   echo "options kvm_intel nested=1" | sudo tee /etc/modprobe.d/kvm-nested.conf
-   ```
+---
 
-2. **Install containerlab**:
-   ```bash
-   bash -c "$(curl -sL https://get.containerlab.dev)"
-   ```
+## Resource Requirements
 
-3. **Download router images** from Juniper (free account required):
-   - **vJunos-router**: https://support.juniper.net/support/downloads/?p=vjunos-router
-   - **cJunosEvolved**: https://support.juniper.net/support/downloads/?p=cjunosevolved
+| Router | RAM | CPU | Boot Time | KVM Required |
+|--------|-----|-----|-----------|--------------|
+| FRR | 256 MB | 1 core | Instant | No |
+| cJunosEvolved | 8 GB | 4 cores | ~3-5 min | Yes |
+| vJunos-router | 5 GB | 4 cores | ~10 min | Yes (bare metal) |
 
-4. **Build vrnetlab images**:
-   ```bash
-   git clone https://github.com/hellt/vrnetlab.git ~/vrnetlab
-   
-   # vJunos-router
-   cp /path/to/vJunos-router-*.qcow2 ~/vrnetlab/juniper/vjunosrouter/
-   cd ~/vrnetlab/juniper/vjunosrouter && make
-   
-   # cJunosEvolved
-   cp /path/to/cjunosevolved-*.qcow2 ~/vrnetlab/juniper/vjunosevolved/
-   cd ~/vrnetlab/juniper/vjunosevolved && make
-   ```
+## Troubleshooting
 
-### Topologies
+### cJunos: Open Message Error
+GoBGP is advertising `inet-unicast` alongside `inet-flow`. Configure the neighbor in `gobgp.conf` with only `ipv4-flowspec` AFI-SAFI.
 
-#### vjunos-flowspec.clab.yml
-Tests FlowSpec with vJunos-router (MX-based Junos). Matches most production deployments.
+### cJunos: ZTP running / config not applied
+The startup config must use `FXP0ADDR` (not `FXP0ADDRESS`) for the management IP token.
 
-```
-┌─────────────┐     eBGP      ┌─────────────┐
-│   GoBGP     │◄─────────────►│  vJunos     │
-│  (prefixd)  │  FlowSpec     │   Router    │
-└─────────────┘               └─────────────┘
-   AS 65001                      AS 65002
-```
+### vJunos: stuck booting in VM
+vJunos does not support nested virtualization. Use cJunosEvolved or FRR instead.
 
-#### cjunos-flowspec.clab.yml  
-Tests FlowSpec with cJunosEvolved (PTX-based Junos Evolved).
-
-```
-┌─────────────┐     eBGP      ┌─────────────┐
-│   GoBGP     │◄─────────────►│  cJunos     │
-│  (prefixd)  │  FlowSpec     │  Evolved    │
-└─────────────┘               └─────────────┘
-   AS 65001                      AS 65002
-```
-
-### Quick Start (Juniper)
-
-```bash
-# Start vJunos lab
-cd /path/to/prefixd/lab
-sudo containerlab deploy -t vjunos-flowspec.clab.yml
-
-# Wait for router to boot (~5-10 min for vJunos, ~15 min for cJunos)
-sudo containerlab inspect -t vjunos-flowspec.clab.yml
-
-# SSH to router (default: admin/admin@123)
-ssh admin@clab-vjunos-flowspec-router
-
-# Verify BGP session
-show bgp summary
-
-# Check FlowSpec rules
-show route table inetflow.0
-show firewall filter __flowspec_default_inet__
-```
-
-### Resource Requirements
-
-| Router | RAM | CPU | Boot Time |
-|--------|-----|-----|-----------|
-| vJunos-router | 5 GB | 4 cores | ~5-10 min |
-| cJunosEvolved | 8 GB | 4 cores | ~15 min |
-
-### Troubleshooting
-
-#### "Nested VMX not enabled" error
-You're on an AMD CPU. Use the FRR lab instead, or run on Intel hardware.
-
-#### Router not accepting FlowSpec
-Check import policy:
-```
-show configuration policy-options policy-statement FLOWSPEC-IMPORT
-show configuration protocols bgp group GOBGP import
-```
-
-#### BGP session not establishing
-Check reachability and config:
-```
-ping 10.0.0.1
-show bgp neighbor
-show configuration protocols bgp
-```
+### BGP session stuck in Active/Idle
+Check network connectivity between containers and ensure both sides are on the same Docker network.

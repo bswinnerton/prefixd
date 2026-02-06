@@ -1,18 +1,13 @@
-## cJunosEvolved FlowSpec configuration
-## AS 65003 - receives FlowSpec from GoBGP (AS 65001)
-##
-## Note: Junos Evolved syntax differs slightly from classic Junos
-
 system {
     host-name cjunos-flowspec;
     root-authentication {
-        encrypted-password "$6$rounds=5000$abc123$xyz"; /* admin@123 */
+        encrypted-password "$6$4/4j1tq/KzqRynZl$6soSReTjrQgPy.fB2GkFPNsbF56gMR2jzjdosnTf24xOvfw8jiZ.aVaXuM/Xl58oLgkPA80ZFgs3dXaQTM.cr/";
     }
     login {
         user admin {
             class super-user;
             authentication {
-                encrypted-password "$6$rounds=5000$abc123$xyz"; /* admin@123 */
+                encrypted-password "$6$4/4j1tq/KzqRynZl$6soSReTjrQgPy.fB2GkFPNsbF56gMR2jzjdosnTf24xOvfw8jiZ.aVaXuM/Xl58oLgkPA80ZFgs3dXaQTM.cr/";
             }
         }
     }
@@ -25,11 +20,10 @@ system {
 }
 
 interfaces {
-    et-0/0/0 {
-        description "Link to GoBGP";
+    re0:mgmt-0 {
         unit 0 {
             family inet {
-                address 10.0.1.2/30;
+                address FXP0ADDR;
             }
         }
     }
@@ -46,9 +40,7 @@ routing-options {
     router-id 192.0.2.2;
     autonomous-system 65003;
     flow {
-        /* Enable FlowSpec route installation */
         validation;
-        /* Install FlowSpec as firewall filters */
         term-order standard;
     }
 }
@@ -67,11 +59,10 @@ protocols {
             type external;
             description "FlowSpec from prefixd via GoBGP";
             import FLOWSPEC-IMPORT;
-            peer-as 65001;
-            neighbor 10.0.1.1 {
+            peer-as 65010;
+            neighbor 172.30.31.10 {
                 family inet {
                     flow {
-                        /* Receive IPv4 FlowSpec */
                         no-validate FLOWSPEC-IMPORT;
                     }
                 }

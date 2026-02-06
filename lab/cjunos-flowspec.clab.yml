@@ -1,22 +1,21 @@
 # cJunosEvolved FlowSpec Lab
 #
-# Tests FlowSpec propagation: prefixd -> GoBGP -> cJunosEvolved
-# cJunosEvolved is PTX-based Junos Evolved - Juniper's future direction
-#
-# IMPORTANT: Requires Intel CPU with nested virtualization (VMX).
-#            Will NOT work on AMD CPUs. Use frr-flowspec.clab.yml instead.
+# Tests FlowSpec propagation: prefixd -> prefixd-gobgp -> cJunosEvolved
+# cJunos peers with the prefixd docker-compose GoBGP over shared network.
 #
 # Prerequisites:
-#   1. Intel CPU with nested virt: cat /sys/module/kvm_intel/parameters/nested
-#   2. Download cJunosEvolved qcow2 from Juniper (free account)
-#   3. Build vrnetlab image:
-#      git clone https://github.com/hellt/vrnetlab.git ~/vrnetlab
-#      cp cjunosevolved-*.qcow2 ~/vrnetlab/juniper/vjunosevolved/
-#      cd ~/vrnetlab/juniper/vjunosevolved && make
+#   1. KVM support: ls /dev/kvm
+#   2. Download cJunosEvolved from Juniper (free, no account needed)
+#   3. Load image: docker load -i cJunosEvolved-25.4R1.13-EVO.tar.gz
+#   4. prefixd stack running: docker compose up -d
 #
 # Usage:
 #   sudo containerlab deploy -t cjunos-flowspec.clab.yml
-#   # Wait ~15 min for router to boot (requires 8GB RAM)
+#   # Wait ~5 min for router to boot
+#   # Connect prefixd-gobgp to clab network:
+#   docker network connect clab-mgmt-evo prefixd-gobgp --ip 172.30.31.10
+#   # Add cJunos as FlowSpec neighbor:
+#   docker exec prefixd-gobgp gobgp neighbor add 172.30.31.3 as 65003
 #   sudo containerlab destroy -t cjunos-flowspec.clab.yml
 
 name: cjunos-flowspec
@@ -27,26 +26,10 @@ mgmt:
 
 topology:
   nodes:
-    # GoBGP - FlowSpec announcer (connected to prefixd)
-    gobgp:
-      kind: linux
-      image: jauderho/gobgp:latest
-      mgmt-ipv4: 172.30.31.2
-      binds:
-        - gobgp-cjunos.conf:/etc/gobgp/gobgp.conf:ro
-      ports:
-        - 50053:50051  # gRPC API for prefixd (50053 to avoid conflict)
-      exec:
-        - ip addr add 10.0.1.1/30 dev eth1
-        - gobgpd -f /etc/gobgp/gobgp.conf -p --api-hosts=0.0.0.0:50051 &
-
-    # cJunosEvolved - FlowSpec receiver/enforcer
     router:
-      kind: juniper_vjunosevolved
-      image: vrnetlab/juniper_vjunos-evolved:24.2R1.17
+      kind: juniper_cjunosevolved
+      image: cjunosevolved:25.4R1.13-EVO
       mgmt-ipv4: 172.30.31.3
       startup-config: cjunos-config.txt
-
-  links:
-    # eBGP peering link between GoBGP and cJunosEvolved
-    - endpoints: ["gobgp:eth1", "router:eth1"]
+      env:
+        CPTX_COSIM: "BX"
