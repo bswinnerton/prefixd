@@ -4,7 +4,7 @@ What's next for prefixd.
 
 ---
 
-## Current Status: v0.8.0
+## Current Status: v0.8.1
 
 Core functionality is stable:
 
@@ -25,10 +25,13 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 ### Real Router Testing
 
 - [x] FRR FlowSpec lab (containerlab) - fully working
-- [ ] Test with Juniper vMX (requires Intel VMX)
+- [x] Juniper cJunosEvolved (PTX10002) - end-to-end verified
+  - Event ingestion → policy → GoBGP → cJunos inetflow.0
+  - Announce, rate-limit, withdraw, TTL expiry all confirmed
+  - Documented vendor quirks (FlowSpec-only AFI-SAFI, FXP0ADDR token, license warning)
 - [ ] Test with Arista cEOS
 - [ ] Test with Cisco XRd
-- [ ] Document vendor-specific quirks and import policies
+- [x] Document vendor-specific quirks and import policies
 
 ### Documentation Polish
 
@@ -114,13 +117,14 @@ Validated FlowSpec with major router vendors.
 
 ### Vendor Testing
 
-- [ ] Juniper MX/PTX (primary target)
+- [x] Juniper PTX (cJunosEvolved 25.4R1.13-EVO) - verified
 - [ ] Arista 7xxx (EOS 4.20+)
 - [ ] Cisco IOS-XR (ASR 9000, NCS)
-- [ ] Nokia SR OS
+- [ ] Nokia SR OS (7750, not SR Linux - SR Linux lacks FlowSpec)
 
 ### Vendor Profiles
 
+- [x] Juniper quirks documented (FlowSpec-only AFI-SAFI, import policy, no-validate)
 - [ ] Capability matrix per vendor
 - [ ] Graceful degradation for unsupported features
 - [ ] Reference import policies per vendor

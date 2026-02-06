@@ -230,27 +230,27 @@ sudo gobgpd -f /etc/gobgp/gobgp.conf
 
 ### Juniper Junos (MX/PTX)
 
+Tested with cJunosEvolved 25.4R1.13-EVO (PTX10002). Works with both classic Junos (MX) and Junos Evolved (PTX).
+
 ```junos
-# BGP group for FlowSpec
-set protocols bgp group FLOWSPEC type internal
-set protocols bgp group FLOWSPEC local-address 10.0.0.1
-set protocols bgp group FLOWSPEC neighbor 10.10.0.10
-
-# Enable IPv4 FlowSpec
-set protocols bgp group FLOWSPEC family inet flow no-validate FLOWSPEC-IMPORT
-
-# Enable IPv6 FlowSpec (optional)
-set protocols bgp group FLOWSPEC family inet6 flow no-validate FLOWSPEC-IMPORT
-
-# Import policy
-set policy-options policy-statement FLOWSPEC-IMPORT term accept from family inet-flow
-set policy-options policy-statement FLOWSPEC-IMPORT term accept then accept
-set policy-options policy-statement FLOWSPEC-IMPORT term accept6 from family inet6-flow
-set policy-options policy-statement FLOWSPEC-IMPORT term accept6 then accept
+# Import policy - must be configured first
+set policy-options policy-statement FLOWSPEC-IMPORT term accept-all then accept
 
 # Enable FlowSpec forwarding
+set routing-options flow validation
 set routing-options flow term-order standard
+
+# BGP group for FlowSpec (eBGP example)
+set protocols bgp group FLOWSPEC type external
+set protocols bgp group FLOWSPEC import FLOWSPEC-IMPORT
+set protocols bgp group FLOWSPEC peer-as 65010
+set protocols bgp group FLOWSPEC neighbor 10.10.0.10 family inet flow no-validate FLOWSPEC-IMPORT
 ```
+
+> **Important**: The GoBGP neighbor config must advertise **only** `ipv4-flowspec` AFI-SAFI.
+> If GoBGP also advertises `inet-unicast`, Junos will reject the session with
+> Open Message Error subcode 7 (unsupported capability). Configure the neighbor
+> in `gobgp.conf` with only the `ipv4-flowspec` address family.
 
 ### Verify on Juniper
 
@@ -258,12 +258,14 @@ set routing-options flow term-order standard
 # BGP session
 show bgp neighbor 10.10.0.10
 
-# FlowSpec routes
+# FlowSpec routes (this is where prefixd rules appear)
 show route table inetflow.0
-show route table inet6flow.0
 
-# Detailed FlowSpec
+# Detailed FlowSpec with actions
 show route table inetflow.0 extensive
+
+# BGP summary
+show bgp summary
 ```
 
 ### Arista EOS (7xxx)
@@ -601,22 +603,52 @@ prefixdctl peers
 
 ## Lab Environment
 
-For testing FlowSpec without production routers, see the [lab/](../lab/) directory which includes:
+For testing FlowSpec without production routers, see the [lab/](../lab/) directory:
 
-| Lab | Router | Requirements |
-|-----|--------|--------------|
-| `frr-flowspec.clab.yml` | FRR | Any Linux (recommended) |
-| `vjunos-flowspec.clab.yml` | vJunos | Intel CPU with nested KVM |
-| `cjunos-flowspec.clab.yml` | cJunosEvolved | Intel CPU with nested KVM |
+| Lab | Router | Requirements | Status |
+|-----|--------|--------------|--------|
+| `cjunos-flowspec.clab.yml` | cJunosEvolved (PTX) | KVM (Intel or AMD) | **Verified** |
+| `frr-flowspec.clab.yml` | FRR | Any Linux | **Verified** |
+| `vjunos-flowspec.clab.yml` | vJunos-router (MX) | Bare metal only | Untested |
 
-Quick start with FRR (no special hardware needed):
+### cJunosEvolved (Recommended for Juniper Testing)
+
+Full end-to-end tested: event → prefixd → GoBGP → Junos `inetflow.0`.
+
+```bash
+# Load image (download free from Juniper)
+docker load -i cJunosEvolved-25.4R1.13-EVO.tar.gz
+
+# Deploy
+cd lab
+sudo clab deploy -t cjunos-flowspec.clab.yml
+
+# Connect prefixd-gobgp to clab network
+docker network connect clab-mgmt-evo prefixd-gobgp --ip 172.30.31.10
+
+# Restart GoBGP to load cJunos neighbor
+docker restart prefixd-gobgp
+
+# Verify (wait ~3-5 min for cJunos to boot)
+docker exec prefixd-gobgp gobgp neighbor
+# 172.30.31.3 should show Established
+
+# Test with a real event
+curl -X POST http://localhost:8080/v1/events \
+  -H "Content-Type: application/json" \
+  -d '{"source":"test","victim_ip":"203.0.113.10","vector":"udp_flood","bps":1000000000,"pps":1000000,"top_dst_ports":[53],"confidence":0.9}'
+
+# Verify on cJunos (admin/admin@123)
+ssh admin@172.30.31.3
+show route table inetflow.0
+```
+
+### FRR (No Special Hardware)
 
 ```bash
 cd lab
-sudo containerlab deploy -t frr-flowspec.clab.yml
+sudo clab deploy -t frr-flowspec.clab.yml
 docker network connect clab-mgmt prefixd-gobgp
-
-# Verify BGP session
 docker exec prefixd-gobgp gobgp neighbor
 ```
 

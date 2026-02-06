@@ -127,16 +127,17 @@ docker compose exec gobgp gobgp global rib -a ipv6-flowspec
 
 ## Router-Specific Issues
 
-### Juniper (Junos)
+### Juniper (Junos / Junos Evolved)
+
+Verified with cJunosEvolved 25.4R1.13-EVO (PTX10002-36QDD).
 
 #### Check FlowSpec Routes
 
 ```junos
-# Show FlowSpec table
+# Show FlowSpec table (this is where prefixd rules appear)
 show route table inetflow.0
-show route table inet6flow.0
 
-# Detailed view
+# Detailed view with actions
 show route table inetflow.0 extensive
 
 # Show specific prefix
@@ -158,29 +159,82 @@ show route receive-protocol bgp 10.10.0.10 table inetflow.0
 
 #### Common Juniper Issues
 
+**Open Message Error (subcode 7) - session won't establish:**
+
+This is the most common issue. Junos rejects the BGP session because GoBGP advertises
+`inet-unicast` alongside `inet-flow`. Junos sees the unicast capability as unsupported
+and sends a NOTIFICATION.
+
+```
+show log messages | match bgp
+# BGP_NLRI_MISMATCH: mismatch NLRI: peer: <inet-unicast> us: <inet-flow>
+# NOTIFICATION sent: code 2 subcode 7 (unsupported capability)
+```
+
+**Fix:** Configure the GoBGP neighbor with **only** `ipv4-flowspec`:
+
+```toml
+# configs/gobgp.conf - neighbor must have ONLY flowspec family
+[[neighbors]]
+  [neighbors.config]
+    neighbor-address = "10.0.0.1"
+    peer-as = 65000
+  [[neighbors.afi-safis]]
+    [neighbors.afi-safis.config]
+      afi-safi-name = "ipv4-flowspec"
+  # Do NOT add ipv4-unicast here
+```
+
+Restart GoBGP after changing the config: `docker restart prefixd-gobgp`
+
+**"License key missing; requires 'BGP' license":**
+
+This warning appears on cJunosEvolved but FlowSpec still works. It's cosmetic only.
+
 **FlowSpec validation rejecting routes:**
 ```junos
 # Check validation status
 show route table inetflow.0 extensive | match "validation"
 
-# Disable validation (for testing)
+# Disable validation (required for eBGP FlowSpec)
 set protocols bgp group FLOWSPEC neighbor 10.10.0.10 family inet flow no-validate FLOWSPEC-IMPORT
 ```
 
 **No import policy:**
 ```junos
 # Add FlowSpec import policy
-set policy-options policy-statement FLOWSPEC-IMPORT term accept from family inet-flow
-set policy-options policy-statement FLOWSPEC-IMPORT term accept then accept
-set protocols bgp group FLOWSPEC neighbor 10.10.0.10 import FLOWSPEC-IMPORT
+set policy-options policy-statement FLOWSPEC-IMPORT term accept-all then accept
+set protocols bgp group FLOWSPEC import FLOWSPEC-IMPORT
 ```
 
 **FlowSpec not applied to forwarding:**
 ```junos
 # Enable FlowSpec forwarding
+set routing-options flow validation
 set routing-options flow term-order standard
 commit
 ```
+
+#### cJunosEvolved Lab Issues
+
+**ZTP running / config not applied:**
+
+The startup config must use `FXP0ADDR` (not `FXP0ADDRESS`) for the management IP token.
+Check boot log: `docker exec <container> cat /home/evo/boot.log`
+
+**"System is not yet ready" on `docker exec cli`:**
+
+The outer container's `cli` is not the Junos CLI. Connect via serial console instead:
+```bash
+docker exec <container> bash -c '(echo "admin"; sleep 1; echo "admin@123"; sleep 3; echo "show bgp summary"; sleep 3) | telnet 127.0.0.1 8601'
+```
+
+Or SSH once the router is fully booted: `ssh admin@<mgmt-ip>` (password: `admin@123`)
+
+**vJunos-router won't boot in a VM:**
+
+This is a documented Juniper limitation - vJunos cannot run inside a VM (no nested virtualization).
+Use cJunosEvolved instead, which works on any host with KVM.
 
 #### Debug FlowSpec Processing
 

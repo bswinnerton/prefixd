@@ -156,6 +156,26 @@ quotas:
 - **Retry logic** - Exponential backoff on transient failures
 - **Connection management** - Automatic reconnection with state sync
 
+### Tested Routers
+
+End-to-end verified with real router implementations:
+
+| Router | Platform | Status | Notes |
+|--------|----------|--------|-------|
+| **Juniper cJunosEvolved** | PTX10002-36QDD (25.4R1.13-EVO) | Verified | Announce, rate-limit, withdraw, TTL expiry |
+| **FRR** | 10.3.1 | Verified | Native container, works everywhere |
+| Juniper vJunos-router | vMX | Untested | Bare metal only (no VM support) |
+| Arista cEOS | 7xxx series | Planned | |
+| Cisco XRd | IOS-XR | Planned | |
+
+#### Juniper-Specific Notes
+
+- GoBGP must advertise **only** `ipv4-flowspec` AFI-SAFI to Juniper - advertising `inet-unicast` alongside causes Open Message Error (subcode 7)
+- `no-validate` with import policy required for FlowSpec route acceptance
+- `routing-options flow validation` and `term-order standard` must be configured
+- BGP license warning is cosmetic - FlowSpec works without a license on cJunosEvolved
+- Nokia SR Linux does **not** support FlowSpec (only SR OS 7750 does)
+
 ### FlowSpec NLRI Construction
 
 Supported match criteria (RFC 5575):

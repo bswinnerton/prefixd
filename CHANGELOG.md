@@ -5,6 +5,25 @@ All notable changes to prefixd will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Juniper cJunosEvolved FlowSpec Lab** - End-to-end verified with real Junos router
+  - cJunosEvolved PTX10002-36QDD (Junos Evolved 25.4R1.13-EVO) containerlab topology
+  - Full lifecycle tested: event ingestion → policy engine → GoBGP → Juniper inetflow.0
+  - FlowSpec discard, rate-limit (police), multi-port rules, and TTL-based withdrawal confirmed
+  - cJunos peers directly with prefixd docker-compose GoBGP (no separate lab GoBGP)
+  - Documented vendor quirks: FlowSpec-only AFI-SAFI required, FXP0ADDR token, BGP license warning
+  - Updated lab/README.md with cJunos quick start and troubleshooting
+  - Added cJunosEvolved neighbor config to configs/gobgp.conf
+
+### Changed
+
+- Lab documentation rewritten to reflect cJunos as recommended Juniper test option
+- vJunos-router documented as bare-metal only (cannot run in VMs per Juniper docs)
+- Nokia SR Linux confirmed as lacking FlowSpec support (SR OS only)
+
 ## [0.8.1] - 2026-02-01
 
 ### Fixed
