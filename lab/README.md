@@ -69,8 +69,6 @@ docker network disconnect clab-mgmt-evo prefixd-gobgp
 sudo clab destroy -t cjunos-flowspec.clab.yml --cleanup
 ```
 
----
-
 ## FRR Lab
 
 FRR (Free Range Routing) runs natively in containers without KVM. Works on any Linux host.
@@ -85,8 +83,11 @@ docker compose up -d
 cd lab
 sudo clab deploy -t frr-flowspec.clab.yml
 
-# Connect prefixd-gobgp to lab network
-docker network connect clab-mgmt prefixd-gobgp 2>/dev/null || true
+# Connect prefixd-gobgp to lab network with a fixed IP
+docker network connect clab-mgmt prefixd-gobgp --ip 172.30.30.10
+
+# Restart GoBGP to pick up FRR neighbor from configs/gobgp.conf
+docker restart prefixd-gobgp
 
 # Verify BGP session
 docker exec prefixd-gobgp gobgp neighbor
@@ -99,14 +100,16 @@ docker exec clab-frr-flowspec-router vtysh -c "show bgp ipv4 flowspec"
 
 ```bash
 docker network disconnect clab-mgmt prefixd-gobgp
-sudo clab destroy -t frr-flowspec.clab.yml
+sudo clab destroy -t frr-flowspec.clab.yml --cleanup
 ```
 
 ---
 
 ## vJunos-router Lab
 
-> **Warning**: vJunos-router **cannot run inside a VM** (documented Juniper limitation). It requires a bare-metal server with Intel or AMD KVM support.
+> **Warning**: vJunos-router **cannot run inside a VM** (documented Juniper limitation).
+> It requires a bare-metal server with KVM (Intel VMX or AMD-V).
+> If you're running in a VM or cloud instance, use cJunosEvolved or FRR instead.
 
 See `vjunos-flowspec.clab.yml` for the topology definition.
 
@@ -119,6 +122,24 @@ See `vjunos-flowspec.clab.yml` for the topology definition.
 | FRR | 256 MB | 1 core | Instant | No |
 | cJunosEvolved | 8 GB | 4 cores | ~3-5 min | Yes |
 | vJunos-router | 5 GB | 4 cores | ~10 min | Yes (bare metal) |
+
+## End-to-End Test
+
+Once a lab is deployed and BGP is established, run the automated test script:
+
+```bash
+# Basic test: send event, verify FlowSpec rule appears in GoBGP RIB
+./test-flowspec.sh
+
+# Full lifecycle: announce, verify, withdraw, verify removal
+./test-flowspec.sh --withdraw
+```
+
+The script checks prefixd health, GoBGP status, BGP neighbors, sends a test attack event, and verifies the FlowSpec rule propagates. If FRR or cJunos are detected, it checks those too.
+
+Environment variables:
+- `PREFIXD_API` - API endpoint (default: `http://localhost:8080`)
+- `PREFIXD_API_TOKEN` - Bearer token if auth is enabled
 
 ## Troubleshooting
 

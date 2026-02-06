@@ -11,12 +11,16 @@
 #
 # Usage:
 #   sudo containerlab deploy -t cjunos-flowspec.clab.yml
-#   # Wait ~5 min for router to boot
+#   # Wait ~3-5 min for router to boot
 #   # Connect prefixd-gobgp to clab network:
 #   docker network connect clab-mgmt-evo prefixd-gobgp --ip 172.30.31.10
-#   # Add cJunos as FlowSpec neighbor:
-#   docker exec prefixd-gobgp gobgp neighbor add 172.30.31.3 as 65003
-#   sudo containerlab destroy -t cjunos-flowspec.clab.yml
+#   # Restart GoBGP to pick up cJunos neighbor from configs/gobgp.conf:
+#   docker restart prefixd-gobgp
+#   # Verify BGP session:
+#   docker exec prefixd-gobgp gobgp neighbor
+#   # Cleanup:
+#   docker network disconnect clab-mgmt-evo prefixd-gobgp
+#   sudo containerlab destroy -t cjunos-flowspec.clab.yml --cleanup
 
 name: cjunos-flowspec
 

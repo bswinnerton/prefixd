@@ -11,8 +11,12 @@
 # Usage:
 #   cd /path/to/prefixd/lab
 #   sudo containerlab deploy -t frr-flowspec.clab.yml
-#   docker network connect clab-mgmt prefixd-gobgp  # Gets 172.30.30.2
-#   sudo containerlab destroy -t frr-flowspec.clab.yml
+#   docker network connect clab-mgmt prefixd-gobgp --ip 172.30.30.10
+#   docker restart prefixd-gobgp
+#   # Verify: docker exec prefixd-gobgp gobgp neighbor
+#   # Cleanup:
+#   docker network disconnect clab-mgmt prefixd-gobgp
+#   sudo containerlab destroy -t frr-flowspec.clab.yml --cleanup
 
 name: frr-flowspec
 

@@ -648,7 +648,8 @@ show route table inetflow.0
 ```bash
 cd lab
 sudo clab deploy -t frr-flowspec.clab.yml
-docker network connect clab-mgmt prefixd-gobgp
+docker network connect clab-mgmt prefixd-gobgp --ip 172.30.30.10
+docker restart prefixd-gobgp
 docker exec prefixd-gobgp gobgp neighbor
 ```
 
