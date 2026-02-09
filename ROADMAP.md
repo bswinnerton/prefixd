@@ -39,8 +39,9 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 - [ ] Add example Grafana dashboards
 - [ ] Record demo video: attack → detection → mitigation → recovery
 
-### Frontend Testing
+### Frontend
 
+- [ ] Derive WebSocket URL from `window.location` at runtime (remove `NEXT_PUBLIC_PREFIXD_WS` build-time env var, same pattern as the HTTP API proxy)
 - [ ] Vitest setup
 - [ ] Component tests
 - [ ] Hook tests
