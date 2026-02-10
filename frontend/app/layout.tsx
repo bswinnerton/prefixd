@@ -4,7 +4,7 @@ import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
 import { SWRProvider } from "@/components/swr-provider"
 import { AuthProvider } from "@/hooks/use-auth"
-import { Analytics } from "@/components/analytics"
+
 
 const geist = Geist({ 
   subsets: ["latin"],
@@ -57,7 +57,6 @@ export default function RootLayout({
             {children}
           </SWRProvider>
         </AuthProvider>
-        <Analytics />
       </body>
     </html>
   )
