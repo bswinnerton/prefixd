@@ -251,6 +251,7 @@ Current version: **v0.8.0**
 
 - **Issues:** [GitHub Issues](https://github.com/lance0/prefixd/issues)
 - **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Architecture Decision Records:** [docs/adr/](docs/adr/)
 - **Security:** [SECURITY.md](SECURITY.md)
 
 ---

@@ -198,6 +198,10 @@ cargo tarpaulin --out Html
 - Update README.md for user-facing changes
 - Update CHANGELOG.md for releases
 
+### Architecture Decision Records
+
+We document significant design decisions in [docs/adr/](docs/adr/). When making a change that affects the system's architecture (new dependency, new pattern, structural change), add an ADR following the existing format. See [ADR README](docs/adr/README.md) for the index and template.
+
 ---
 
 ## Release Process

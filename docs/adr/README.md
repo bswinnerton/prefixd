@@ -16,3 +16,8 @@ Format follows [Michael Nygard's template](https://cognitect.com/blog/2011/11/15
 | [006](006-runtime-url-derivation.md) | Derive frontend URLs at runtime, not build time | Accepted | 2026-02-18 |
 | [007](007-trait-based-bgp-abstraction.md) | Trait-based BGP abstraction for testing | Accepted | 2026-01-15 |
 | [008](008-session-auth-plus-bearer.md) | Hybrid auth: session cookies + bearer tokens | Accepted | 2026-01-28 |
+| [009](009-postgresql-over-sqlite.md) | PostgreSQL over SQLite | Accepted | 2026-01-20 |
+| [010](010-signal-driven-architecture.md) | Signal-driven architecture (detectors signal, prefixd decides) | Accepted | 2026-01-15 |
+| [011](011-reconciliation-loop.md) | Reconciliation loop (desired vs actual state) | Accepted | 2026-01-20 |
+| [012](012-playbook-policy-engine.md) | Playbook-based policy engine | Accepted | 2026-01-15 |
+| [013](013-dry-run-mode.md) | Dry-run mode for safe onboarding | Accepted | 2026-01-15 |
