@@ -43,6 +43,13 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 
 - [x] Derive WebSocket URL from `window.location` at runtime (removed `NEXT_PUBLIC_PREFIXD_WS` build-time env var; nginx reverse proxy is the proper solution for single-origin deployment)
 - [x] Light/dark mode toggle
+- [ ] Config page (Phase 1)
+  - Read-only view of running config (prefixd.yaml, inventory, playbooks)
+  - Hot-reload button (triggers `POST /v1/config/reload`)
+  - Inventory browser (searchable customer/service/IP table)
+- [ ] Config page (Phase 2)
+  - Playbook editor (form-based, with validation)
+  - Requires `PUT /v1/config/playbooks` endpoint, file persistence, rollback
 - [ ] Vitest setup
 - [ ] Component tests
 - [ ] Hook tests
