@@ -46,6 +46,9 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 - [ ] Component tests
 - [ ] Hook tests
 - [ ] Error boundaries
+- [ ] Upgrade lucide-react (0.454 -> latest, verify all ~30 icon imports)
+- [ ] Upgrade react-resizable-panels (2.x -> 4.x, major version)
+- [ ] Upgrade tower-sessions (0.14 -> 0.15, blocked on axum-login 0.18 compatibility)
 
 ### Authentication
 
