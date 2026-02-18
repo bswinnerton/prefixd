@@ -1,12 +1,13 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Menu, Search } from "lucide-react"
+import { Menu, Search, Sun, Moon } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ConnectionStatus } from "@/components/connection-status"
 import { UserMenu } from "@/components/user-menu"
 import { useWebSocket } from "@/hooks/use-websocket"
 import { usePops, useHealth } from "@/hooks/use-api"
+import { useTheme } from "next-themes"
 
 interface TopBarProps {
   onMenuClick?: () => void
@@ -15,8 +16,12 @@ interface TopBarProps {
 
 export function TopBar({ onMenuClick, onSearchClick }: TopBarProps) {
   const [time, setTime] = useState<string>("")
+  const [mounted, setMounted] = useState(false)
   const { connectionState } = useWebSocket()
   const { data: popsData } = usePops()
+  const { theme, setTheme } = useTheme()
+
+  useEffect(() => { setMounted(true) }, [])
   const { data: health } = useHealth()
 
   const currentPop = health?.pop?.toUpperCase()
@@ -81,6 +86,15 @@ export function TopBar({ onMenuClick, onSearchClick }: TopBarProps) {
       <div className="flex items-center gap-3">
         <ConnectionStatus state={connectionState} />
         <div className="text-[10px] font-mono text-muted-foreground tabular-nums">{time}</div>
+        {mounted && (
+          <button
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            className="p-1.5 text-muted-foreground hover:text-foreground transition-colors"
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          >
+            {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+          </button>
+        )}
         <UserMenu />
       </div>
     </header>

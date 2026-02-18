@@ -39,6 +39,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - No build-time env var needed; works behind any reverse proxy (nginx, caddy, etc.)
   - Removed `NEXT_PUBLIC_PREFIXD_WS` build arg from Dockerfile
 - **Favicon** - Replaced Vercel placeholder with prefixd shield icon (dark/light mode PNGs + SVG)
+- **Light/Dark Mode Toggle** - Dashboard now supports light mode with a theme toggle in the top bar
+  - Uses `next-themes` with system preference detection
+  - Defaults to dark mode, persists user preference
+- **Nginx Reverse Proxy** - Single-origin deployment via nginx in docker-compose
+  - All traffic (API, WebSocket, dashboard) served through port 80
+  - No build-time URL configuration needed
+  - WebSocket upgrade handled transparently
+- **Grafana Dashboards** - Provisioned Grafana and Prometheus in docker-compose
+  - Operations dashboard: active mitigations, BGP sessions, HTTP latency, reconciliation
+  - Security dashboard: events by source/vector, guardrail rejections, escalations
+  - Auto-provisioned datasource and dashboards on startup
 
 ### Changed
 
@@ -47,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nokia SR Linux confirmed as lacking FlowSpec support (SR OS only)
 - Removed Vercel Analytics (`@vercel/analytics`) - self-hosted tool shouldn't phone home
 - Removed duplicate lowercase PR template (case collision on macOS/Windows)
+- Docker Compose now uses nginx as single entrypoint (port 80) instead of exposing individual service ports
+- CI security audit switched from manual `cargo-audit` install to `actions-rust-lang/audit@v1` (3 min faster)
+- CORS origin is now configurable via `cors_origin` in `prefixd.yaml` (omit when behind a reverse proxy)
+- Removed hardcoded `localhost:3000` CORS origin
+- Architecture Decision Records (ADRs) added to `docs/adr/`
 
 ### Security
 

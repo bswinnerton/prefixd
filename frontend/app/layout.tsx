@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
 import { SWRProvider } from "@/components/swr-provider"
 import { AuthProvider } from "@/hooks/use-auth"
+import { ThemeProvider } from "@/components/theme-provider"
 
 
 const geist = Geist({ 
@@ -50,13 +51,15 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`dark bg-background ${geist.variable} ${geistMono.variable}`}>
+    <html lang="en" className={`bg-background ${geist.variable} ${geistMono.variable}`} suppressHydrationWarning>
       <body className="font-sans antialiased">
-        <AuthProvider>
-          <SWRProvider>
-            {children}
-          </SWRProvider>
-        </AuthProvider>
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
+          <AuthProvider>
+            <SWRProvider>
+              {children}
+            </SWRProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

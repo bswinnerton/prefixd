@@ -48,20 +48,22 @@ docker compose exec prefixd prefixdctl operators create \
   --username admin --role admin --password
 
 # Verify
-curl http://localhost:8080/v1/health
-open http://localhost:3000
+curl http://localhost/v1/health
+open http://localhost
 ```
 
 ### Services
 
 | Service | Port | Description |
 |---------|------|-------------|
-| prefixd | 8080 | HTTP API |
-| prefixd | 9090 | Prometheus metrics |
-| gobgp | 50051 | gRPC (internal) |
+| nginx | 80 | Reverse proxy (single entrypoint) |
+| grafana | 3001 | Monitoring dashboards |
+| prometheus | 9091 | Metrics storage |
 | gobgp | 179 | BGP (to routers) |
+| gobgp | 50051 | gRPC (internal) |
 | postgres | 5432 | Database |
-| dashboard | 3000 | Web UI |
+
+> **Note:** The dashboard and API are not exposed directly. All HTTP and WebSocket traffic goes through nginx on port 80.
 
 ---
 
@@ -122,10 +124,8 @@ The dashboard container uses the `PREFIXD_API` environment variable to locate th
 ```yaml
 dashboard:
   build: ./frontend
-  ports:
-    - "3000:3000"
   environment:
-    - PREFIXD_API=http://prefixd:8080  # Docker service name
+    - PREFIXD_API=http://prefixd:8080  # Docker service name (internal)
 ```
 
 ### Remote Deployment
@@ -133,12 +133,12 @@ dashboard:
 When deploying to a remote server, ensure:
 
 1. The dashboard container can reach the prefixd container (same Docker network)
-2. Users access the dashboard via the server's IP/hostname on port 3000
-3. The browser never connects directly to port 8080 - all API calls are proxied
+2. Users access the dashboard via the server's IP/hostname on port 80 (through nginx)
+3. The browser never connects directly to the backend - all API calls are proxied through nginx
 
 ```bash
 # Access dashboard from your workstation
-open http://your-server:3000
+open http://your-server
 ```
 
 ### Local Development (Outside Docker)
@@ -493,11 +493,11 @@ pop: fra1
 
 ```bash
 # List all mitigations across POPs
-curl "http://localhost:8080/v1/mitigations?pop=all"
+curl "http://localhost/v1/mitigations?pop=all"
 
 # Get stats per POP
-curl "http://localhost:8080/v1/stats"
-curl "http://localhost:8080/v1/pops"
+curl "http://localhost/v1/stats"
+curl "http://localhost/v1/pops"
 ```
 
 ---
@@ -549,7 +549,7 @@ groups:
 
 ```bash
 # API health
-curl http://localhost:8080/v1/health
+curl http://localhost/v1/health
 
 # CLI status
 prefixdctl status
@@ -634,7 +634,7 @@ docker exec prefixd-gobgp gobgp neighbor
 # 172.30.31.3 should show Established
 
 # Test with a real event
-curl -X POST http://localhost:8080/v1/events \
+curl -X POST http://localhost/v1/events \
   -H "Content-Type: application/json" \
   -d '{"source":"test","victim_ip":"203.0.113.10","vector":"udp_flood","bps":1000000000,"pps":1000000,"top_dst_ports":[53],"confidence":0.9}'
 

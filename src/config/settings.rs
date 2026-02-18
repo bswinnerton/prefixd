@@ -40,6 +40,9 @@ pub struct HttpConfig {
     pub rate_limit: RateLimitConfig,
     #[serde(default)]
     pub tls: Option<TlsConfig>,
+    /// CORS allowed origin (e.g., "http://localhost:3000"). Omit when using a reverse proxy.
+    #[serde(default)]
+    pub cors_origin: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

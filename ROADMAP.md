@@ -4,7 +4,7 @@ What's next for prefixd.
 
 ---
 
-## Current Status: v0.8.1
+## Current Status: v0.8.2 (in progress)
 
 Core functionality is stable:
 
@@ -36,12 +36,13 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 ### Documentation Polish
 
 - [ ] Review all docs for accuracy
-- [ ] Add example Grafana dashboards
+- [x] Add example Grafana dashboards
 - [ ] Record demo video: attack → detection → mitigation → recovery
 
 ### Frontend
 
-- [x] Derive WebSocket URL from `window.location` at runtime (removed `NEXT_PUBLIC_PREFIXD_WS` build-time env var)
+- [x] Derive WebSocket URL from `window.location` at runtime (removed `NEXT_PUBLIC_PREFIXD_WS` build-time env var; nginx reverse proxy is the proper solution for single-origin deployment)
+- [x] Light/dark mode toggle
 - [ ] Vitest setup
 - [ ] Component tests
 - [ ] Hook tests
@@ -85,7 +86,7 @@ Target: Stable API, comprehensive testing, production-proven.
 
 - [ ] Database metrics (query latency, connection pool)
 - [ ] Request tracing with correlation IDs
-- [ ] Grafana dashboard templates
+- [x] Grafana dashboard templates
 
 ---
 

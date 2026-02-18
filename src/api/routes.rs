@@ -101,14 +101,16 @@ pub fn create_router(
         ))
         // Request body size limit (1MB)
         .layer(RequestBodyLimitLayer::new(1024 * 1024))
-        // CORS for dashboard
-        .layer(
+        // CORS (only needed when dashboard is on a different origin, e.g., local dev without nginx)
+        .layer(if let Some(ref origin) = state.settings.http.cors_origin {
             CorsLayer::new()
-                .allow_origin("http://localhost:3000".parse::<HeaderValue>().unwrap())
+                .allow_origin(origin.parse::<HeaderValue>().expect("invalid cors_origin"))
                 .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
                 .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION, header::COOKIE])
-                .allow_credentials(true),
-        )
+                .allow_credentials(true)
+        } else {
+            CorsLayer::new()
+        })
 }
 
 async fn openapi_json() -> impl IntoResponse {
