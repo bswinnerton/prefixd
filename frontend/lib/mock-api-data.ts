@@ -1,10 +1,16 @@
 // Mock data for screenshot mode - matches API response types exactly
-import type { Mitigation, Event, Stats, HealthResponse, SafelistEntry, AuditEntry } from "./api"
+import type { Mitigation, Event, Stats, PublicHealthResponse, HealthResponse, SafelistEntry, AuditEntry } from "./api"
 
 // Helper to generate ISO timestamps relative to now
 const now = new Date()
 const ago = (minutes: number) => new Date(now.getTime() - minutes * 60 * 1000).toISOString()
 const inFuture = (minutes: number) => new Date(now.getTime() + minutes * 60 * 1000).toISOString()
+
+export const mockPublicHealth: PublicHealthResponse = {
+  status: "healthy",
+  version: "0.8.0",
+  auth_mode: "none",
+}
 
 export const mockHealth: HealthResponse = {
   status: "healthy",
@@ -15,6 +21,7 @@ export const mockHealth: HealthResponse = {
   active_mitigations: 6,
   database: "connected",
   gobgp: { status: "connected" },
+  auth_mode: "none",
   bgp_session_up: true,
 }
 

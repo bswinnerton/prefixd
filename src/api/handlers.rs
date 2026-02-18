@@ -123,6 +123,16 @@ pub struct EventsListResponse {
 }
 
 #[derive(Serialize, ToSchema)]
+pub struct PublicHealthResponse {
+    /// Health status (healthy, degraded)
+    status: String,
+    /// Daemon version
+    version: String,
+    /// Authentication mode (none, bearer, credentials, mtls)
+    auth_mode: String,
+}
+
+#[derive(Serialize, ToSchema)]
 pub struct HealthResponse {
     /// Health status (healthy, degraded)
     status: String,
@@ -140,6 +150,8 @@ pub struct HealthResponse {
     database: String,
     /// GoBGP connectivity status
     gobgp: ComponentHealth,
+    /// Authentication mode (none, bearer, credentials, mtls)
+    auth_mode: String,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -944,16 +956,22 @@ pub async fn remove_safelist(
 }
 
 /// Health check endpoint
-#[utoipa::path(
-    get,
-    path = "/v1/health",
-    tag = "health",
-    responses(
-        (status = 200, description = "Service is healthy", body = HealthResponse)
-    )
-)]
-pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // Check GoBGP connectivity
+fn resolve_auth_mode(state: &AppState) -> String {
+    serde_json::to_value(state.settings.http.auth.mode)
+        .ok()
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+async fn check_health_status(
+    state: &AppState,
+) -> (
+    String,
+    std::collections::HashMap<String, String>,
+    u32,
+    String,
+    ComponentHealth,
+) {
     let (sessions, gobgp_health) = match state.announcer.session_status().await {
         Ok(s) => (
             s,
@@ -971,7 +989,6 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         ),
     };
 
-    // Check database connectivity
     let (active, db_status, db_error) = match state.repo.count_active_global().await {
         Ok(count) => (count, "connected".to_string(), false),
         Err(e) => {
@@ -985,15 +1002,55 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         .map(|s| (s.name, s.state.to_string()))
         .collect();
 
-    // Determine overall status
     let status = if db_error || gobgp_health.status == "error" {
         "degraded"
     } else {
         "healthy"
     };
 
-    Json(HealthResponse {
-        status: status.to_string(),
+    (status.to_string(), bgp_map, active, db_status, gobgp_health)
+}
+
+/// Public health endpoint: minimal info safe for unauthenticated access
+#[utoipa::path(
+    get,
+    path = "/v1/health",
+    tag = "health",
+    responses(
+        (status = 200, description = "Service is healthy", body = PublicHealthResponse)
+    )
+)]
+pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Lightweight liveness check: no DB or GoBGP calls.
+    // Use /v1/health/detail for full operational status.
+    Json(PublicHealthResponse {
+        status: "ok".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        auth_mode: resolve_auth_mode(&state),
+    })
+}
+
+/// Authenticated health detail: full operational status
+#[utoipa::path(
+    get,
+    path = "/v1/health/detail",
+    tag = "health",
+    responses(
+        (status = 200, description = "Detailed health status", body = HealthResponse)
+    )
+)]
+pub async fn health_detail(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_auth(&state, &auth_session, auth_header)?;
+
+    let (status, bgp_map, active, db_status, gobgp_health) = check_health_status(&state).await;
+
+    Ok(Json(HealthResponse {
+        status,
         version: env!("CARGO_PKG_VERSION").to_string(),
         pop: state.settings.pop.clone(),
         uptime_seconds: state.start_time.elapsed().as_secs(),
@@ -1001,7 +1058,8 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         active_mitigations: active,
         database: db_status,
         gobgp: gobgp_health,
-    })
+        auth_mode: resolve_auth_mode(&state),
+    }))
 }
 
 pub async fn metrics() -> impl IntoResponse {
@@ -1589,4 +1647,135 @@ mod tests {
         assert_eq!(pops.len(), 1);
         assert_eq!(pops[0].pop, "iad1");
     }
+}
+
+// Config read-only endpoints
+
+#[derive(Serialize)]
+pub struct ConfigSettingsResponse {
+    settings: serde_json::Value,
+    loaded_at: String,
+}
+
+pub async fn get_config_settings(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_auth(&state, &auth_session, auth_header)?;
+
+    let s = &state.settings;
+
+    // Allowlist: only expose operationally useful, non-sensitive fields.
+    // New fields must be explicitly added here to avoid accidental leaks.
+    let settings = serde_json::json!({
+        "pop": s.pop,
+        "mode": s.mode,
+        "http": {
+            "listen": s.http.listen,
+            "auth": { "mode": s.http.auth.mode },
+            "rate_limit": s.http.rate_limit,
+            "cors_origin": s.http.cors_origin,
+        },
+        "bgp": {
+            "mode": s.bgp.mode,
+            "local_asn": s.bgp.local_asn,
+            "neighbors": s.bgp.neighbors.iter().map(|n| serde_json::json!({
+                "name": n.name,
+                "address": n.address,
+                "peer_asn": n.peer_asn,
+                "afi_safi": n.afi_safi,
+            })).collect::<Vec<_>>(),
+        },
+        "guardrails": s.guardrails,
+        "quotas": s.quotas,
+        "timers": s.timers,
+        "escalation": s.escalation,
+        "storage": { "connection_string": "[redacted]" },
+        "observability": {
+            "log_format": s.observability.log_format,
+            "log_level": s.observability.log_level,
+            "metrics_listen": s.observability.metrics_listen,
+        },
+        "safelist": { "count": s.safelist.prefixes.len() },
+        "shutdown": s.shutdown,
+    });
+
+    // Settings are immutable after startup; compute startup wall-clock time
+    let started_at = chrono::Utc::now()
+        - chrono::Duration::from_std(state.start_time.elapsed()).unwrap_or_default();
+
+    Ok(Json(ConfigSettingsResponse {
+        settings,
+        loaded_at: started_at.to_rfc3339(),
+    }))
+}
+
+#[derive(Serialize)]
+pub struct ConfigInventoryResponse {
+    customers: Vec<crate::config::Customer>,
+    total_customers: usize,
+    total_services: usize,
+    total_assets: usize,
+    loaded_at: String,
+}
+
+pub async fn get_config_inventory(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_auth(&state, &auth_session, auth_header)?;
+
+    let inventory = state.inventory.read().await;
+    let customers = inventory.customers.clone();
+    let total_customers = customers.len();
+    let total_services: usize = customers.iter().map(|c| c.services.len()).sum();
+    let total_assets: usize = customers
+        .iter()
+        .flat_map(|c| &c.services)
+        .map(|s| s.assets.len())
+        .sum();
+    drop(inventory);
+
+    let loaded_at = state.inventory_loaded_at.read().await.to_rfc3339();
+
+    Ok(Json(ConfigInventoryResponse {
+        total_customers,
+        total_services,
+        total_assets,
+        customers,
+        loaded_at,
+    }))
+}
+
+#[derive(Serialize)]
+pub struct ConfigPlaybooksResponse {
+    playbooks: Vec<crate::config::Playbook>,
+    total_playbooks: usize,
+    loaded_at: String,
+}
+
+pub async fn get_config_playbooks(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_auth(&state, &auth_session, auth_header)?;
+
+    let playbooks_guard = state.playbooks.read().await;
+    let playbooks = playbooks_guard.playbooks.clone();
+    let total_playbooks = playbooks.len();
+    drop(playbooks_guard);
+
+    let loaded_at = state.playbooks_loaded_at.read().await.to_rfc3339();
+
+    Ok(Json(ConfigPlaybooksResponse {
+        total_playbooks,
+        playbooks,
+        loaded_at,
+    }))
 }

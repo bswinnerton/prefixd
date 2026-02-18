@@ -5,6 +5,14 @@ const API_BASE = "/api/prefixd"
 // Cache for deduplicating in-flight requests (client-swr-dedup pattern)
 const requestCache = new Map<string, Promise<unknown>>()
 
+// Debounce auth-expired events: only dispatch once per 2s window
+let authExpiredTimer: ReturnType<typeof setTimeout> | null = null
+function dispatchAuthExpired() {
+  if (authExpiredTimer) return
+  authExpiredTimer = setTimeout(() => { authExpiredTimer = null }, 2000)
+  window.dispatchEvent(new CustomEvent("prefixd:auth-expired"))
+}
+
 export interface Mitigation {
   mitigation_id: string
   scope_hash: string
@@ -61,6 +69,12 @@ export interface PopInfo {
   total_mitigations: number
 }
 
+export interface PublicHealthResponse {
+  status: string
+  version: string
+  auth_mode: string
+}
+
 export interface HealthResponse {
   status: string
   version: string
@@ -73,6 +87,7 @@ export interface HealthResponse {
     status: string
     error?: string
   }
+  auth_mode: string
   // Computed from gobgp.status for UI convenience
   bgp_session_up: boolean
 }
@@ -123,6 +138,9 @@ async function doFetch<T>(url: string, options: RequestInit): Promise<T> {
   })
 
   if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined") {
+      dispatchAuthExpired()
+    }
     const error = await res.text()
     throw new Error(`API error ${res.status}: ${error}`)
   }
@@ -130,8 +148,12 @@ async function doFetch<T>(url: string, options: RequestInit): Promise<T> {
   return res.json()
 }
 
-export async function getHealth(): Promise<HealthResponse> {
-  const data = await fetchApi<Omit<HealthResponse, 'bgp_session_up'>>("/v1/health")
+export async function getHealth(): Promise<PublicHealthResponse> {
+  return fetchApi<PublicHealthResponse>("/v1/health")
+}
+
+export async function getHealthDetail(): Promise<HealthResponse> {
+  const data = await fetchApi<Omit<HealthResponse, 'bgp_session_up'>>("/v1/health/detail")
   const sessions = Object.values(data.bgp_sessions ?? {})
   return {
     ...data,
@@ -253,7 +275,7 @@ export async function getDashboardData(): Promise<{
   mitigations: Mitigation[]
 }> {
   const [health, stats, mitigations] = await Promise.all([
-    getHealth(),
+    getHealthDetail(),
     getStats(),
     getMitigations({ status: ["active", "escalated"], limit: 100 }),
   ])
@@ -304,4 +326,75 @@ export async function changePassword(
     method: "PUT",
     body: JSON.stringify({ new_password: newPassword }),
   })
+}
+
+// Config endpoints (read-only)
+
+export interface ConfigSettingsResponse {
+  settings: Record<string, unknown>
+  loaded_at: string
+}
+
+export interface ConfigCustomer {
+  customer_id: string
+  name: string
+  prefixes: string[]
+  policy_profile: "strict" | "normal" | "relaxed"
+  services: ConfigService[]
+}
+
+export interface ConfigService {
+  service_id: string
+  name: string
+  assets: ConfigAsset[]
+  allowed_ports: {
+    udp?: number[]
+    tcp?: number[]
+  }
+}
+
+export interface ConfigAsset {
+  ip: string
+  role?: string
+}
+
+export interface ConfigInventoryResponse {
+  customers: ConfigCustomer[]
+  total_customers: number
+  total_services: number
+  total_assets: number
+  loaded_at: string
+}
+
+export interface ConfigPlaybook {
+  name: string
+  match: {
+    vector: string
+    require_top_ports?: boolean
+  }
+  steps: {
+    action: "police" | "discard"
+    rate_bps?: number
+    ttl_seconds: number
+    require_confidence_at_least?: number
+    require_persistence_seconds?: number
+  }[]
+}
+
+export interface ConfigPlaybooksResponse {
+  playbooks: ConfigPlaybook[]
+  total_playbooks: number
+  loaded_at: string
+}
+
+export async function getConfigSettings(): Promise<ConfigSettingsResponse> {
+  return fetchApi<ConfigSettingsResponse>("/v1/config/settings")
+}
+
+export async function getConfigInventory(): Promise<ConfigInventoryResponse> {
+  return fetchApi<ConfigInventoryResponse>("/v1/config/inventory")
+}
+
+export async function getConfigPlaybooks(): Promise<ConfigPlaybooksResponse> {
+  return fetchApi<ConfigPlaybooksResponse>("/v1/config/playbooks")
 }

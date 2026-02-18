@@ -43,10 +43,11 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 
 - [x] Derive WebSocket URL from `window.location` at runtime (removed `NEXT_PUBLIC_PREFIXD_WS` build-time env var; nginx reverse proxy is the proper solution for single-origin deployment)
 - [x] Light/dark mode toggle
-- [ ] Config page (Phase 1)
-  - Read-only view of running config (prefixd.yaml, inventory, playbooks)
+- [x] Config page (Phase 1)
+  - Read-only view of running config (allowlist-redacted settings, playbook visualization)
   - Hot-reload button (triggers `POST /v1/config/reload`)
   - Inventory browser (searchable customer/service/IP table)
+  - Route-group auth guard, session expiry handling, deny-by-default permissions
 - [ ] Config page (Phase 2)
   - Playbook editor (form-based, with validation)
   - Requires `PUT /v1/config/playbooks` endpoint, file persistence, rollback
@@ -84,6 +85,11 @@ Target: Stable API, comprehensive testing, production-proven.
 
 ### Hardening
 
+- [x] Config API allowlist redaction (prevent accidental secret exposure)
+- [x] Public health endpoint slimmed (no DB/GoBGP calls, no operational data)
+- [x] Frontend deny-by-default permissions with auth-mode awareness
+- [x] Session expiry handling (401 interceptor, debounced redirect)
+- [x] Route-group auth guard (structural, not opt-in per page)
 - [ ] Chaos testing (kill GoBGP mid-mitigation, kill Postgres during ingestion)
 - [ ] Load testing (sustained event volume)
 - [ ] Security audit (dependencies, input validation)

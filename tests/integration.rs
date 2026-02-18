@@ -165,14 +165,22 @@ async fn test_health_endpoint() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    // Verify gobgp is now a structured object
-    assert!(json["gobgp"].is_object(), "gobgp should be an object");
+    // Public health returns slim response
+    assert!(json["status"].is_string(), "status should be a string");
+    assert!(json["version"].is_string(), "version should be a string");
     assert!(
-        json["gobgp"]["status"].is_string(),
-        "gobgp.status should be a string"
+        json["auth_mode"].is_string(),
+        "auth_mode should be a string"
     );
-    // database remains a string for backward compat
-    assert!(json["database"].is_string(), "database should be a string");
+    // Sensitive fields should NOT be present on public health
+    assert!(
+        json["bgp_sessions"].is_null(),
+        "bgp_sessions should not be on public health"
+    );
+    assert!(
+        json["database"].is_null(),
+        "database should not be on public health"
+    );
 }
 
 #[tokio::test]

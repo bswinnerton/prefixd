@@ -13,7 +13,7 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command"
-import { LayoutDashboard, Shield, Activity, FileText, Settings, Zap, Clock, XCircle } from "lucide-react"
+import { LayoutDashboard, Shield, Activity, FileText, Settings, Zap, Clock, XCircle, Database, FileCode } from "lucide-react"
 import { useMitigations, useEvents } from "@/hooks/use-api"
 import type { Mitigation } from "@/lib/api"
 
@@ -101,13 +101,18 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
               <span>Events</span>
               <CommandShortcut className="font-mono">g e</CommandShortcut>
             </CommandItem>
+            <CommandItem onSelect={() => runCommand(() => router.push("/inventory"))} className="font-mono text-xs">
+              <Database className="mr-2 h-3 w-3 opacity-60" />
+              <span>Inventory</span>
+              <CommandShortcut className="font-mono">g i</CommandShortcut>
+            </CommandItem>
             <CommandItem onSelect={() => runCommand(() => router.push("/audit-log"))} className="font-mono text-xs">
               <FileText className="mr-2 h-3 w-3 opacity-60" />
               <span>Audit Log</span>
               <CommandShortcut className="font-mono">g a</CommandShortcut>
             </CommandItem>
             <CommandItem onSelect={() => runCommand(() => router.push("/config"))} className="font-mono text-xs">
-              <Settings className="mr-2 h-3 w-3 opacity-60" />
+              <FileCode className="mr-2 h-3 w-3 opacity-60" />
               <span>Config</span>
               <CommandShortcut className="font-mono">g c</CommandShortcut>
             </CommandItem>

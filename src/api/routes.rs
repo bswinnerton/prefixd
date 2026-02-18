@@ -25,6 +25,7 @@ pub fn create_router(
     // Public routes (no auth required)
     let public_routes = Router::new()
         .route("/v1/health", get(handlers::health))
+        .route("/v1/health/detail", get(handlers::health_detail))
         .route("/v1/auth/login", post(handlers::login))
         .route("/metrics", get(handlers::metrics))
         .route("/openapi.json", get(openapi_json));
@@ -60,6 +61,9 @@ pub fn create_router(
             axum::routing::delete(handlers::remove_safelist),
         )
         .route("/v1/config/reload", post(handlers::reload_config))
+        .route("/v1/config/settings", get(handlers::get_config_settings))
+        .route("/v1/config/inventory", get(handlers::get_config_inventory))
+        .route("/v1/config/playbooks", get(handlers::get_config_playbooks))
         .route("/v1/stats", get(handlers::get_stats))
         .route("/v1/pops", get(handlers::list_pops))
         .route("/v1/audit", get(handlers::list_audit))
@@ -131,6 +135,7 @@ pub fn create_test_router(state: Arc<AppState>) -> Router {
     // Same routes structure as production but with MemoryStore
     let public_routes = Router::new()
         .route("/v1/health", get(handlers::health))
+        .route("/v1/health/detail", get(handlers::health_detail))
         .route("/v1/auth/login", post(handlers::login))
         .route("/metrics", get(handlers::metrics))
         .route("/openapi.json", get(openapi_json));
@@ -163,6 +168,9 @@ pub fn create_test_router(state: Arc<AppState>) -> Router {
             axum::routing::delete(handlers::remove_safelist),
         )
         .route("/v1/config/reload", post(handlers::reload_config))
+        .route("/v1/config/settings", get(handlers::get_config_settings))
+        .route("/v1/config/inventory", get(handlers::get_config_inventory))
+        .route("/v1/config/playbooks", get(handlers::get_config_playbooks))
         .route("/v1/stats", get(handlers::get_stats))
         .route("/v1/pops", get(handlers::list_pops))
         .route("/v1/audit", get(handlers::list_audit))

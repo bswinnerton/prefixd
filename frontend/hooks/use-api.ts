@@ -9,6 +9,7 @@ const MOCK_MODE = process.env.NEXT_PUBLIC_MOCK_MODE === "true"
 
 // Mock fetchers that return static data
 const mockFetchers = {
+  publicHealth: async () => mockData.mockPublicHealth,
   health: async () => mockData.mockHealth,
   stats: async () => mockData.mockStats,
   mitigations: async () => mockData.mockMitigations,
@@ -27,7 +28,18 @@ const mockFetchers = {
 export function useHealth() {
   return useSWR(
     "health",
-    MOCK_MODE ? mockFetchers.health : api.getHealth,
+    MOCK_MODE ? mockFetchers.publicHealth : api.getHealth,
+    {
+      refreshInterval: MOCK_MODE ? 0 : REFRESH_INTERVAL,
+      revalidateOnFocus: !MOCK_MODE,
+    }
+  )
+}
+
+export function useHealthDetail() {
+  return useSWR(
+    "health-detail",
+    MOCK_MODE ? mockFetchers.health : api.getHealthDetail,
     {
       refreshInterval: MOCK_MODE ? 0 : REFRESH_INTERVAL,
       revalidateOnFocus: !MOCK_MODE,
@@ -161,8 +173,33 @@ export function useOperators() {
     "operators",
     MOCK_MODE ? async () => [] : api.getOperators,
     {
-      refreshInterval: 0, // Don't auto-refresh operator list
+      refreshInterval: 0,
       revalidateOnFocus: !MOCK_MODE,
     }
+  )
+}
+
+// Config endpoints (read-only, no auto-refresh)
+export function useConfigSettings() {
+  return useSWR(
+    "config-settings",
+    MOCK_MODE ? async () => ({ settings: {}, loaded_at: "" }) : api.getConfigSettings,
+    { refreshInterval: 0, revalidateOnFocus: !MOCK_MODE }
+  )
+}
+
+export function useConfigInventory() {
+  return useSWR(
+    "config-inventory",
+    MOCK_MODE ? async () => ({ customers: [], total_customers: 0, total_services: 0, total_assets: 0, loaded_at: "" }) : api.getConfigInventory,
+    { refreshInterval: 0, revalidateOnFocus: !MOCK_MODE }
+  )
+}
+
+export function useConfigPlaybooks() {
+  return useSWR(
+    "config-playbooks",
+    MOCK_MODE ? async () => ({ playbooks: [], total_playbooks: 0, loaded_at: "" }) : api.getConfigPlaybooks,
+    { refreshInterval: 0, revalidateOnFocus: !MOCK_MODE }
   )
 }

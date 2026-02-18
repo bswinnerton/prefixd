@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ConnectionStatus } from "@/components/connection-status"
 import { UserMenu } from "@/components/user-menu"
 import { useWebSocket } from "@/hooks/use-websocket"
-import { usePops, useHealth } from "@/hooks/use-api"
+import { usePops, useHealthDetail } from "@/hooks/use-api"
 import { useTheme } from "next-themes"
 
 interface TopBarProps {
@@ -22,7 +22,7 @@ export function TopBar({ onMenuClick, onSearchClick }: TopBarProps) {
   const { theme, setTheme } = useTheme()
 
   useEffect(() => { setMounted(true) }, [])
-  const { data: health } = useHealth()
+  const { data: health } = useHealthDetail()
 
   const currentPop = health?.pop?.toUpperCase()
   const pops = popsData?.map((p) => p.pop.toUpperCase()) ?? (currentPop ? [currentPop] : [])

@@ -5,6 +5,55 @@ All notable changes to prefixd will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Config Page** - Read-only view of running daemon configuration
+  - Settings tab with allowlist-redacted JSON view (sensitive fields never exposed)
+  - Playbooks tab with escalation step visualization (action, rate, TTL, confidence thresholds)
+  - Hot-reload button (triggers `POST /v1/config/reload`) with auto-clearing feedback
+  - Gated behind `canReloadConfig` permission for admin users
+- **Inventory Page** - Searchable customer/service/IP asset browser
+  - Expandable customer cards with policy profile badges
+  - Service listings with allowed port display (TCP/UDP)
+  - Search covers customer ID, name, policy profile, service, IP, role, and port numbers
+  - Stats bar showing total customers, services, and IPs
+- **`GET /v1/health/detail`** - Authenticated health endpoint with full operational data
+  - BGP session states, database status, GoBGP connectivity, uptime, active mitigations
+  - Replaces the old public health endpoint for operational monitoring
+- **`GET /v1/config/settings`** - Running config with allowlist redaction
+- **`GET /v1/config/inventory`** - Customer/service/IP data with load timestamps
+- **`GET /v1/config/playbooks`** - Playbook definitions with load timestamps
+- **Auth-disabled indicator** - Sidebar shows "Auth disabled" badge when running with `auth: none`
+- **Session expiry handling** - 401 responses trigger automatic redirect to login page
+  - Debounced `prefixd:auth-expired` event (2s window) prevents redirect storms
+  - SWR retries suppressed on 401 to avoid noisy retry loops
+
+### Changed
+
+- **Route guard architecture** - Auth guard moved from `DashboardLayout` component to `app/(dashboard)/layout.tsx` route group
+  - All dashboard pages automatically protected; new pages added to the group are guarded by default
+  - Login page remains outside the guard at `app/login/page.tsx`
+- **Public health endpoint slimmed** - `GET /v1/health` now returns only `{status, version, auth_mode}`
+  - No database or GoBGP calls (lightweight liveness check)
+  - Reduces unauthenticated attack surface
+- **Settings redaction switched to allowlist** - Only explicitly safe fields are exposed
+  - Previously used denylist (new fields leaked by default)
+  - Omits: TLS paths, LDAP/RADIUS configs, bearer token env vars, BGP passwords, gRPC endpoints, router ID, audit log path, safelist prefixes
+- **`loaded_at` timestamps are now accurate** - Settings shows startup time, inventory/playbooks show actual load/reload time
+  - Previously showed request time (`Utc::now()`) which was misleading
+- **Login page redirects** - Already-authenticated users and auth:none users redirected to `/` instead of showing login form
+- **prefixdctl** - `status` and `peers` commands now use `/v1/health/detail`
+- **RwLock guards dropped early** - Inventory and playbooks handlers clone data and release locks before building JSON response
+
+### Security
+
+- Allowlist redaction prevents accidental exposure of new sensitive config fields
+- Public health endpoint no longer exposes BGP peer IPs, database status, or mitigation counts
+- Deny-by-default permission model: no permissions granted until both auth and health state resolve
+- Frontend permissions derived from backend `auth_mode` field (not inferred from missing session)
+
 ## [0.8.2] - 2026-02-18
 
 ### Fixed

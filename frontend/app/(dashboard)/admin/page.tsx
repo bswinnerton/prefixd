@@ -18,7 +18,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { useHealth, useSafelist, useStats, usePops, useOperators } from "@/hooks/use-api"
+import { useHealthDetail, useSafelist, useStats, usePops, useOperators } from "@/hooks/use-api"
 import { addSafelist, removeSafelist, reloadConfig, createOperator, deleteOperator, changePassword, type OperatorInfo } from "@/lib/api"
 import { usePermissions } from "@/hooks/use-permissions"
 import { useAuth } from "@/hooks/use-auth"
@@ -109,7 +109,7 @@ export default function AdminPage() {
   const { mutate } = useSWRConfig()
   const { operator } = useAuth()
   const permissions = usePermissions()
-  const { data: health, error: healthError, isLoading: healthLoading } = useHealth()
+  const { data: health, error: healthError, isLoading: healthLoading } = useHealthDetail()
   const { data: stats, error: statsError, isLoading: statsLoading } = useStats()
   const { data: safelist, error: safelistError, isLoading: safelistLoading, mutate: mutateSafelist } = useSafelist()
   const { data: pops, error: popsError, isLoading: popsLoading } = usePops()

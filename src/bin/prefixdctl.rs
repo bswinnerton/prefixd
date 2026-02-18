@@ -323,7 +323,7 @@ async fn main() -> ExitCode {
 }
 
 async fn cmd_status(client: &Client, format: OutputFormat) -> Result<(), String> {
-    let health: HealthResponse = client.get("/v1/health").await?;
+    let health: HealthResponse = client.get("/v1/health/detail").await?;
 
     match format {
         OutputFormat::Json => {
@@ -540,7 +540,7 @@ async fn cmd_safelist(
 }
 
 async fn cmd_peers(client: &Client, format: OutputFormat) -> Result<(), String> {
-    let health: HealthResponse = client.get("/v1/health").await?;
+    let health: HealthResponse = client.get("/v1/health/detail").await?;
 
     match format {
         OutputFormat::Json => {

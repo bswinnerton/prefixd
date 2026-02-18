@@ -548,10 +548,15 @@ groups:
 ### Health Checks
 
 ```bash
-# API health
+# Liveness check (public, lightweight - no DB/GoBGP calls)
 curl http://localhost/v1/health
+# Returns: {"status":"ok","version":"0.8.2","auth_mode":"none"}
 
-# CLI status
+# Full operational health (authenticated)
+curl -H "Authorization: Bearer $TOKEN" http://localhost/v1/health/detail
+# Returns: BGP sessions, database status, GoBGP connectivity, uptime, active mitigations
+
+# CLI status (uses /v1/health/detail)
 prefixdctl status
 prefixdctl health
 prefixdctl peers

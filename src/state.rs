@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,6 +25,10 @@ pub struct AppState {
     pub bearer_token: Option<String>,
     /// Server start time for uptime calculation
     pub start_time: Instant,
+    /// Timestamp when inventory was last loaded/reloaded
+    pub inventory_loaded_at: RwLock<DateTime<Utc>>,
+    /// Timestamp when playbooks were last loaded/reloaded
+    pub playbooks_loaded_at: RwLock<DateTime<Utc>>,
     config_dir: PathBuf,
     shutting_down: AtomicBool,
 }
@@ -75,6 +80,8 @@ impl AppState {
             ws_broadcast,
             bearer_token,
             start_time: Instant::now(),
+            inventory_loaded_at: RwLock::new(Utc::now()),
+            playbooks_loaded_at: RwLock::new(Utc::now()),
             config_dir,
             shutting_down: AtomicBool::new(false),
         }))
@@ -107,6 +114,7 @@ impl AppState {
             let new_inventory = Inventory::load(&inventory_path)
                 .map_err(|e| PrefixdError::Config(format!("inventory: {}", e)))?;
             *self.inventory.write().await = new_inventory;
+            *self.inventory_loaded_at.write().await = Utc::now();
             reloaded.push("inventory".to_string());
             tracing::info!("reloaded inventory.yaml");
         }
@@ -117,6 +125,7 @@ impl AppState {
             let new_playbooks = Playbooks::load(&playbooks_path)
                 .map_err(|e| PrefixdError::Config(format!("playbooks: {}", e)))?;
             *self.playbooks.write().await = new_playbooks;
+            *self.playbooks_loaded_at.write().await = Utc::now();
             reloaded.push("playbooks".to_string());
             tracing::info!("reloaded playbooks.yaml");
         }

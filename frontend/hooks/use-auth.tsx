@@ -31,6 +31,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refresh().finally(() => setIsLoading(false))
   }, [refresh])
 
+  // Clear operator on 401 from any API call (session expired)
+  useEffect(() => {
+    const handleAuthExpired = () => setOperator(null)
+    window.addEventListener("prefixd:auth-expired", handleAuthExpired)
+    return () => window.removeEventListener("prefixd:auth-expired", handleAuthExpired)
+  }, [])
+
   const login = useCallback(async (credentials: LoginRequest) => {
     const user = await apiLogin(credentials)
     setOperator(user)

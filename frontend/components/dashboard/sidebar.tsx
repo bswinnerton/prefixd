@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Shield, Activity, FileText, Settings, X, ChevronsLeft, ChevronsRight } from "lucide-react"
+import { LayoutDashboard, Shield, Activity, FileText, Settings, X, ChevronsLeft, ChevronsRight, FileCode, Database } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { usePermissions } from "@/hooks/use-permissions"
 
@@ -11,7 +11,9 @@ const navItems = [
   { href: "/", label: "Overview", icon: LayoutDashboard, adminOnly: false },
   { href: "/mitigations", label: "Mitigations", icon: Shield, adminOnly: false },
   { href: "/events", label: "Events", icon: Activity, adminOnly: false },
+  { href: "/inventory", label: "Inventory", icon: Database, adminOnly: false },
   { href: "/audit-log", label: "Audit Log", icon: FileText, adminOnly: false },
+  { href: "/config", label: "Config", icon: FileCode, adminOnly: false },
   { href: "/admin", label: "Admin", icon: Settings, adminOnly: true },
 ]
 
@@ -112,6 +114,12 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false, onToggleCollapse
               )
             })}
           </nav>
+
+          {permissions.authDisabled && !isCollapsed && (
+            <div className="mx-2 mb-1 px-2 py-1 text-[10px] font-mono text-muted-foreground bg-muted/50 border border-border">
+              Auth disabled
+            </div>
+          )}
 
           <div className={cn("hidden lg:flex border-t border-border p-2", isCollapsed && "justify-center")}>
             <button

@@ -7,7 +7,6 @@ import { QuotaGauge } from "@/components/dashboard/quota-gauge"
 import { ActivityFeedLive } from "@/components/dashboard/activity-feed-live"
 import { VectorBreakdownChart } from "@/components/dashboard/vector-breakdown-chart"
 import { ActiveMitigationsMini } from "@/components/dashboard/active-mitigations-mini"
-import { RequireAuth } from "@/components/require-auth"
 import { useStats, useMitigations } from "@/hooks/use-api"
 import { useWebSocket } from "@/hooks/use-websocket"
 
@@ -23,7 +22,6 @@ export default function OverviewPage() {
   const discardActions = activeMitigations.filter((m) => m.action_type === "discard")
 
   return (
-    <RequireAuth>
       <DashboardLayout>
         <div className="space-y-4">
           <BgpSessionStatus />
@@ -59,6 +57,5 @@ export default function OverviewPage() {
           </div>
         </div>
       </DashboardLayout>
-    </RequireAuth>
   )
 }

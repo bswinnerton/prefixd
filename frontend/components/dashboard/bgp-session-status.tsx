@@ -1,12 +1,12 @@
 "use client"
 
 import { motion } from "motion/react"
-import { useHealth, usePops } from "@/hooks/use-api"
+import { useHealthDetail, usePops } from "@/hooks/use-api"
 import { cn } from "@/lib/utils"
 import { useReducedMotion } from "@/hooks/use-reduced-motion"
 
 export function BgpSessionStatus() {
-  const { data: health, error } = useHealth()
+  const { data: health, error } = useHealthDetail()
   const { data: pops } = usePops()
   const reducedMotion = useReducedMotion()
 

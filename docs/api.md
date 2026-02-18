@@ -471,28 +471,57 @@ Admins can change any password. Non-admins can only change their own.
 
 ## Operational Endpoints
 
-### Health Check
+### Health Check (Public)
 
 ```http
 GET /v1/health
 ```
+
+Lightweight liveness check. No authentication required. Does not query database or GoBGP.
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "version": "0.8.2",
+  "auth_mode": "none"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `status` | Always `"ok"` if the daemon is running |
+| `version` | Daemon version |
+| `auth_mode` | Authentication mode: `none`, `bearer`, `credentials`, `mtls` |
+
+### Health Detail (Authenticated)
+
+```http
+GET /v1/health/detail
+Authorization: Bearer <token>
+```
+
+Full operational health. Requires authentication.
 
 **Response:**
 
 ```json
 {
   "status": "healthy",
-  "version": "0.8.0",
+  "version": "0.8.2",
   "pop": "iad1",
   "uptime_seconds": 86400,
-  "database": {
-    "status": "connected",
-    "latency_ms": 2
+  "bgp_sessions": {
+    "172.30.30.3": "established",
+    "172.30.31.3": "active"
   },
+  "active_mitigations": 12,
+  "database": "connected",
   "gobgp": {
-    "status": "connected",
-    "peers_established": 2
-  }
+    "status": "connected"
+  },
+  "auth_mode": "none"
 }
 ```
 
@@ -500,7 +529,8 @@ GET /v1/health
 |--------|---------|
 | `healthy` | All systems operational |
 | `degraded` | Partial functionality (DB or GoBGP issues) |
-| `unhealthy` | Critical failure |
+
+> **Migration note (v0.8.2 → v0.8.3):** The public `GET /v1/health` endpoint no longer returns BGP sessions, database status, or operational details. Monitoring systems and scripts that parse these fields must switch to `GET /v1/health/detail` with authentication. See [ADR 015](adr/015-health-endpoint-split.md).
 
 ### Stats
 
