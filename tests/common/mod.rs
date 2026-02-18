@@ -155,6 +155,7 @@ pub fn test_settings() -> Settings {
             },
             rate_limit: RateLimitConfig::default(),
             tls: None,
+            cors_origin: None,
         },
         bgp: BgpConfig {
             mode: BgpMode::Mock,
