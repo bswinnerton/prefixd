@@ -9,11 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Dashboard POP Selector** - POP dropdown in TopBar now loads dynamically from the backend API
+- **Dashboard BGP Status** - Health indicator now checks actual BGP peer session state (`established`) instead of just GoBGP gRPC connectivity (contributed by @bswinnerton)
+- **Dashboard POP Selector** - POP dropdown in TopBar now loads dynamically from the backend API (contributed by @bswinnerton)
   - Replaced hardcoded POP list with `usePops()` and `useHealth()` hooks
   - Current POP from health endpoint used as default selection
-- **`GET /v1/pops` Endpoint** - Current instance POP now always included in response
+- **`GET /v1/pops` Endpoint** - Current instance POP now always included in response (contributed by @bswinnerton)
   - Newly deployed POPs with no mitigations are no longer invisible to the API
+- **Lab Setup** - Fixed unreliable lab networking and stale instructions
+  - FRR lab now assigns deterministic IP to GoBGP (`--ip 172.30.30.10`)
+  - Fixed FRR bgpd.conf peer address to match
+  - Fixed stale `gobgp neighbor add` comment in cJunos lab (neighbor is pre-configured)
+  - Removed orphaned `gobgp-cjunos.conf` (wrong AS/IPs, not referenced)
+  - Fixed vJunos comment: works on AMD bare metal too, issue is nested virt not CPU vendor
 
 ### Added
 
@@ -25,12 +32,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Documented vendor quirks: FlowSpec-only AFI-SAFI required, FXP0ADDR token, BGP license warning
   - Updated lab/README.md with cJunos quick start and troubleshooting
   - Added cJunosEvolved neighbor config to configs/gobgp.conf
+- **Lab Test Script** - `lab/test-flowspec.sh` for automated end-to-end FlowSpec verification
+  - Checks prefixd health, GoBGP, BGP neighbors, sends test event, verifies RIB
+  - Optional `--withdraw` flag to test full announce/withdraw lifecycle
+- **WebSocket Build Arg** - `NEXT_PUBLIC_PREFIXD_WS` can be set at Docker build time for remote deployments (contributed by @bswinnerton)
+- **Favicon** - Replaced Vercel placeholder with prefixd shield icon (dark/light mode PNGs + SVG)
 
 ### Changed
 
 - Lab documentation rewritten to reflect cJunos as recommended Juniper test option
 - vJunos-router documented as bare-metal only (cannot run in VMs per Juniper docs)
 - Nokia SR Linux confirmed as lacking FlowSpec support (SR OS only)
+- Removed Vercel Analytics (`@vercel/analytics`) - self-hosted tool shouldn't phone home
+- Removed duplicate lowercase PR template (case collision on macOS/Windows)
+
+### Security
+
+- Fixed `bytes` integer overflow in `BytesMut::reserve` (RUSTSEC-2026-0007, updated 1.11.0 → 1.11.1)
+- Fixed `time` crate DoS via stack exhaustion (RUSTSEC-2026-0009, updated 0.3.45 → 0.3.47)
 
 ## [0.8.1] - 2026-02-01
 
