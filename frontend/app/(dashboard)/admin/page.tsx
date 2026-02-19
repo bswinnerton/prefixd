@@ -38,6 +38,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Shield,
   Server,
@@ -236,198 +237,219 @@ export default function AdminPage() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        {/* Actions */}
-        <div>
-          <h2 className="text-lg font-semibold mb-3 flex items-center gap-2 text-balance">
-            <RotateCcw className="size-5" />
-            Actions
-          </h2>
-          <Card className="bg-card border-border">
-            <CardContent className="pt-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Reload Configuration</p>
-                  <p className="text-xs text-muted-foreground text-pretty">
-                    Hot-reload inventory and playbooks without restarting the daemon
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleReloadConfig}
-                  disabled={isReloading}
-                  className={cn(
-                    "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/20 dark:hover:text-accent-foreground",
-                    reloadStatus === "success" && "border-green-500 text-green-500 hover:text-green-500 dark:hover:text-green-400",
-                    reloadStatus === "error" && "border-destructive text-destructive hover:text-destructive dark:hover:text-red-400"
-                  )}
-                >
-                  {isReloading ? (
-                    <RefreshCw className="size-4 animate-spin" />
-                  ) : reloadStatus === "success" ? (
-                    <>
-                      <CheckCircle className="size-4 mr-1" />
-                      Reloaded
-                    </>
-                  ) : reloadStatus === "error" ? (
-                    <>
-                      <XCircle className="size-4 mr-1" />
-                      Failed
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="size-4 mr-1" />
-                      Reload
-                    </>
-                  )}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* System Status */}
-        <div>
-          <h2 className="text-lg font-semibold mb-3 flex items-center gap-2 text-balance">
-            <Server className="size-5" />
-            System Status
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {healthLoading ? (
-              <LoadingCard title="Daemon Status" />
-            ) : healthError ? (
-              <ErrorCard title="Daemon Status" error="Failed to connect" />
-            ) : health ? (
-              <Card className="bg-card border-border">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-foreground text-sm">Daemon Status</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground text-sm">Status</span>
-                    <Badge variant={health.status === "ok" || health.status === "degraded" ? "default" : "destructive"}>
-                      {health.status}
-                    </Badge>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground text-sm">Version</span>
-                    <span className="font-mono text-sm tabular-nums">{health.version || "dev"}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground text-sm">POP</span>
-                    <span className="font-mono text-sm">{health.pop}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground text-sm">Uptime</span>
-                    <span className="font-mono text-sm tabular-nums flex items-center gap-1">
-                      <Clock className="size-3" />
-                      {formatUptime(health.uptime_seconds)}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : null}
-
-            {healthLoading ? (
-              <LoadingCard title="BGP Peers" />
-            ) : healthError ? (
-              <ErrorCard title="BGP Peers" error="Failed to connect" />
-            ) : health ? (
-              <Card className="bg-card border-border">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-foreground text-sm">BGP Peers</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {Object.keys(health.bgp_sessions).length > 0 ? (
-                    <div className="space-y-2">
-                      {Object.entries(health.bgp_sessions).map(([peer, state]) => (
-                        <div key={peer} className="flex items-center justify-between">
-                          <span className="text-sm font-mono text-foreground">{peer}</span>
-                          <Badge variant={state === "established" ? "default" : "destructive"}>
-                            {state}
-                          </Badge>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No BGP peers configured</p>
-                  )}
-                  <p className="text-xs text-muted-foreground text-pretty">
-                    FlowSpec announcements are {health.bgp_session_up ? "active" : "paused"}
-                  </p>
-                </CardContent>
-              </Card>
-            ) : null}
-
-            {statsLoading ? (
-              <LoadingCard title="Current Usage" />
-            ) : statsError ? (
-              <ErrorCard title="Current Usage" error="Failed to load" />
-            ) : stats ? (
-              <Card className="bg-card border-border">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-foreground text-sm">Current Usage</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground text-sm">Active Mitigations</span>
-                    <span className="font-mono text-sm tabular-nums">{stats.total_active}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground text-sm">Total Mitigations</span>
-                    <span className="font-mono text-sm tabular-nums">{stats.total_mitigations}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground text-sm">Total Events</span>
-                    <span className="font-mono text-sm tabular-nums">{stats.total_events}</span>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : null}
-          </div>
-        </div>
-
-        {/* POPs */}
-        <div>
-          <h2 className="text-lg font-semibold mb-3 flex items-center gap-2 text-balance">
-            <Globe className="size-5" />
-            Points of Presence
-          </h2>
-          {popsLoading ? (
-            <LoadingCard title="POPs" />
-          ) : popsError ? (
-            <ErrorCard title="POPs" error="Failed to load POPs" />
-          ) : pops && pops.length > 0 ? (
-            <Card className="bg-card border-border">
-              <CardContent className="pt-4">
-                <div className="flex flex-wrap gap-2">
-                  {pops.map((pop) => (
-                    <Badge key={pop.pop} variant="outline" className="font-mono">
-                      {pop.pop}
-                      {pop.active_mitigations > 0 && (
-                        <span className="ml-2 text-primary tabular-nums">{pop.active_mitigations} active</span>
-                      )}
-                    </Badge>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card className="bg-card border-border">
-              <CardContent className="pt-4">
-                <p className="text-sm text-muted-foreground">No POPs configured</p>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-
-        {/* Safelist */}
-        <div>
-          <h2 className="text-lg font-semibold mb-3 flex items-center gap-2 text-balance">
-            <Shield className="size-5" />
+      <Tabs defaultValue="status">
+        <TabsList className="font-mono">
+          <TabsTrigger value="status" className="text-xs">
+            <Server className="h-3 w-3 mr-1.5" />
+            Status
+          </TabsTrigger>
+          <TabsTrigger value="safelist" className="text-xs">
+            <Shield className="h-3 w-3 mr-1.5" />
             Safelist
-          </h2>
+            {safelist && safelist.length > 0 && (
+              <Badge variant="secondary" className="ml-1.5 text-[10px] px-1 py-0">
+                {safelist.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+          {permissions.canManageUsers && (
+            <TabsTrigger value="users" className="text-xs">
+              <Users className="h-3 w-3 mr-1.5" />
+              Users
+            </TabsTrigger>
+          )}
+        </TabsList>
+
+        {/* Status Tab */}
+        <TabsContent value="status" className="mt-4 space-y-6">
+          {/* Actions */}
+          <div>
+            <h2 className="text-lg font-semibold mb-3 flex items-center gap-2 text-balance">
+              <RotateCcw className="size-5" />
+              Actions
+            </h2>
+            <Card className="bg-card border-border">
+              <CardContent className="pt-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Reload Configuration</p>
+                    <p className="text-xs text-muted-foreground text-pretty">
+                      Hot-reload inventory and playbooks without restarting the daemon
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleReloadConfig}
+                    disabled={isReloading}
+                    className={cn(
+                      "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/20 dark:hover:text-accent-foreground",
+                      reloadStatus === "success" && "border-green-500 text-green-500 hover:text-green-500 dark:hover:text-green-400",
+                      reloadStatus === "error" && "border-destructive text-destructive hover:text-destructive dark:hover:text-red-400"
+                    )}
+                  >
+                    {isReloading ? (
+                      <RefreshCw className="size-4 animate-spin" />
+                    ) : reloadStatus === "success" ? (
+                      <>
+                        <CheckCircle className="size-4 mr-1" />
+                        Reloaded
+                      </>
+                    ) : reloadStatus === "error" ? (
+                      <>
+                        <XCircle className="size-4 mr-1" />
+                        Failed
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="size-4 mr-1" />
+                        Reload
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* System Status */}
+          <div>
+            <h2 className="text-lg font-semibold mb-3 flex items-center gap-2 text-balance">
+              <Server className="size-5" />
+              System Status
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {healthLoading ? (
+                <LoadingCard title="Daemon Status" />
+              ) : healthError ? (
+                <ErrorCard title="Daemon Status" error="Failed to connect" />
+              ) : health ? (
+                <Card className="bg-card border-border">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-foreground text-sm">Daemon Status</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground text-sm">Status</span>
+                      <Badge variant={health.status === "ok" || health.status === "degraded" ? "default" : "destructive"}>
+                        {health.status}
+                      </Badge>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground text-sm">Version</span>
+                      <span className="font-mono text-sm tabular-nums">{health.version || "dev"}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground text-sm">POP</span>
+                      <span className="font-mono text-sm">{health.pop}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground text-sm">Uptime</span>
+                      <span className="font-mono text-sm tabular-nums flex items-center gap-1">
+                        <Clock className="size-3" />
+                        {formatUptime(health.uptime_seconds)}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {healthLoading ? (
+                <LoadingCard title="BGP Peers" />
+              ) : healthError ? (
+                <ErrorCard title="BGP Peers" error="Failed to connect" />
+              ) : health ? (
+                <Card className="bg-card border-border">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-foreground text-sm">BGP Peers</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {Object.keys(health.bgp_sessions).length > 0 ? (
+                      <div className="space-y-2">
+                        {Object.entries(health.bgp_sessions).map(([peer, state]) => (
+                          <div key={peer} className="flex items-center justify-between">
+                            <span className="text-sm font-mono text-foreground">{peer}</span>
+                            <Badge variant={state === "established" ? "default" : "destructive"}>
+                              {state}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No BGP peers configured</p>
+                    )}
+                    <p className="text-xs text-muted-foreground text-pretty">
+                      FlowSpec announcements are {health.bgp_session_up ? "active" : "paused"}
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {statsLoading ? (
+                <LoadingCard title="Current Usage" />
+              ) : statsError ? (
+                <ErrorCard title="Current Usage" error="Failed to load" />
+              ) : stats ? (
+                <Card className="bg-card border-border">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-foreground text-sm">Current Usage</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground text-sm">Active Mitigations</span>
+                      <span className="font-mono text-sm tabular-nums">{stats.total_active}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground text-sm">Total Mitigations</span>
+                      <span className="font-mono text-sm tabular-nums">{stats.total_mitigations}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground text-sm">Total Events</span>
+                      <span className="font-mono text-sm tabular-nums">{stats.total_events}</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
+            </div>
+          </div>
+
+          {/* POPs */}
+          <div>
+            <h2 className="text-lg font-semibold mb-3 flex items-center gap-2 text-balance">
+              <Globe className="size-5" />
+              Points of Presence
+            </h2>
+            {popsLoading ? (
+              <LoadingCard title="POPs" />
+            ) : popsError ? (
+              <ErrorCard title="POPs" error="Failed to load POPs" />
+            ) : pops && pops.length > 0 ? (
+              <Card className="bg-card border-border">
+                <CardContent className="pt-4">
+                  <div className="flex flex-wrap gap-2">
+                    {pops.map((pop) => (
+                      <Badge key={pop.pop} variant="outline" className="font-mono">
+                        {pop.pop}
+                        {pop.active_mitigations > 0 && (
+                          <span className="ml-2 text-primary tabular-nums">{pop.active_mitigations} active</span>
+                        )}
+                      </Badge>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card className="bg-card border-border">
+                <CardContent className="pt-4">
+                  <p className="text-sm text-muted-foreground">No POPs configured</p>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* Safelist Tab */}
+        <TabsContent value="safelist" className="mt-4">
           <Card className="bg-card border-border">
             <CardHeader className="pb-2">
               <CardDescription className="text-pretty">
@@ -545,15 +567,11 @@ export default function AdminPage() {
               )}
             </CardContent>
           </Card>
-        </div>
+        </TabsContent>
 
-        {/* User Management (admin only) */}
+        {/* Users Tab (admin only) */}
         {permissions.canManageUsers && (
-          <div>
-            <h2 className="text-lg font-semibold mb-3 flex items-center gap-2 text-balance">
-              <Users className="size-5" />
-              User Management
-            </h2>
+          <TabsContent value="users" className="mt-4">
             <Card className="bg-card border-border">
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
@@ -726,53 +744,53 @@ export default function AdminPage() {
                 )}
               </CardContent>
             </Card>
-
-            {/* Change Password Dialog */}
-            <Dialog open={!!passwordTarget} onOpenChange={(open) => !open && setPasswordTarget(null)}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Change Password</DialogTitle>
-                  <DialogDescription>
-                    Set a new password for <span className="font-medium">{passwordTarget?.username}</span>.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">New Password</label>
-                    <Input
-                      type="password"
-                      placeholder="minimum 8 characters"
-                      value={newUserPassword}
-                      onChange={(e) => setNewUserPassword(e.target.value)}
-                    />
-                  </div>
-                  {userError && (
-                    <div className="flex items-center gap-2 text-destructive text-sm">
-                      <AlertCircle className="size-4" />
-                      {userError}
-                    </div>
-                  )}
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setPasswordTarget(null)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={handleChangePassword}
-                    disabled={newUserPassword.length < 8 || isChangingPassword}
-                  >
-                    {isChangingPassword ? (
-                      <RefreshCw className="size-4 animate-spin" />
-                    ) : (
-                      "Change Password"
-                    )}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </div>
+          </TabsContent>
         )}
-      </div>
+      </Tabs>
+
+      {/* Change Password Dialog (outside tabs - floating dialog) */}
+      <Dialog open={!!passwordTarget} onOpenChange={(open) => !open && setPasswordTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Change Password</DialogTitle>
+            <DialogDescription>
+              Set a new password for <span className="font-medium">{passwordTarget?.username}</span>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">New Password</label>
+              <Input
+                type="password"
+                placeholder="minimum 8 characters"
+                value={newUserPassword}
+                onChange={(e) => setNewUserPassword(e.target.value)}
+              />
+            </div>
+            {userError && (
+              <div className="flex items-center gap-2 text-destructive text-sm">
+                <AlertCircle className="size-4" />
+                {userError}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPasswordTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleChangePassword}
+              disabled={newUserPassword.length < 8 || isChangingPassword}
+            >
+              {isChangingPassword ? (
+                <RefreshCw className="size-4 animate-spin" />
+              ) : (
+                "Change Password"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   )
 }

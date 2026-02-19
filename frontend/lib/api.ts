@@ -202,6 +202,31 @@ export async function withdrawMitigation(
   })
 }
 
+export interface IngestEventRequest {
+  victim_ip: string
+  vector: string
+  source: string
+  timestamp: string
+  bps?: number | null
+  pps?: number | null
+  top_dst_ports?: number[]
+  confidence?: number | null
+  action?: string
+}
+
+export interface EventResponse {
+  event_id: string
+  mitigation_id: string | null
+  status: string
+}
+
+export async function ingestEvent(input: IngestEventRequest): Promise<EventResponse> {
+  return fetchApi<EventResponse>("/v1/events", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+}
+
 export async function getEvents(params?: {
   limit?: number
   offset?: number

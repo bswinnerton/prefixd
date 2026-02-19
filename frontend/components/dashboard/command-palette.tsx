@@ -13,7 +13,7 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command"
-import { LayoutDashboard, Shield, Activity, FileText, Settings, Zap, Clock, XCircle, Database, FileCode } from "lucide-react"
+import { LayoutDashboard, Shield, ShieldAlert, Activity, FileText, Settings, Zap, Clock, XCircle, Database, FileCode } from "lucide-react"
 import { useMitigations, useEvents } from "@/hooks/use-api"
 import type { Mitigation } from "@/lib/api"
 
@@ -162,6 +162,13 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
           <CommandSeparator />
           <CommandGroup heading="Quick Actions">
+            <CommandItem
+              onSelect={() => runCommand(() => router.push("/mitigations/create"))}
+              className="font-mono text-xs"
+            >
+              <ShieldAlert className="mr-2 h-3 w-3 text-primary" />
+              <span>Mitigate Now</span>
+            </CommandItem>
             <CommandItem
               onSelect={() => runCommand(() => router.push("/mitigations?status=active"))}
               className="font-mono text-xs"

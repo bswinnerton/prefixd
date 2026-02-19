@@ -61,9 +61,10 @@ See [CHANGELOG](CHANGELOG.md) for version history.
   - FlowSpec rule JSON preview and timeline (created → escalated → withdrawn/expired)
   - Embedded customer and service context looking up from inventory
   - Inline withdraw capabilities
-- [ ] **Manual mitigation/event creation** (P1 — "mitigate now" from UI)
-  - Form to submit `POST /v1/events` or `POST /v1/mitigations`
-  - Operator specifies destination IP, vector, action, TTL
+- [x] **Manual mitigation/event creation** (P1 — "mitigate now" from UI)
+  - Form at `/mitigations/create` submitting `POST /v1/events` with `action: "ban"`
+  - Fields: destination IP, vector, bps/pps, ports (max 8), confidence slider
+  - Permission-gated (operator + admin), "Mitigate Now" button in mitigations toolbar + command palette
 - [x] **Toast notifications from WebSocket feed** (P1 — Wanguard/Kentik have real-time alerts)
   - Surface WS events as toast notifications (new mitigation, escalation, expiry)
   - Refactored `use-websocket` into a `WebSocketProvider` Context to prevent duplicate connections
@@ -71,11 +72,11 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 - [ ] **Embedded time-series charts** (P2 — reduces context-switching to Grafana)
   - Mitigation count over time, events/sec on overview page
   - Query Prometheus or use internal metrics endpoint
-- [ ] **Filtering and pagination on list pages** (P1)
-  - Mitigations: filter by status, customer, destination IP, vector; paginate beyond 100
-  - Events: filter by vector, source, time range
-  - Audit log: filter by operator, action type, time range
-  - API already supports query params (`?status=active&customer=cust_123`)
+- [x] **Filtering and pagination on list pages** (P1 — client-side)
+  - Mitigations: status toggle pills, IP search, column sorting, 20/page pagination
+  - Events: source filter, vector filter, IP search, column sorting, 20/page pagination
+  - Audit log: action filter, actor filter, text search, column sorting, 20/page pagination
+  - Server-side cursor pagination tracked as future item
 - [ ] **Mitigation history per IP** (P2 — "what happened to this IP in the last 24h")
   - Timeline view: event → mitigation → escalation → expiry/withdraw
   - Searchable by destination IP, links to detail view
@@ -83,13 +84,12 @@ See [CHANGELOG](CHANGELOG.md) for version history.
   - Configure alert destinations (Slack, PagerDuty, generic webhook)
   - Test notification button
   - Requires backend `POST /v1/config/webhooks` endpoint
-- [ ] **Dark mode refinement** (P1 — audit all components for theme consistency)
-  - Verify all cards, badges, tables, dialogs render correctly in both themes
-  - Fix any hardcoded colors (e.g., hover states, status indicators)
-- [ ] **Page layout cleanup** (P1 — reduce complexity, improve navigation)
-  - Admin page: split into tabs or sub-pages (system status, safelist, user management, config reload)
-  - Evaluate other long pages for tabbed/modular layout
-  - Extract reusable table/card patterns into shared components
+- [x] **Dark mode refinement** (P1 — audited, no issues)
+  - All hardcoded colors are semantic accents (status green/red/yellow) with good contrast in both themes
+  - Admin reload button already has explicit `dark:` hover variants
+- [x] **Page layout cleanup** (P1 — admin tabs shipped)
+  - Admin page uses Tabs component: Status, Safelist, Users (conditionally rendered)
+  - Config page already tabbed: Settings, Playbooks
 - [ ] Config page (Phase 2)
   - Playbook editor (form-based, with validation)
   - Requires `PUT /v1/config/playbooks` endpoint, file persistence, rollback

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Manual mitigation creation** - "Mitigate Now" form at `/mitigations/create`
+  - Fields: destination IP, attack vector, traffic metrics (bps/pps), ports, confidence slider
+  - Submits `POST /v1/events` with `action: "ban"`, policy engine handles the rest
+  - Permission-gated (operator + admin only), accessible from mitigations toolbar and command palette
 - **Mitigation detail full-page view** - Dedicated drill-down page for mitigations (`/mitigations/{id}`) replacing the slide-over panel
   - Shows FlowSpec rule JSON preview and active configuration
   - Mitigation timeline visualizing Created → Escalated → Withdrawn/Expired events

@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react"
 import { useRouter } from "next/navigation"
-import { Eye, Search, ChevronDown, ChevronUp, Filter, RefreshCw, AlertCircle, XCircle } from "lucide-react"
+import { Eye, Search, ChevronDown, ChevronUp, Filter, RefreshCw, AlertCircle, XCircle, Plus } from "lucide-react"
 import { StatusBadge } from "@/components/dashboard/status-badge"
 import { ActionBadge } from "@/components/dashboard/action-badge"
 import { Button } from "@/components/ui/button"
@@ -197,6 +197,17 @@ export function MitigationsContentLive() {
               className="pl-9 h-10 bg-secondary border-border text-base font-mono"
             />
           </div>
+          {permissions.canWithdraw && (
+            <Button
+              variant="default"
+              size="sm"
+              className="h-10 shrink-0"
+              onClick={() => router.push("/mitigations/create")}
+            >
+              <Plus className="h-4 w-4 mr-1.5" />
+              <span className="hidden sm:inline">Mitigate Now</span>
+            </Button>
+          )}
           <Button
             variant="outline"
             size="icon"
