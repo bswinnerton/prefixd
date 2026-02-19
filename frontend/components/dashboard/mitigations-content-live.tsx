@@ -1,15 +1,32 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { Eye, Search, ChevronDown, ChevronUp, Filter, RefreshCw, AlertCircle } from "lucide-react"
+import { Eye, Search, ChevronDown, ChevronUp, Filter, RefreshCw, AlertCircle, XCircle } from "lucide-react"
 import { StatusBadge } from "@/components/dashboard/status-badge"
 import { ActionBadge } from "@/components/dashboard/action-badge"
 import { MitigationDetailPanel } from "@/components/dashboard/mitigation-detail-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { useMitigations } from "@/hooks/use-api"
-import type { Mitigation } from "@/lib/api"
+import { usePermissions } from "@/hooks/use-permissions"
+import { withdrawMitigation, type Mitigation } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type SortField = "status" | "victim_ip" | "vector" | "customer_id" | "created_at" | "expires_at"
@@ -61,6 +78,11 @@ export function MitigationsContentLive() {
   const [currentPage, setCurrentPage] = useState(1)
   const [showFilters, setShowFilters] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [withdrawTarget, setWithdrawTarget] = useState<Mitigation | null>(null)
+  const [withdrawReason, setWithdrawReason] = useState("")
+  const [isWithdrawing, setIsWithdrawing] = useState(false)
+  const [withdrawError, setWithdrawError] = useState<string | null>(null)
+  const permissions = usePermissions()
   const itemsPerPage = 20
 
   const { data: mitigations, error, isLoading, mutate } = useMitigations({
@@ -81,6 +103,22 @@ export function MitigationsContentLive() {
     } else {
       setSortField(field)
       setSortDirection("desc")
+    }
+  }
+
+  const handleWithdraw = async () => {
+    if (!withdrawTarget) return
+    setIsWithdrawing(true)
+    setWithdrawError(null)
+    try {
+      await withdrawMitigation(withdrawTarget.mitigation_id, withdrawReason || "Manual withdrawal", "dashboard")
+      setWithdrawTarget(null)
+      setWithdrawReason("")
+      mutate()
+    } catch (e) {
+      setWithdrawError(e instanceof Error ? e.message : "Failed to withdraw")
+    } finally {
+      setIsWithdrawing(false)
     }
   }
 
@@ -320,18 +358,44 @@ export function MitigationsContentLive() {
                           {expiresInfo.text}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setSelectedId(mitigation.mitigation_id)
-                            }}
-                            aria-label="View mitigation details"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center justify-center gap-1">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setSelectedId(mitigation.mitigation_id)
+                                  }}
+                                  aria-label="View mitigation details"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>View details</TooltipContent>
+                            </Tooltip>
+                            {permissions.canWithdraw && (mitigation.status === "active" || mitigation.status === "escalated") && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setWithdrawTarget(mitigation)
+                                    }}
+                                    aria-label="Withdraw mitigation"
+                                  >
+                                    <XCircle className="h-4 w-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Withdraw</TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     )
@@ -380,6 +444,43 @@ export function MitigationsContentLive() {
           onWithdraw={() => mutate()}
         />
       )}
+
+      {/* Inline Withdraw Dialog */}
+      <AlertDialog open={!!withdrawTarget} onOpenChange={(open) => { if (!open) { setWithdrawTarget(null); setWithdrawReason(""); setWithdrawError(null) } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Withdraw Mitigation</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will immediately withdraw the FlowSpec rule from all BGP peers.
+              Traffic to <span className="font-mono font-semibold">{withdrawTarget?.victim_ip}</span> will
+              no longer be filtered.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="py-4">
+            <Label htmlFor="withdraw-reason">Reason (optional)</Label>
+            <Input
+              id="withdraw-reason"
+              placeholder="e.g., False positive, attack subsided"
+              value={withdrawReason}
+              onChange={(e) => setWithdrawReason(e.target.value)}
+              className="mt-2"
+            />
+            {withdrawError && (
+              <p className="text-sm text-destructive mt-2">{withdrawError}</p>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isWithdrawing}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleWithdraw}
+              disabled={isWithdrawing}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isWithdrawing ? "Withdrawing..." : "Withdraw"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
