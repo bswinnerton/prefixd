@@ -9,6 +9,22 @@ This document provides context for AI agents working on prefixd.
 ## Architecture
 
 ```
+                    ┌─────────────┐
+                    │   nginx:80  │  ← single entrypoint
+                    └──────┬──────┘
+                     ╱            ╲
+          ┌─────────┘              └──────────┐
+          ▼                                   ▼
+   dashboard:3000                      prefixd:8080
+   (Next.js App Router)              (Rust/axum API)
+                                          │
+                          ┌───────────────┼───────────────┐
+                          ▼               ▼               ▼
+                   PostgreSQL:5432   GoBGP:50051    Prometheus:9090
+                   (state store)    (FlowSpec BGP)  (metrics)
+```
+
+```
 Detector → HTTP API → Policy Engine → Guardrails → FlowSpec Manager → GoBGP → Routers
                                            ↑
                                    Reconciliation Loop
@@ -20,19 +36,61 @@ Detector → HTTP API → Policy Engine → Guardrails → FlowSpec Manager → 
 
 ```
 src/
-├── api/           # HTTP handlers, auth, rate limiting
-├── bgp/           # FlowSpecAnnouncer trait, GoBGP client, mock
-├── config/        # Settings, Inventory, Playbooks (YAML parsing)
-├── db/            # PostgreSQL repository with sqlx + mock for testing
-├── domain/        # Core types: AttackEvent, Mitigation, FlowSpecRule
-├── guardrails/    # Validation, quotas, safelist protection
-├── observability/ # Tracing, Prometheus metrics
-├── policy/        # Policy engine, playbook evaluation
-├── scheduler/     # Reconciliation loop, TTL expiry
-├── error.rs       # PrefixdError enum with thiserror
-├── state.rs       # Arc<AppState> with shutdown coordination
-├── lib.rs         # Public module exports
-└── main.rs        # CLI, daemon startup
+├── api/
+│   ├── handlers.rs    # All HTTP handlers (health, events, mitigations, config, safelist, operators)
+│   ├── routes.rs      # Route definitions: public_routes(), session_routes(), api_routes(), common_layers()
+│   ├── openapi.rs     # utoipa OpenAPI spec registration
+│   └── metrics.rs     # HTTP request metrics middleware
+├── auth/              # AuthBackend (axum-login), session + bearer hybrid auth
+├── bgp/               # FlowSpecAnnouncer trait, GoBGP gRPC client, mock
+├── config/            # Settings, Inventory, Playbooks (YAML parsing)
+├── db/                # PostgreSQL repository with sqlx + MockRepository for testing
+├── domain/            # Core types: AttackEvent, Mitigation, FlowSpecRule
+├── guardrails/        # Validation, quotas, safelist protection
+├── observability/     # Tracing, Prometheus metrics
+├── policy/            # Policy engine, playbook evaluation
+├── scheduler/         # Reconciliation loop, TTL expiry
+├── error.rs           # PrefixdError enum with thiserror
+├── state.rs           # Arc<AppState> with shutdown coordination, RwLock for inventory/playbooks
+├── lib.rs             # Public module exports
+├── main.rs            # CLI, daemon startup
+└── bin/prefixdctl.rs  # CLI tool for controlling the daemon
+
+frontend/
+├── app/
+│   ├── (dashboard)/           # Route group with RequireAuth layout wrapper
+│   │   ├── layout.tsx         # Auth guard for all dashboard pages
+│   │   ├── page.tsx           # Overview
+│   │   ├── mitigations/       # Mitigations list with inline withdraw
+│   │   ├── events/            # Event log
+│   │   ├── inventory/         # Searchable customer/service/IP browser
+│   │   ├── audit-log/         # Audit trail
+│   │   ├── config/            # Settings (JSON) + Playbooks (cards) + hot-reload
+│   │   └── admin/             # System status, safelist CRUD, user management
+│   ├── login/                 # Login page (outside auth guard)
+│   ├── globals.css            # Light + dark theme variables
+│   └── layout.tsx             # Root layout with ThemeProvider
+├── components/
+│   ├── dashboard/             # Sidebar, top-bar, BGP status, command palette, detail panels
+│   ├── ui/                    # shadcn/ui components (button, card, dialog, alert-dialog, etc.)
+│   ├── require-auth.tsx       # Auth-mode-aware guard with deny-by-default
+│   └── swr-provider.tsx       # SWR config with 401 retry suppression
+├── hooks/
+│   ├── use-api.ts             # SWR hooks for all endpoints
+│   ├── use-auth.tsx           # AuthProvider with session expiry listener
+│   └── use-permissions.ts     # Role-based permissions (deny-by-default, settled flag)
+└── lib/
+    ├── api.ts                 # Fetch wrapper, all API functions, 401 debounce dispatch
+    └── mock-api-data.ts       # Mock data for development
+
+configs/                       # prefixd.yaml, inventory.yaml, playbooks.yaml, nginx.conf, gobgp.conf
+docs/
+├── api.md                     # Full API reference with examples
+├── deployment.md              # Docker + nginx deployment guide
+└── adr/                       # 15 Architecture Decision Records (001-015)
+grafana/                       # Prometheus config, Grafana provisioning, dashboard JSON
+tests/
+└── integration.rs             # 12 integration tests (health, config, mitigations, events)
 ```
 
 ## Key Design Decisions
@@ -43,6 +101,40 @@ src/
 4. **tonic** - gRPC client for GoBGP
 5. **Trait-based BGP abstraction** - `FlowSpecAnnouncer` with `GoBgpAnnouncer` and `MockAnnouncer`
 6. **Fail-open** - If prefixd dies, mitigations expire via TTL (no permanent rules)
+7. **Allowlist config redaction** - Only explicitly safe fields exposed via API (ADR 014)
+8. **Health endpoint split** - Public liveness vs authenticated detail (ADR 015)
+9. **Nginx single-origin** - All traffic through port 80, no split-origin CORS issues (ADR 005)
+10. **Route-group auth guard** - Next.js `(dashboard)/layout.tsx` wraps all protected pages
+11. **Hybrid auth** - Session cookies (browser) + bearer tokens (CLI/detectors) on same endpoints
+
+See `docs/adr/` for all 15 Architecture Decision Records.
+
+## API Endpoints
+
+### Public (no auth)
+- `GET /v1/health` - Lightweight liveness check (`{status, version, auth_mode}`)
+- `POST /v1/auth/login` - Session login
+- `GET /metrics` - Prometheus metrics
+- `GET /openapi.json` - OpenAPI spec
+
+### Authenticated
+- `GET /v1/health/detail` - Full operational status (BGP peers, DB, uptime, active mitigations)
+- `POST /v1/events` - Ingest attack event
+- `GET /v1/mitigations` - List mitigations (supports `?status=active&customer=cust_123`)
+- `GET /v1/mitigations/{id}` - Get mitigation detail
+- `POST /v1/mitigations/{id}/withdraw` - Withdraw mitigation
+- `GET/POST /v1/safelist` - List/add safelist entries
+- `DELETE /v1/safelist/{prefix}` - Remove safelist entry
+- `GET /v1/config/settings` - Running config (allowlist-redacted)
+- `GET /v1/config/inventory` - Customer/service/IP data
+- `GET /v1/config/playbooks` - Playbook definitions
+- `POST /v1/config/reload` - Hot-reload inventory + playbooks
+- `GET /v1/stats` - Global statistics
+- `GET /v1/pops` - Points of presence
+- `GET /v1/audit` - Audit log
+- `GET/POST /v1/operators` - User management (admin only)
+- `DELETE /v1/operators/{id}` - Delete user (admin only)
+- `PUT /v1/operators/{id}/password` - Change password (admin only)
 
 ## Data Flow
 
@@ -70,8 +162,21 @@ src/
 ## Testing
 
 ```bash
-cargo test                    # Run all tests
-cargo run -- --config ./configs  # Run with example configs
+# Unit tests (73 tests)
+cargo test
+
+# All tests including integration (93 total: 73 unit, 12 integration, 8 ignored)
+cargo test --features test-utils
+
+# Lint
+cargo fmt --check
+cargo clippy -- -D warnings
+
+# Frontend build
+cd frontend && bun run build
+
+# Run locally
+cargo run -- --config ./configs
 ```
 
 ## Configuration Files
@@ -79,24 +184,39 @@ cargo run -- --config ./configs  # Run with example configs
 - `configs/prefixd.yaml` - Main daemon config
 - `configs/inventory.yaml` - Customer/service/IP mapping
 - `configs/playbooks.yaml` - Vector → action policies
+- `configs/nginx.conf` - Reverse proxy config
+- `configs/gobgp.conf` - GoBGP BGP config
 
-## Current State (v0.2)
+## Docker Compose
+
+```bash
+docker compose up -d          # Start full stack
+docker compose build          # Rebuild after code changes
+docker compose ps             # Check health
+docker compose logs prefixd   # View daemon logs
+```
+
+Services: nginx (80), prefixd (8080), dashboard (3000), postgres (5432), gobgp (50051/179), prometheus (9091), grafana (3001)
+
+## Current State (v0.8.3)
 
 Completed:
-- HTTP API with auth and rate limiting
-- GoBGP gRPC client
-- Policy engine with playbooks
-- Guardrails and quotas
-- PostgreSQL state store
-- Prometheus metrics
-- Dry-run mode
-
-## Next Up (v0.3)
-
-- Escalation logic (police → discard)
-- Improved event correlation
-- Audit log file writer
-- Alerting webhooks
+- HTTP API with hybrid auth (session + bearer) and rate limiting
+- GoBGP gRPC client with FlowSpec announce/withdraw
+- Policy engine with playbook evaluation and escalation
+- Guardrails, quotas, and safelist protection
+- PostgreSQL state store with reconciliation loop
+- Prometheus metrics + Grafana dashboards
+- Next.js dashboard with real-time WebSocket updates
+- Config/inventory read-only pages with allowlist redaction
+- Safelist management and user management on admin page
+- Inline withdraw button on mitigations table
+- Light/dark mode with next-themes
+- Nginx reverse proxy (single-origin deployment)
+- 15 Architecture Decision Records
+- CLI tool (prefixdctl) for all API operations
+- OpenAPI spec with utoipa annotations
+- 12 integration tests + 73 unit tests
 
 ## Code Conventions
 
@@ -104,14 +224,26 @@ Completed:
 - Use `tracing` for structured logging
 - Keep handlers thin, logic in domain/policy modules
 - Prefer `Arc<AppState>` pattern for shared state
-- All database queries via `Repository` struct
+- All database queries via `Repository` trait (with `MockRepository` for tests)
+- Frontend: shadcn/ui components, SWR for data fetching, Tailwind CSS with theme variables
+- Route definitions: add to shared `api_routes()` in `routes.rs` (defined once, used by both production and test routers)
+- Config redaction: allowlist approach — new fields hidden by default
 
 ## Common Tasks
 
 ### Adding a new API endpoint
 1. Add handler in `src/api/handlers.rs`
-2. Add route in `src/api/routes.rs`
-3. Add to protected or public routes as appropriate
+2. Add route to the appropriate shared function in `src/api/routes.rs` (`public_routes()`, `session_routes()`, or `api_routes()`)
+3. Add `#[utoipa::path]` annotation and register in `src/api/openapi.rs`
+4. Add integration test in `tests/integration.rs`
+5. Document in `docs/api.md`
+
+### Adding a new frontend page
+1. Create `frontend/app/(dashboard)/your-page/page.tsx` (auto-guarded by route group)
+2. Add SWR hook in `frontend/hooks/use-api.ts`
+3. Add API function in `frontend/lib/api.ts`
+4. Add to sidebar nav in `frontend/components/dashboard/sidebar.tsx`
+5. Add to command palette in `frontend/components/dashboard/command-palette.tsx`
 
 ### Adding a new metric
 1. Define in `src/observability/metrics.rs` using `Lazy<CounterVec>` etc.
@@ -167,3 +299,5 @@ prefixdctl reload                     # Hot-reload inventory & playbooks
 - `PREFIXD_API_TOKEN` - Bearer token for API auth (when mode=bearer)
 - `RUST_LOG` - Log level override (e.g., `RUST_LOG=debug`)
 - `USER` - Default operator ID for CLI commands
+- `DATABASE_URL` - PostgreSQL connection string
+- `POSTGRES_PASSWORD` - PostgreSQL password (docker-compose)
