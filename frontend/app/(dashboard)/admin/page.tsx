@@ -306,7 +306,7 @@ export default function AdminPage() {
                 <CardContent className="space-y-3">
                   <div className="flex justify-between items-center">
                     <span className="text-muted-foreground text-sm">Status</span>
-                    <Badge variant={health.status === "healthy" ? "default" : "destructive"}>
+                    <Badge variant={health.status === "ok" || health.status === "degraded" ? "default" : "destructive"}>
                       {health.status}
                     </Badge>
                   </div>
@@ -330,16 +330,29 @@ export default function AdminPage() {
             ) : null}
 
             {healthLoading ? (
-              <LoadingCard title="BGP Session" />
+              <LoadingCard title="BGP Peers" />
             ) : healthError ? (
-              <ErrorCard title="BGP Session" error="Failed to connect" />
+              <ErrorCard title="BGP Peers" error="Failed to connect" />
             ) : health ? (
               <Card className="bg-card border-border">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-foreground text-sm">BGP Session</CardTitle>
+                  <CardTitle className="text-foreground text-sm">BGP Peers</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <StatusIndicator up={health.bgp_session_up} />
+                  {Object.keys(health.bgp_sessions).length > 0 ? (
+                    <div className="space-y-2">
+                      {Object.entries(health.bgp_sessions).map(([peer, state]) => (
+                        <div key={peer} className="flex items-center justify-between">
+                          <span className="text-sm font-mono text-foreground">{peer}</span>
+                          <Badge variant={state === "established" ? "default" : "destructive"}>
+                            {state}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No BGP peers configured</p>
+                  )}
                   <p className="text-xs text-muted-foreground text-pretty">
                     FlowSpec announcements are {health.bgp_session_up ? "active" : "paused"}
                   </p>

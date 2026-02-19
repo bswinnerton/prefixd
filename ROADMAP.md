@@ -48,14 +48,14 @@ See [CHANGELOG](CHANGELOG.md) for version history.
   - Hot-reload button (triggers `POST /v1/config/reload`)
   - Inventory browser (searchable customer/service/IP table)
   - Route-group auth guard, session expiry handling, deny-by-default permissions
-- [ ] **Withdraw button on mitigations** (P0 — all competitors have this)
-  - Confirm dialog with reason + operator fields
-  - Calls `POST /v1/mitigations/{id}/withdraw`
+- [x] **Withdraw button on mitigations** (P0 — all competitors have this)
+  - Inline XCircle button on active/escalated rows + confirm dialog in detail panel
+  - Calls `POST /v1/mitigations/{id}/withdraw`, permission-gated (operator+admin)
   - Real-time list update via SWR mutate
-- [ ] **Safelist management page** (P0 — FastNetMon/Wanguard have whitelist UI)
-  - List current safelist entries with add/remove
+- [x] **Safelist management on admin page** (P0 — FastNetMon/Wanguard have whitelist UI)
+  - Full CRUD: add with prefix + reason, remove with confirm dialog
   - Calls `GET/POST /v1/safelist`, `DELETE /v1/safelist/{prefix}`
-  - Validate CIDR input, show reason + added_by + timestamp
+  - Shows prefix, reason, added_by, timestamp per entry
 - [ ] **Mitigation detail view** (P1 — drill-down page)
   - FlowSpec rule display, timeline (created → escalated → withdrawn/expired)
   - Associated events, customer context from inventory
