@@ -48,6 +48,27 @@ See [CHANGELOG](CHANGELOG.md) for version history.
   - Hot-reload button (triggers `POST /v1/config/reload`)
   - Inventory browser (searchable customer/service/IP table)
   - Route-group auth guard, session expiry handling, deny-by-default permissions
+- [ ] **Withdraw button on mitigations** (P0 — all competitors have this)
+  - Confirm dialog with reason + operator fields
+  - Calls `POST /v1/mitigations/{id}/withdraw`
+  - Real-time list update via SWR mutate
+- [ ] **Safelist management page** (P0 — FastNetMon/Wanguard have whitelist UI)
+  - List current safelist entries with add/remove
+  - Calls `GET/POST /v1/safelist`, `DELETE /v1/safelist/{prefix}`
+  - Validate CIDR input, show reason + added_by + timestamp
+- [ ] **Mitigation detail view** (P1 — drill-down page)
+  - FlowSpec rule display, timeline (created → escalated → withdrawn/expired)
+  - Associated events, customer context from inventory
+  - Route: `/mitigations/{id}`
+- [ ] **Manual mitigation/event creation** (P1 — "mitigate now" from UI)
+  - Form to submit `POST /v1/events` or `POST /v1/mitigations`
+  - Operator specifies destination IP, vector, action, TTL
+- [ ] **Toast notifications from WebSocket feed** (P1 — Wanguard/Kentik have real-time alerts)
+  - Surface WS events as toast notifications (new mitigation, escalation, expiry)
+  - Dismissable, with link to relevant mitigation
+- [ ] **Embedded time-series charts** (P2 — reduces context-switching to Grafana)
+  - Mitigation count over time, events/sec on overview page
+  - Query Prometheus or use internal metrics endpoint
 - [ ] Config page (Phase 2)
   - Playbook editor (form-based, with validation)
   - Requires `PUT /v1/config/playbooks` endpoint, file persistence, rollback
