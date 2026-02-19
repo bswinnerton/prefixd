@@ -39,7 +39,7 @@ export default function ConfigPage() {
     setReloadResult(null)
     try {
       await reloadConfig()
-      await Promise.all([mutate("config-settings"), mutate("config-playbooks")])
+      await Promise.all([mutate("config-settings"), mutate("config-playbooks"), mutate("config-inventory")])
       setReloadResult("Config reloaded successfully")
       setTimeout(() => setReloadResult(null), 5000)
     } catch (e) {
