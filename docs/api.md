@@ -556,6 +556,103 @@ GET /v1/stats
 }
 ```
 
+### Config Settings
+
+```http
+GET /v1/config/settings
+Authorization: Bearer <token>
+```
+
+Returns the running daemon configuration with sensitive fields redacted (allowlist approach). See [ADR 014](adr/014-allowlist-config-redaction.md).
+
+**Response:**
+
+```json
+{
+  "settings": {
+    "pop": "iad1",
+    "mode": "enforced",
+    "http": { "listen": "0.0.0.0:8080", "auth": { "mode": "bearer" }, "rate_limit": { "events_per_second": 100, "burst": 500 } },
+    "bgp": { "mode": "sidecar", "local_asn": 65010, "neighbors": [{ "name": "172.30.30.3", "address": "172.30.30.3", "peer_asn": 65001, "afi_safi": ["ipv4-flowspec"] }] },
+    "guardrails": { "require_ttl": true, "dst_prefix_minlen": 32, "dst_prefix_maxlen": 32, "max_ports": 8 },
+    "quotas": { "max_active_per_customer": 5, "max_active_global": 500 },
+    "timers": { "default_ttl_seconds": 120, "reconciliation_interval_seconds": 30 },
+    "escalation": { "enabled": true },
+    "storage": { "connection_string": "[redacted]" },
+    "observability": { "log_format": "json", "log_level": "info", "metrics_listen": "0.0.0.0:9090" },
+    "safelist": { "count": 3 },
+    "shutdown": { "drain_timeout_seconds": 30, "preserve_announcements": true }
+  },
+  "loaded_at": "2026-02-18T12:00:00Z"
+}
+```
+
+> **Note:** TLS paths, LDAP/RADIUS configs, bearer token env vars, BGP passwords, gRPC endpoints, router ID, and safelist prefixes are omitted. New config fields are hidden by default.
+
+### Config Inventory
+
+```http
+GET /v1/config/inventory
+Authorization: Bearer <token>
+```
+
+Returns customer/service/IP asset data from `inventory.yaml`.
+
+**Response:**
+
+```json
+{
+  "customers": [
+    {
+      "customer_id": "cust_example",
+      "name": "Example Customer",
+      "prefixes": ["203.0.113.0/24"],
+      "policy_profile": "normal",
+      "services": [
+        {
+          "service_id": "svc_dns",
+          "name": "DNS Service",
+          "assets": [{ "ip": "203.0.113.10", "role": "dns" }],
+          "allowed_ports": { "udp": [53], "tcp": [53] }
+        }
+      ]
+    }
+  ],
+  "total_customers": 1,
+  "total_services": 1,
+  "total_assets": 1,
+  "loaded_at": "2026-02-18T12:00:00Z"
+}
+```
+
+### Config Playbooks
+
+```http
+GET /v1/config/playbooks
+Authorization: Bearer <token>
+```
+
+Returns playbook definitions from `playbooks.yaml`.
+
+**Response:**
+
+```json
+{
+  "playbooks": [
+    {
+      "name": "udp_flood_police_first",
+      "match": { "vector": "udp_flood", "require_top_ports": false },
+      "steps": [
+        { "action": "police", "rate_bps": 5000000, "ttl_seconds": 120 },
+        { "action": "discard", "rate_bps": null, "ttl_seconds": 300, "require_confidence_at_least": 0.7, "require_persistence_seconds": 120 }
+      ]
+    }
+  ],
+  "total_playbooks": 1,
+  "loaded_at": "2026-02-18T12:00:00Z"
+}
+```
+
 ### List POPs
 
 ```http

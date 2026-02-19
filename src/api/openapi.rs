@@ -2,7 +2,7 @@ use utoipa::OpenApi;
 
 use super::handlers::{
     ErrorResponse, EventResponse, HealthResponse, MitigationResponse, MitigationsListResponse,
-    ReloadResponse,
+    PublicHealthResponse, ReloadResponse,
 };
 use crate::db::{GlobalStats, PopInfo, PopStats, SafelistEntry};
 
@@ -20,17 +20,22 @@ use crate::db::{GlobalStats, PopInfo, PopStats, SafelistEntry};
     ),
     paths(
         super::handlers::health,
+        super::handlers::health_detail,
         super::handlers::ingest_event,
         super::handlers::list_mitigations,
         super::handlers::get_mitigation,
         super::handlers::get_stats,
         super::handlers::list_pops,
+        super::handlers::get_config_settings,
+        super::handlers::get_config_inventory,
+        super::handlers::get_config_playbooks,
     ),
     components(
         schemas(
             EventResponse,
             MitigationResponse,
             MitigationsListResponse,
+            PublicHealthResponse,
             HealthResponse,
             ErrorResponse,
             ReloadResponse,

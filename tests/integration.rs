@@ -184,6 +184,155 @@ async fn test_health_endpoint() {
 }
 
 #[tokio::test]
+async fn test_health_detail_endpoint() {
+    let app = setup_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/health/detail")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert!(json["status"].is_string(), "status should be a string");
+    assert!(json["version"].is_string(), "version should be a string");
+    assert!(
+        json["bgp_sessions"].is_object(),
+        "bgp_sessions should be present on detail"
+    );
+    assert!(
+        json["database"].is_string(),
+        "database should be present on detail"
+    );
+    assert!(
+        json["gobgp"].is_object(),
+        "gobgp should be present on detail"
+    );
+    assert!(
+        json["uptime_seconds"].is_number(),
+        "uptime_seconds should be present on detail"
+    );
+}
+
+#[tokio::test]
+async fn test_config_settings_endpoint() {
+    let app = setup_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/config/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert!(json["settings"].is_object(), "settings should be present");
+    assert!(json["loaded_at"].is_string(), "loaded_at should be present");
+    // Verify allowlist redaction: sensitive fields must not appear
+    assert_eq!(
+        json["settings"]["storage"]["connection_string"],
+        "[redacted]"
+    );
+    assert!(
+        json["settings"]["http"]["auth"]["bearer_token_env"].is_null(),
+        "bearer_token_env should not be in allowlist"
+    );
+    assert!(
+        json["settings"]["bgp"]["gobgp_grpc"].is_null(),
+        "gobgp_grpc should not be in allowlist"
+    );
+    assert!(
+        json["settings"]["bgp"]["router_id"].is_null(),
+        "router_id should not be in allowlist"
+    );
+}
+
+#[tokio::test]
+async fn test_config_inventory_endpoint() {
+    let app = setup_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/config/inventory")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert!(json["customers"].is_array(), "customers should be an array");
+    assert!(
+        json["total_customers"].is_number(),
+        "total_customers should be a number"
+    );
+    assert!(
+        json["total_services"].is_number(),
+        "total_services should be a number"
+    );
+    assert!(
+        json["total_assets"].is_number(),
+        "total_assets should be a number"
+    );
+    assert!(json["loaded_at"].is_string(), "loaded_at should be present");
+}
+
+#[tokio::test]
+async fn test_config_playbooks_endpoint() {
+    let app = setup_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/config/playbooks")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert!(json["playbooks"].is_array(), "playbooks should be an array");
+    assert!(
+        json["total_playbooks"].is_number(),
+        "total_playbooks should be a number"
+    );
+    assert!(json["loaded_at"].is_string(), "loaded_at should be present");
+}
+
+#[tokio::test]
 async fn test_list_mitigations_empty() {
     let app = setup_app().await;
 

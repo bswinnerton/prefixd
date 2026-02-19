@@ -1657,6 +1657,14 @@ pub struct ConfigSettingsResponse {
     loaded_at: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/config/settings",
+    tag = "config",
+    responses(
+        (status = 200, description = "Running config (allowlist-redacted)")
+    )
+)]
 pub async fn get_config_settings(
     State(state): State<Arc<AppState>>,
     auth_session: AuthSession,
@@ -1721,6 +1729,14 @@ pub struct ConfigInventoryResponse {
     loaded_at: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/config/inventory",
+    tag = "config",
+    responses(
+        (status = 200, description = "Customer/service/IP inventory")
+    )
+)]
 pub async fn get_config_inventory(
     State(state): State<Arc<AppState>>,
     auth_session: AuthSession,
@@ -1758,6 +1774,14 @@ pub struct ConfigPlaybooksResponse {
     loaded_at: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/config/playbooks",
+    tag = "config",
+    responses(
+        (status = 200, description = "Playbook definitions")
+    )
+)]
 pub async fn get_config_playbooks(
     State(state): State<Arc<AppState>>,
     auth_session: AuthSession,

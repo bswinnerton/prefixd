@@ -7,7 +7,7 @@ const ago = (minutes: number) => new Date(now.getTime() - minutes * 60 * 1000).t
 const inFuture = (minutes: number) => new Date(now.getTime() + minutes * 60 * 1000).toISOString()
 
 export const mockPublicHealth: PublicHealthResponse = {
-  status: "healthy",
+  status: "ok",
   version: "0.8.0",
   auth_mode: "none",
 }
