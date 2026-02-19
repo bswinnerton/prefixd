@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mitigation detail full-page view** - Dedicated drill-down page for mitigations (`/mitigations/{id}`) replacing the slide-over panel
+  - Shows FlowSpec rule JSON preview and active configuration
+  - Mitigation timeline visualizing Created → Escalated → Withdrawn/Expired events
+  - Embedded Customer Context section querying the running inventory
+  - Direct withdraw capabilities and status badges
 - **Real-time toast notifications** - Operational events over WebSocket now surface as toast notifications in the UI:
   - Red/Error: New mitigation created
   - Yellow/Warning: Mitigation escalated

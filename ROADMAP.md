@@ -56,10 +56,11 @@ See [CHANGELOG](CHANGELOG.md) for version history.
   - Full CRUD: add with prefix + reason, remove with confirm dialog
   - Calls `GET/POST /v1/safelist`, `DELETE /v1/safelist/{prefix}`
   - Shows prefix, reason, added_by, timestamp per entry
-- [ ] **Mitigation detail view** (P1 — drill-down page)
-  - FlowSpec rule display, timeline (created → escalated → withdrawn/expired)
-  - Associated events, customer context from inventory
-  - Route: `/mitigations/{id}`
+- [x] **Mitigation detail view** (P1 — drill-down page)
+  - Full-page dedicated view (`/mitigations/{id}`)
+  - FlowSpec rule JSON preview and timeline (created → escalated → withdrawn/expired)
+  - Embedded customer and service context looking up from inventory
+  - Inline withdraw capabilities
 - [ ] **Manual mitigation/event creation** (P1 — "mitigate now" from UI)
   - Form to submit `POST /v1/events` or `POST /v1/mitigations`
   - Operator specifies destination IP, vector, action, TTL

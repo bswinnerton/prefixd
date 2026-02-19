@@ -4,7 +4,6 @@ import { useState, useMemo } from "react"
 import { Eye, Search, ChevronDown, ChevronUp, Filter, RefreshCw, AlertCircle, XCircle } from "lucide-react"
 import { StatusBadge } from "@/components/dashboard/status-badge"
 import { ActionBadge } from "@/components/dashboard/action-badge"
-import { MitigationDetailPanel } from "@/components/dashboard/mitigation-detail-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -70,14 +69,16 @@ function formatBps(bps: number | null): string {
   return `${bps} bps`
 }
 
+import { useRouter } from "next/navigation"
+
 export function MitigationsContentLive() {
+  const router = useRouter()
   const [statusFilters, setStatusFilters] = useState<string[]>(["active", "escalated"])
   const [searchQuery, setSearchQuery] = useState("")
   const [sortField, setSortField] = useState<SortField>("created_at")
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
   const [currentPage, setCurrentPage] = useState(1)
   const [showFilters, setShowFilters] = useState(false)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [withdrawTarget, setWithdrawTarget] = useState<Mitigation | null>(null)
   const [withdrawReason, setWithdrawReason] = useState("")
   const [isWithdrawing, setIsWithdrawing] = useState(false)
@@ -326,7 +327,7 @@ export function MitigationsContentLive() {
                           "border-b border-border/50 hover:bg-secondary/50 transition-colors cursor-pointer",
                           index % 2 === 1 && "bg-secondary/20"
                         )}
-                        onClick={() => setSelectedId(mitigation.mitigation_id)}
+                        onClick={() => router.push(`/mitigations/${mitigation.mitigation_id}`)}
                       >
                         <td className="px-4 py-3">
                           <StatusBadge status={mitigation.status} />
@@ -367,7 +368,7 @@ export function MitigationsContentLive() {
                                   className="h-8 w-8"
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    setSelectedId(mitigation.mitigation_id)
+                                    router.push(`/mitigations/${mitigation.mitigation_id}`)
                                   }}
                                   aria-label="View mitigation details"
                                 >
@@ -434,15 +435,6 @@ export function MitigationsContentLive() {
             </div>
           </div>
         </div>
-      )}
-
-      {/* Detail Panel */}
-      {selectedId && (
-        <MitigationDetailPanel
-          mitigation={mitigations?.find(m => m.mitigation_id === selectedId) || null}
-          onClose={() => setSelectedId(null)}
-          onWithdraw={() => mutate()}
-        />
       )}
 
       {/* Inline Withdraw Dialog */}

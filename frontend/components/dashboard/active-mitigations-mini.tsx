@@ -56,10 +56,11 @@ export function ActiveMitigationsMini({ mitigations, limit = 5 }: ActiveMitigati
       ) : (
         <div className="space-y-0 flex-1">
           {active.map((m, index) => (
-            <div
+            <Link
               key={m.mitigation_id}
+              href={`/mitigations/${m.mitigation_id}`}
               className={cn(
-                "flex items-center justify-between py-2",
+                "flex items-center justify-between py-2 hover:bg-secondary/50 px-2 -mx-2 rounded-sm transition-colors",
                 index !== active.length - 1 && "border-b border-border/50"
               )}
             >
@@ -80,7 +81,7 @@ export function ActiveMitigationsMini({ mitigations, limit = 5 }: ActiveMitigati
                   {formatTimeRemaining(m.expires_at)}
                 </span>
               </div>
-            </div>
+            </Link>
           ))}
         </div>
       )}
