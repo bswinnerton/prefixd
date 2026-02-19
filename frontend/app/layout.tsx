@@ -5,7 +5,7 @@ import "./globals.css"
 import { SWRProvider } from "@/components/swr-provider"
 import { AuthProvider } from "@/hooks/use-auth"
 import { ThemeProvider } from "@/components/theme-provider"
-
+import { Toaster } from "@/components/ui/sonner"
 
 const geist = Geist({ 
   subsets: ["latin"],
@@ -57,6 +57,7 @@ export default function RootLayout({
           <AuthProvider>
             <SWRProvider>
               {children}
+              <Toaster />
             </SWRProvider>
           </AuthProvider>
         </ThemeProvider>

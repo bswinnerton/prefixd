@@ -8,15 +8,11 @@ import { ActivityFeedLive } from "@/components/dashboard/activity-feed-live"
 import { VectorBreakdownChart } from "@/components/dashboard/vector-breakdown-chart"
 import { ActiveMitigationsMini } from "@/components/dashboard/active-mitigations-mini"
 import { useStats, useMitigations } from "@/hooks/use-api"
-import { useWebSocket } from "@/hooks/use-websocket"
 
 export default function OverviewPage() {
   const { data: stats } = useStats()
   const { data: mitigations } = useMitigations({ status: ["active", "escalated"], limit: 50 })
   
-  // Connect to WebSocket for real-time updates
-  useWebSocket()
-
   const activeMitigations = mitigations?.filter((m) => m.status === "active" || m.status === "escalated") || []
   const policeActions = activeMitigations.filter((m) => m.action_type === "police")
   const discardActions = activeMitigations.filter((m) => m.action_type === "discard")

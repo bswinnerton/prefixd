@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Real-time toast notifications** - Operational events over WebSocket now surface as toast notifications in the UI:
+  - Red/Error: New mitigation created
+  - Yellow/Warning: Mitigation escalated
+  - Green/Success: Mitigation withdrawn
+  - Blue/Info: Mitigation expired or config reloaded
 - **Inline withdraw button on mitigations table** - XCircle button on active/escalated rows with confirmation dialog
   - Optional reason field, permission-gated (operator + admin only)
   - Tooltips on view and withdraw action buttons

@@ -63,9 +63,10 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 - [ ] **Manual mitigation/event creation** (P1 — "mitigate now" from UI)
   - Form to submit `POST /v1/events` or `POST /v1/mitigations`
   - Operator specifies destination IP, vector, action, TTL
-- [ ] **Toast notifications from WebSocket feed** (P1 — Wanguard/Kentik have real-time alerts)
+- [x] **Toast notifications from WebSocket feed** (P1 — Wanguard/Kentik have real-time alerts)
   - Surface WS events as toast notifications (new mitigation, escalation, expiry)
-  - Dismissable, with link to relevant mitigation
+  - Refactored `use-websocket` into a `WebSocketProvider` Context to prevent duplicate connections
+  - Centralized connection management and SWR cache invalidation
 - [ ] **Embedded time-series charts** (P2 — reduces context-switching to Grafana)
   - Mitigation count over time, events/sec on overview page
   - Query Prometheus or use internal metrics endpoint
