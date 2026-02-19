@@ -251,7 +251,9 @@ pub async fn ingest_event(
 ) -> impl IntoResponse {
     let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
     if let Err(_status) = require_auth(&state, &auth_session, auth_header) {
-        return Err(AppError(PrefixdError::Unauthorized("authentication required".into())));
+        return Err(AppError(PrefixdError::Unauthorized(
+            "authentication required".into(),
+        )));
     }
 
     // Branch on action type
