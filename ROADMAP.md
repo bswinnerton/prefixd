@@ -111,7 +111,7 @@ See [CHANGELOG](CHANGELOG.md) for version history.
   - `g o/m/e/i/a/c` navigation, `n` for Mitigate Now, `?` toggles help modal
   - `Cmd+K` command palette, `Cmd+B` sidebar toggle
   - Hints shown in command palette and keyboard shortcuts modal
-- [ ] Upgrade lucide-react (0.454 -> latest, verify all ~30 icon imports)
+- [x] Upgrade lucide-react (0.454 → 0.575, all ~40 icon imports verified)
 - [ ] Upgrade react-resizable-panels (2.x -> 4.x, major version)
 - [ ] Upgrade tower-sessions (0.14 -> 0.15, blocked on axum-login 0.18 compatibility)
 
