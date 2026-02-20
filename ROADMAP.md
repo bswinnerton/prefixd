@@ -211,7 +211,15 @@ Validated FlowSpec with major router vendors.
 
 ## Future Ideas
 
-Not committed, but on the radar:
+Not committed, but on the radar.
+
+### Dashboard
+
+- **Embedded traffic charts** — Real-time bps/pps sparklines on the overview page (query Prometheus or internal metrics endpoint, reduce context-switching to Grafana)
+- **Attack timeline / history per IP** — Unified "what happened to this IP" view combining events, mitigations, and escalations
+- **Incident reports** — Formatted PDF/Excel post-attack reports (building on existing CSV export)
+- **Webhook/alerting config UI** — Configure Slack, PagerDuty, and generic webhook destinations from the dashboard
+- **GeoIP / ASN / IX enrichment** — Enrich attack events at ingest with source country, ASN, and IX presence. Same pattern as our `ttl` project: `maxminddb` crate with local GeoLite2-City.mmdb, Team Cymru DNS for ASN, PeeringDB REST API for IX detection. In-memory caches with 1h TTL, PeeringDB disk-cached at 24h. Fields added to AttackEvent before policy evaluation.
 
 ### Advanced FlowSpec
 
@@ -221,14 +229,18 @@ Not committed, but on the radar:
 
 ### Integrations
 
-- NetBox inventory sync
-- Customer self-service portal
+- NetBox inventory sync (replace YAML inventory with NetBox as source-of-truth)
+- Customer self-service portal (per-customer dashboards for MSSPs)
 - Native BGP speaker (replace GoBGP dependency)
+- Prometheus/Alertmanager as event source (bidirectional: we push metrics, they push alerts)
+- FastNetMon native adapter (common pairing for self-hosted deployments)
+- Scrubber vendor integrations (complement cloud/hardware mitigation with policy automation)
 
 ### Scale
 
 - Event batching for high-volume detectors
 - Distributed coordination for multi-region
+- Server-side cursor pagination (current client-side limit: ~1000 rows)
 
 ---
 
