@@ -128,9 +128,12 @@ prefixdctl migrations
 
 ## Version-Specific Notes
 
-### v0.8.5 -> v1.0
+### v0.8.5 -> v0.9.0
 
 - **New table:** `schema_migrations` (migration 004) -- tracks applied migrations
 - **Reconciliation loop** now pages through all active mitigations (previously capped at 1000)
-- **New metric:** `prefixd_reconciliation_active_count` gauge
+- **New metrics:** `prefixd_reconciliation_active_count`, `prefixd_db_pool_connections`
+- **New endpoints:** `GET /v1/stats/timeseries`, `GET /v1/ip/{ip}/history`
+- **prefixdctl default endpoint** changed from `http://127.0.0.1:8080` to `http://127.0.0.1` (nginx)
+- **Timeseries bucketing fix** -- sub-hour buckets now align correctly
 - No config file changes required

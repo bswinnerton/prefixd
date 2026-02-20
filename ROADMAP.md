@@ -4,7 +4,7 @@ What's next for prefixd.
 
 ---
 
-## Current Status: v0.8.5
+## Current Status: v0.9.0
 
 Core functionality is stable:
 

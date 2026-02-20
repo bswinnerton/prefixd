@@ -482,7 +482,7 @@ Lightweight liveness check. No authentication required. Does not query database 
 ```json
 {
   "status": "ok",
-  "version": "0.8.5",
+  "version": "0.9.0",
   "auth_mode": "none"
 }
 ```
@@ -507,7 +507,7 @@ Full operational health. Requires authentication.
 ```json
 {
   "status": "healthy",
-  "version": "0.8.5",
+  "version": "0.9.0",
   "pop": "iad1",
   "uptime_seconds": 86400,
   "bgp_sessions": {

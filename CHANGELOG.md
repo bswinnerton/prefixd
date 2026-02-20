@@ -7,13 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-02-20
+
 ### Added
 
 - **Embedded time-series charts on overview** — 24h area chart showing mitigations and events per hour, PostgreSQL-backed with gap-filled buckets via `GET /v1/stats/timeseries`
 - **IP history page** (`/ip-history?ip=X`) — Unified timeline of all events and mitigations for an IP, with customer/service context from inventory, via `GET /v1/ip/{ip}/history`
 - **Clickable IPs everywhere** — All victim_ip cells in mitigations table, events table, active mitigations mini, mitigation detail, and event detail panel link to IP history
 - **IP History in navigation** — Added to sidebar, command palette (`g h`), keyboard shortcuts
-- **2 new integration tests** — timeseries endpoint returns buckets, IP history returns structure
 - **Database pool metrics** — `prefixd_db_pool_connections{state=active|idle|total}` gauge exposed to Prometheus on each `/metrics` scrape
 - **Request correlation IDs** — Every request gets an `x-request-id` (UUID), preserved if client-provided, echoed in response, added to tracing span. nginx config forwards it.
 - **HTTPS via nginx production example** — Full TLS termination config with HSTS, HTTP→HTTPS redirect, Let's Encrypt note
@@ -21,21 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Database migration tracking** — `schema_migrations` table records applied migrations with version, name, and timestamp; `prefixdctl migrations` command to check status
 - **API versioning policy** — `docs/api-versioning.md` documents backward compatibility guarantees, deprecation process, and `Sunset` header convention
 - **Upgrade guide** — `docs/upgrading.md` covers Docker Compose and bare metal upgrade procedures, rollback guidance, and migration verification
+- **IP validation on history endpoint** — Returns 400 on invalid IP input
+- **4 new tests** — IP history rejects invalid IP, timeseries sub-hour bucket alignment, plus 2 timeseries/IP-history structure tests
+- **CSV helper tests** (4 tests: headers/rows, comma escaping, quote escaping, null handling)
 
 ### Changed
 
 - **Mitigate Now is now a modal dialog** - Opens over the mitigations list instead of navigating to a separate page; command palette and `n` shortcut open the modal directly
 - **Removed `/mitigations/create` route** - Replaced by modal, no redirect needed
 - **Upgraded recharts** 3.6.0 → 3.7.0
+- **prefixdctl default endpoint** changed to `http://127.0.0.1` (nginx entrypoint, was `:8080`)
+- **prefixdctl role validation** now includes `operator` role (was admin/viewer only)
 
 ### Fixed
 
+- **Timeseries sub-hour bucketing** — `date_trunc('hour')` replaced with `date_bin()` for correct 5m/30m bucket alignment
+- **Frontend TypeScript types** — chart.tsx recharts 3.7 tooltip/legend types, resizable.tsx API rename, badge component prop types widened to match backend values
+- **CLI/docs drift** — Removed references to nonexistent `prefixdctl health` and `events` commands, fixed stale endpoint paths across all docs
 - **CSV export crash on events page** - Was referencing `e.timestamp` which doesn't exist (correct field is `event_timestamp`); added null guard in CSV helper
-- **CSV export adds `ingested_at` column** to events export
-
-### Added
-
-- **CSV helper tests** (4 tests: headers/rows, comma escaping, quote escaping, null handling)
+- **Nested anchor in active-mitigations-mini** — Replaced with keyboard-accessible div+router.push wrapper
+- **Activity chart loading states** — Merges buckets from both timeseries sources, shows loading/error/empty states
 
 ## [0.8.5] - 2026-02-19
 
@@ -671,7 +677,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Safelist prevents mitigation of protected infrastructure
 - Guardrails block overly broad mitigations
 
-[Unreleased]: https://github.com/lance0/prefixd/compare/v0.8.5...HEAD
+[Unreleased]: https://github.com/lance0/prefixd/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/lance0/prefixd/compare/v0.8.5...v0.9.0
 [0.8.5]: https://github.com/lance0/prefixd/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/lance0/prefixd/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/lance0/prefixd/compare/v0.8.2...v0.8.3
