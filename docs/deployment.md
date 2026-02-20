@@ -551,7 +551,7 @@ groups:
 ```bash
 # Liveness check (public, lightweight - no DB/GoBGP calls)
 curl http://localhost/v1/health
-# Returns: {"status":"ok","version":"0.8.4","auth_mode":"none"}
+# Returns: {"status":"ok","version":"0.8.5","auth_mode":"none"}
 
 # Full operational health (authenticated)
 curl -H "Authorization: Bearer $TOKEN" http://localhost/v1/health/detail
