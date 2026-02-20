@@ -97,10 +97,12 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 - [x] Component tests (ErrorBoundary test with 3 cases)
 - [ ] Hook tests (usePermissions, useAuth, use-api)
 - [x] Error boundaries (ErrorBoundary component wrapping dashboard layout)
-- [ ] **Event → mitigation linking** (P1 — connects the operator workflow)
-  - Events page rows link to the mitigation they triggered (via `triggering_event_id`)
-  - Mitigation detail page links back to triggering event
-  - Clicking an event shows outcome: mitigation created, extended, or rejected
+- [x] **Event → mitigation linking** (P1 — connects the operator workflow)
+  - Mitigation detail page links back to triggering event via `?id=` param
+  - Audit log target_id links to mitigation detail when target_type is mitigation
+  - Command palette search links directly to `/mitigations/{id}`
+  - Overview stat cards link to mitigations/events pages
+  - Events "View Mitigations for IP" pre-fills search via `?ip=` param
 - [ ] **CSV export for list pages** (P1 — operators need data for reports/tooling)
   - Download button on mitigations and events tables
   - Exports current filtered view as CSV (client-side generation, no backend)

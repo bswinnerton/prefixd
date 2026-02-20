@@ -227,11 +227,12 @@ Completed:
 - Light/dark mode with next-themes
 - Nginx reverse proxy (single-origin deployment)
 - ErrorBoundary wrapping all dashboard pages
+- Cross-entity navigation (command palette → detail pages, event↔mitigation linking, audit log → mitigations, clickable stat cards)
 - 15 Architecture Decision Records
 - CLI tool (prefixdctl) for all API operations
 - OpenAPI spec with utoipa annotations
 - 73 backend unit tests + 12 integration tests (+ 14 ignored requiring GoBGP/Docker)
-- Vitest + Testing Library frontend test infrastructure (10 tests)
+- Vitest + Testing Library frontend test infrastructure (11 tests)
 
 ## Code Conventions
 

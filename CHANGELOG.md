@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Admin page tabbed layout** - Refactored from long scroll to Tabs (Status, Safelist, Users); Users tab conditionally rendered for admins
 - **Vitest + Testing Library** - Frontend test infrastructure with 11 tests (ErrorBoundary component, IP/port validation)
 - **"Mitigate Now" in command palette** - Quick action entry to jump to manual mitigation form
+- **Cross-entity navigation** - Wired up dead-end UI elements across dashboard:
+  - Command palette mitigation search links directly to `/mitigations/{id}` (was broken `?id=` param)
+  - Mitigation detail `triggering_event_id` links to events page with event auto-selected
+  - Events page reads `?id=` param to auto-open detail panel
+  - Mitigations page reads `?ip=` param to pre-fill search filter
+  - Audit log `target_id` links to `/mitigations/{id}` when target_type is mitigation
+  - Overview stat cards are clickable, linking to mitigations/events pages
 
 ### Security
 
