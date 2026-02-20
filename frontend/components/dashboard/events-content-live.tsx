@@ -41,7 +41,11 @@ function formatPps(pps: number | null): string {
   return `${pps} pps`
 }
 
-export function EventsContentLive() {
+interface EventsContentLiveProps {
+  initialEventId?: string | null
+}
+
+export function EventsContentLive({ initialEventId }: EventsContentLiveProps = {}) {
   const [sourceFilter, setSourceFilter] = useState<string>("All")
   const [vectorFilter, setVectorFilter] = useState("All")
   const [searchQuery, setSearchQuery] = useState("")
@@ -49,7 +53,7 @@ export function EventsContentLive() {
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
   const [currentPage, setCurrentPage] = useState(1)
   const [showFilters, setShowFilters] = useState(false)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(initialEventId ?? null)
   const itemsPerPage = 20
 
   const { data: events, error, isLoading, mutate } = useEvents({ limit: 200 })

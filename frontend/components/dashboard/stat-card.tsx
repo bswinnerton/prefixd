@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { cn } from "@/lib/utils"
 
 interface StatCardProps {
@@ -7,11 +8,14 @@ interface StatCardProps {
   trendValue?: string
   accent?: "default" | "primary" | "destructive" | "warning"
   sparklineData?: number[]
+  href?: string
 }
 
-export function StatCard({ title, value, trend, trendValue, accent = "default", sparklineData }: StatCardProps) {
+export function StatCard({ title, value, trend, trendValue, accent = "default", sparklineData, href }: StatCardProps) {
+  const Wrapper = href ? Link : "div"
+  const wrapperProps = href ? { href } : {}
   return (
-    <div className="border border-border bg-card p-4">
+    <Wrapper {...wrapperProps as any} className={cn("border border-border bg-card p-4 block", href && "hover:border-primary/50 transition-colors cursor-pointer")}>
       <div className="flex items-start justify-between">
         <div>
           <p className="text-xs font-mono uppercase tracking-wide text-muted-foreground">{title}</p>
@@ -50,7 +54,7 @@ export function StatCard({ title, value, trend, trendValue, accent = "default", 
           </div>
         )}
       </div>
-    </div>
+    </Wrapper>
   )
 }
 

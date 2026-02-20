@@ -125,7 +125,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 {filteredMitigations.map((m) => (
                   <CommandItem
                     key={m.mitigation_id}
-                    onSelect={() => runCommand(() => router.push(`/mitigations?id=${m.mitigation_id}`))}
+                    onSelect={() => runCommand(() => router.push(`/mitigations/${m.mitigation_id}`))}
                     className="flex items-center gap-3 font-mono text-xs"
                   >
                     {getStatusIcon(m.status)}

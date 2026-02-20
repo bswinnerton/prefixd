@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useMemo } from "react"
+import Link from "next/link"
 import { Search, ChevronDown, ChevronUp, RefreshCw, AlertCircle } from "lucide-react"
 import { ActionTypeBadge } from "@/components/dashboard/action-type-badge"
 import { ActorBadge } from "@/components/dashboard/actor-badge"
@@ -243,9 +244,15 @@ export function AuditLogContentLive() {
                       </td>
                       <td className="px-4 py-3 font-mono text-foreground">
                         {entry.target_id ? (
-                          <span className="truncate max-w-[200px] inline-block">
-                            {entry.target_id.length > 20 ? `${entry.target_id.slice(0, 20)}...` : entry.target_id}
-                          </span>
+                          entry.target_type === "mitigation" ? (
+                            <Link href={`/mitigations/${entry.target_id}`} className="truncate max-w-[200px] inline-block text-primary hover:underline">
+                              {entry.target_id.slice(0, 8)}
+                            </Link>
+                          ) : (
+                            <span className="truncate max-w-[200px] inline-block">
+                              {entry.target_id.length > 20 ? `${entry.target_id.slice(0, 20)}...` : entry.target_id}
+                            </span>
+                          )
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}

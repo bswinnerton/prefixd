@@ -1,4 +1,7 @@
+"use client"
+
 import { Suspense } from "react"
+import { useSearchParams } from "next/navigation"
 import { MitigationsContentLive } from "@/components/dashboard/mitigations-content-live"
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { RefreshCw } from "lucide-react"
@@ -13,10 +16,13 @@ function LoadingState() {
 }
 
 export default function MitigationsPage() {
+  const searchParams = useSearchParams()
+  const ipSearch = searchParams.get("ip")
+
   return (
     <DashboardLayout>
       <Suspense fallback={<LoadingState />}>
-        <MitigationsContentLive />
+        <MitigationsContentLive initialSearch={ipSearch} />
       </Suspense>
     </DashboardLayout>
   )

@@ -70,10 +70,14 @@ function formatBps(bps: number | null): string {
   return `${bps} bps`
 }
 
-export function MitigationsContentLive() {
+interface MitigationsContentLiveProps {
+  initialSearch?: string | null
+}
+
+export function MitigationsContentLive({ initialSearch }: MitigationsContentLiveProps = {}) {
   const router = useRouter()
-  const [statusFilters, setStatusFilters] = useState<string[]>(["active", "escalated"])
-  const [searchQuery, setSearchQuery] = useState("")
+  const [statusFilters, setStatusFilters] = useState<string[]>(initialSearch ? [] : ["active", "escalated"])
+  const [searchQuery, setSearchQuery] = useState(initialSearch ?? "")
   const [sortField, setSortField] = useState<SortField>("created_at")
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
   const [currentPage, setCurrentPage] = useState(1)

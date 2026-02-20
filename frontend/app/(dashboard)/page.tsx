@@ -23,10 +23,10 @@ export default function OverviewPage() {
           <BgpSessionStatus />
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard title="Active Mitigations" value={stats?.total_active ?? activeMitigations.length} />
-            <StatCard title="Police Actions" value={policeActions.length} accent="primary" />
-            <StatCard title="Discard Actions" value={discardActions.length} accent="destructive" />
-            <StatCard title="Total Events" value={stats?.total_events ?? 0} />
+            <StatCard title="Active Mitigations" value={stats?.total_active ?? activeMitigations.length} href="/mitigations" />
+            <StatCard title="Police Actions" value={policeActions.length} accent="primary" href="/mitigations" />
+            <StatCard title="Discard Actions" value={discardActions.length} accent="destructive" href="/mitigations" />
+            <StatCard title="Total Events" value={stats?.total_events ?? 0} href="/events" />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">

@@ -1,6 +1,7 @@
 "use client"
 
 import { use } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { useMitigation, useConfigInventory } from "@/hooks/use-api"
@@ -230,7 +231,10 @@ export default function MitigationDetailPage({ params }: { params: Promise<{ id:
                         {formatTimestamp(mitigation.created_at)}
                       </p>
                       <p className="text-xs text-muted-foreground mt-2">
-                        Triggered by event <span className="font-mono">{mitigation.triggering_event_id.slice(0, 8)}</span>
+                        Triggered by event{" "}
+                        <Link href={`/events?id=${mitigation.triggering_event_id}`} className="font-mono text-primary hover:underline">
+                          {mitigation.triggering_event_id.slice(0, 8)}
+                        </Link>
                       </p>
                     </div>
                   </div>
