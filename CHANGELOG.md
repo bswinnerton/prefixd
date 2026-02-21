@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-02-21
+
 ### Added
 
 - **Webhook alerting backend** — 7 destination types: Slack (Block Kit), Discord (embeds), Microsoft Teams (Adaptive Card), Telegram (Bot API), PagerDuty (Events API v2 with auto-resolve on withdraw/expire), OpsGenie (Alert API v2), Generic webhook (HMAC-SHA256 signed). Fire-and-forget via tokio::spawn with 3 retries and exponential backoff. Configurable event type filtering. `prefixd_alerts_sent_total{destination,status}` Prometheus counter.
@@ -717,6 +719,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Guardrails block overly broad mitigations
 
 [Unreleased]: https://github.com/lance0/prefixd/compare/v0.9.0...HEAD
+[0.9.1]: https://github.com/lance0/prefixd/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/lance0/prefixd/compare/v0.8.5...v0.9.0
 [0.8.5]: https://github.com/lance0/prefixd/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/lance0/prefixd/compare/v0.8.3...v0.8.4

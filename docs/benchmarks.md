@@ -1,6 +1,6 @@
 # Benchmark Results
 
-Last updated: v0.9.0
+Last updated: v0.9.1
 
 ## How to Run
 

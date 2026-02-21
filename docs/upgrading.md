@@ -128,6 +128,15 @@ prefixdctl migrations
 
 ## Version-Specific Notes
 
+### v0.9.0 -> v0.9.1
+
+- **Security fixes:** Login brute-force throttle hardened (atomic check, bounded state), CIDR validation uses `ipnet::IpNet`, generic webhook headers redacted in API, alerting test endpoint admin-only, CSV formula regex strengthened
+- **Webhook alerting:** New `src/alerting/` module with 7 destination types (Slack, Discord, Teams, Telegram, PagerDuty, OpsGenie, generic). Fire-and-forget dispatch with bounded concurrency (64 tasks). New endpoints: `GET /v1/config/alerting`, `POST /v1/config/alerting/test`
+- **Dashboard:** Alerting config tab, audit log detail expansion, customer/POP filters, timeseries range selector (1h/6h/24h/7d), active count sidebar badge, severity badges
+- **New config section:** Optional `alerting:` in prefixd.yaml (see example in config file)
+- No database migrations required
+- No breaking API changes
+
 ### v0.8.5 -> v0.9.0
 
 - **New table:** `schema_migrations` (migration 004) -- tracks applied migrations
