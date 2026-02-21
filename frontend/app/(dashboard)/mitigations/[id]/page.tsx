@@ -349,6 +349,20 @@ export default function MitigationDetailPage({ params }: { params: Promise<{ id:
                   <p className="text-xs text-muted-foreground mb-1">Scope Hash</p>
                   <p className="text-xs font-mono break-all">{mitigation.scope_hash}</p>
                 </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Triggering Event</p>
+                  <Link href={`/events?id=${mitigation.triggering_event_id}`} className="text-xs font-mono text-primary hover:underline break-all">
+                    {mitigation.triggering_event_id}
+                  </Link>
+                </div>
+                {mitigation.last_event_id !== mitigation.triggering_event_id && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Last Event (TTL extend)</p>
+                    <Link href={`/events?id=${mitigation.last_event_id}`} className="text-xs font-mono text-primary hover:underline break-all">
+                      {mitigation.last_event_id}
+                    </Link>
+                  </div>
+                )}
                 {mitigation.reason && (
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Reason</p>

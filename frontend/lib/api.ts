@@ -32,6 +32,7 @@ export interface Mitigation {
   expires_at: string
   withdrawn_at: string | null
   triggering_event_id: string
+  last_event_id: string
   reason: string
 }
 
