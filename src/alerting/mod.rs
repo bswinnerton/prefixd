@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 
 pub static ALERTS_SENT: Lazy<CounterVec> = Lazy::new(|| {
     prometheus::register_counter_vec!(
@@ -22,6 +23,8 @@ pub static ALERTS_SENT: Lazy<CounterVec> = Lazy::new(|| {
     )
     .unwrap()
 });
+
+const MAX_IN_FLIGHT_ALERT_TASKS: usize = 64;
 
 /// Alert event types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -312,12 +315,19 @@ impl DestinationConfig {
                 "api_key": "***",
                 "region": region,
             }),
-            Self::Generic { url, headers, .. } => serde_json::json!({
-                "type": "generic",
-                "url": url,
-                "secret": "***",
-                "headers": headers,
-            }),
+            Self::Generic { url, headers, .. } => {
+                let redacted_headers: HashMap<_, _> = headers
+                    .keys()
+                    .cloned()
+                    .map(|k| (k, "***".to_string()))
+                    .collect();
+                serde_json::json!({
+                    "type": "generic",
+                    "url": url,
+                    "secret": "***",
+                    "headers": redacted_headers,
+                })
+            }
         }
     }
 }
@@ -335,6 +345,7 @@ pub struct AlertingConfig {
 pub struct AlertingService {
     config: AlertingConfig,
     http_client: reqwest::Client,
+    in_flight: Arc<Semaphore>,
 }
 
 impl AlertingService {
@@ -347,6 +358,7 @@ impl AlertingService {
         Arc::new(Self {
             config,
             http_client,
+            in_flight: Arc::new(Semaphore::new(MAX_IN_FLIGHT_ALERT_TASKS)),
         })
     }
 
@@ -357,8 +369,19 @@ impl AlertingService {
     /// Fire an alert to all destinations (non-blocking, spawns background tasks)
     pub fn notify(self: &Arc<Self>, alert: Alert) {
         if !self.config.destinations.is_empty() && self.should_send(&alert.event_type) {
+            let permit = match Arc::clone(&self.in_flight).try_acquire_owned() {
+                Ok(permit) => permit,
+                Err(_) => {
+                    tracing::warn!(
+                        event_type = %alert.event_type,
+                        "dropping alert because alert worker queue is saturated"
+                    );
+                    return;
+                }
+            };
             let this = Arc::clone(self);
             tokio::spawn(async move {
+                let _permit = permit;
                 this.dispatch(&alert).await;
             });
         }
@@ -445,6 +468,7 @@ impl Default for AlertingService {
         Self {
             config: AlertingConfig::default(),
             http_client: reqwest::Client::new(),
+            in_flight: Arc::new(Semaphore::new(MAX_IN_FLIGHT_ALERT_TASKS)),
         }
     }
 }
@@ -480,6 +504,7 @@ mod tests {
         let svc = AlertingService {
             config,
             http_client: reqwest::Client::new(),
+            in_flight: Arc::new(Semaphore::new(MAX_IN_FLIGHT_ALERT_TASKS)),
         };
         assert!(svc.should_send(&AlertEventType::MitigationCreated));
         assert!(!svc.should_send(&AlertEventType::MitigationExpired));
@@ -502,5 +527,27 @@ mod tests {
         let json = serde_json::to_string(&alert).unwrap();
         assert!(json.contains("mitigation.created"));
         assert!(json.contains("203.0.113.1"));
+    }
+
+    #[test]
+    fn test_generic_redaction_masks_header_values() {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "Authorization".to_string(),
+            "Bearer super-secret".to_string(),
+        );
+        headers.insert("X-Api-Key".to_string(), "abc123".to_string());
+
+        let dest = DestinationConfig::Generic {
+            url: "https://example.invalid/webhook".to_string(),
+            secret: Some("super-secret".to_string()),
+            headers,
+        };
+
+        let redacted = dest.redacted();
+        let redacted_headers = redacted["headers"].as_object().unwrap();
+        assert_eq!(redacted_headers["Authorization"], "***");
+        assert_eq!(redacted_headers["X-Api-Key"], "***");
+        assert_eq!(redacted["secret"], "***");
     }
 }

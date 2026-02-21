@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Eye, Search, ChevronDown, ChevronUp, Filter, RefreshCw, AlertCircle, XCircle, Plus, Download } from "lucide-react"
@@ -185,13 +185,23 @@ export function MitigationsContentLive({ initialSearch, initialMitigateOpen }: M
         }
         return sortDirection === "asc" ? comparison : -comparison
       })
-  }, [mitigations, searchQuery, sortField, sortDirection])
+  }, [mitigations, customerFilter, popFilter, searchQuery, sortField, sortDirection])
 
   const totalPages = Math.ceil(filteredMitigations.length / itemsPerPage)
   const paginatedMitigations = filteredMitigations.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   )
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, statusFilters, customerFilter, popFilter])
+
+  useEffect(() => {
+    if (totalPages > 0 && currentPage > totalPages) {
+      setCurrentPage(totalPages)
+    }
+  }, [currentPage, totalPages])
 
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return null

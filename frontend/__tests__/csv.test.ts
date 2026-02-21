@@ -1,126 +1,90 @@
-import { describe, it, expect, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
-// Import the module to test the escapeCsvField logic via downloadCsv
-// Since escapeCsvField is not exported, we test it through downloadCsv behavior
-// by intercepting the Blob constructor
+const originalBlob = globalThis.Blob
+const originalCreateObjectURL = globalThis.URL.createObjectURL
+const originalRevokeObjectURL = globalThis.URL.revokeObjectURL
+
+function mockCsvEnvironment() {
+  let capturedContent = ""
+  globalThis.Blob = class MockBlob {
+    constructor(parts: BlobPart[]) {
+      capturedContent = parts[0] as string
+    }
+  } as any
+  globalThis.URL.createObjectURL = vi.fn(() => "blob:mock")
+  globalThis.URL.revokeObjectURL = vi.fn()
+  return () => capturedContent
+}
+
+afterEach(() => {
+  globalThis.Blob = originalBlob
+  globalThis.URL.createObjectURL = originalCreateObjectURL
+  globalThis.URL.revokeObjectURL = originalRevokeObjectURL
+})
 
 describe("CSV export", () => {
-  it("generates correct CSV with headers and rows", () => {
-    let capturedContent = ""
-    const originalBlob = globalThis.Blob
-    globalThis.Blob = class MockBlob {
-      constructor(parts: BlobPart[]) {
-        capturedContent = parts[0] as string
-      }
-    } as any
+  it("generates correct CSV with headers and rows", async () => {
+    const getContent = mockCsvEnvironment()
+    const { downloadCsv } = await import("@/lib/csv")
 
-    globalThis.URL.createObjectURL = vi.fn(() => "blob:mock")
-    globalThis.URL.revokeObjectURL = vi.fn()
+    downloadCsv("test.csv", ["id", "name", "value"], [
+      ["1", "Alice", "100"],
+      ["2", "Bob", "200"],
+    ])
 
-    // Dynamic import to get fresh module
-    return import("@/lib/csv").then(({ downloadCsv }) => {
-      downloadCsv("test.csv", ["id", "name", "value"], [
-        ["1", "Alice", "100"],
-        ["2", "Bob", "200"],
-      ])
-
-      expect(capturedContent).toBe("id,name,value\n1,Alice,100\n2,Bob,200")
-      globalThis.Blob = originalBlob
-    })
+    expect(getContent()).toBe("id,name,value\n1,Alice,100\n2,Bob,200")
   })
 
-  it("escapes fields with commas", () => {
-    let capturedContent = ""
-    const originalBlob = globalThis.Blob
-    globalThis.Blob = class MockBlob {
-      constructor(parts: BlobPart[]) {
-        capturedContent = parts[0] as string
-      }
-    } as any
+  it("escapes fields with commas", async () => {
+    const getContent = mockCsvEnvironment()
+    const { downloadCsv } = await import("@/lib/csv")
 
-    globalThis.URL.createObjectURL = vi.fn(() => "blob:mock")
-    globalThis.URL.revokeObjectURL = vi.fn()
+    downloadCsv("test.csv", ["name"], [["hello, world"]])
 
-    return import("@/lib/csv").then(({ downloadCsv }) => {
-      downloadCsv("test.csv", ["name"], [["hello, world"]])
-
-      expect(capturedContent).toBe('name\n"hello, world"')
-      globalThis.Blob = originalBlob
-    })
+    expect(getContent()).toBe('name\n"hello, world"')
   })
 
-  it("escapes fields with quotes", () => {
-    let capturedContent = ""
-    const originalBlob = globalThis.Blob
-    globalThis.Blob = class MockBlob {
-      constructor(parts: BlobPart[]) {
-        capturedContent = parts[0] as string
-      }
-    } as any
+  it("escapes fields with quotes", async () => {
+    const getContent = mockCsvEnvironment()
+    const { downloadCsv } = await import("@/lib/csv")
 
-    globalThis.URL.createObjectURL = vi.fn(() => "blob:mock")
-    globalThis.URL.revokeObjectURL = vi.fn()
+    downloadCsv("test.csv", ["name"], [['say "hi"']])
 
-    return import("@/lib/csv").then(({ downloadCsv }) => {
-      downloadCsv("test.csv", ["name"], [['say "hi"']])
-
-      expect(capturedContent).toBe('name\n"say ""hi"""')
-      globalThis.Blob = originalBlob
-    })
+    expect(getContent()).toBe('name\n"say ""hi"""')
   })
 
-  it("sanitizes formula injection characters", () => {
-    let capturedContent = ""
-    const originalBlob = globalThis.Blob
-    globalThis.Blob = class MockBlob {
-      constructor(parts: BlobPart[]) {
-        capturedContent = parts[0] as string
-      }
-    } as any
+  it("sanitizes formula injection characters", async () => {
+    const getContent = mockCsvEnvironment()
+    const { downloadCsv } = await import("@/lib/csv")
 
-    globalThis.URL.createObjectURL = vi.fn(() => "blob:mock")
-    globalThis.URL.revokeObjectURL = vi.fn()
+    downloadCsv("test.csv", ["data"], [
+      ['=CMD("calc")'],
+      ["+1234"],
+      ["-5678"],
+      ["@SUM(A1)"],
+      [" \t=SUM(A1)"],
+      ["normal"],
+    ])
 
-    return import("@/lib/csv").then(({ downloadCsv }) => {
-      downloadCsv("test.csv", ["data"], [
-        ['=CMD("calc")'],
-        ["+1234"],
-        ["-5678"],
-        ["@SUM(A1)"],
-        ["normal"],
-      ])
-
-      const lines = capturedContent.split("\n")
-      expect(lines[0]).toBe("data")
-      expect(lines[1]).toBe("\"'=CMD(\"\"calc\"\")\"") // prefixed + quoted
-      expect(lines[2]).toBe("'+1234")
-      expect(lines[3]).toBe("'-5678")
-      expect(lines[4]).toBe("'@SUM(A1)")
-      expect(lines[5]).toBe("normal")
-      globalThis.Blob = originalBlob
-    })
+    const lines = getContent().split("\n")
+    expect(lines[0]).toBe("data")
+    expect(lines[1]).toBe("\"'=CMD(\"\"calc\"\")\"")
+    expect(lines[2]).toBe("'+1234")
+    expect(lines[3]).toBe("'-5678")
+    expect(lines[4]).toBe("'@SUM(A1)")
+    expect(lines[5]).toBe("' \t=SUM(A1)")
+    expect(lines[6]).toBe("normal")
   })
 
-  it("handles null/undefined fields gracefully", () => {
-    let capturedContent = ""
-    const originalBlob = globalThis.Blob
-    globalThis.Blob = class MockBlob {
-      constructor(parts: BlobPart[]) {
-        capturedContent = parts[0] as string
-      }
-    } as any
+  it("handles null/undefined fields gracefully", async () => {
+    const getContent = mockCsvEnvironment()
+    const { downloadCsv } = await import("@/lib/csv")
 
-    globalThis.URL.createObjectURL = vi.fn(() => "blob:mock")
-    globalThis.URL.revokeObjectURL = vi.fn()
+    downloadCsv("test.csv", ["a", "b"], [
+      [undefined as any, null as any],
+      ["", "ok"],
+    ])
 
-    return import("@/lib/csv").then(({ downloadCsv }) => {
-      downloadCsv("test.csv", ["a", "b"], [
-        [undefined as any, null as any],
-        ["", "ok"],
-      ])
-
-      expect(capturedContent).toBe("a,b\n,\n,ok")
-      globalThis.Blob = originalBlob
-    })
+    expect(getContent()).toBe("a,b\n,\n,ok")
   })
 })

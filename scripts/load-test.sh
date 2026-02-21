@@ -13,6 +13,11 @@ set -euo pipefail
 API="http://localhost"
 PASS=0
 FAIL=0
+AUTH_ARGS=()
+
+if [ -n "${PREFIXD_API_TOKEN:-}" ]; then
+    AUTH_ARGS=(-H "Authorization: Bearer ${PREFIXD_API_TOKEN}")
+fi
 
 # --- helpers ---
 
@@ -48,9 +53,12 @@ _hey_latency_p99=""
 parse_hey() {
     local output="$1"
 
-    _hey_rps=$(echo "$output" | grep "Requests/sec:" | awk -F'\t' '{print $2}' | tr -d ' ')
-    _hey_latency_avg=$(echo "$output" | grep "Average:" | head -1 | awk -F'\t' '{print $2}' | sed 's/ secs//')
-    _hey_latency_p99=$(echo "$output" | grep "99%" | head -1 | sed 's/.*in \(.*\) secs/\1/' | tr -d ' ')
+    _hey_rps=$(echo "$output" | awk '/Requests\/sec:/{print $2; exit}')
+    _hey_latency_avg=$(echo "$output" | awk '/Average:/{print $2; exit}')
+    _hey_latency_p99=$(echo "$output" | awk '/ 99% /{print $3; exit}')
+    _hey_rps=${_hey_rps:-0}
+    _hey_latency_avg=${_hey_latency_avg:-0}
+    _hey_latency_p99=${_hey_latency_p99:-0}
     local status_dist
     status_dist=$(echo "$output" | grep "^\s*\[" | head -5)
 
@@ -72,7 +80,7 @@ test_health_throughput() {
 
     log "Health endpoint: ${concurrency}c x ${duration}s"
     local output
-    output=$(hey -z "${duration}s" -c "$concurrency" "$API/v1/health" 2>&1)
+    output=$(hey -z "${duration}s" -c "$concurrency" "${AUTH_ARGS[@]}" "$API/v1/health" 2>&1)
     parse_hey "$output"
 
     if [ "$(echo "$_hey_rps > 100" | bc -l 2>/dev/null)" = "1" ]; then
@@ -89,7 +97,7 @@ test_read_throughput() {
 
     log "GET /v1/mitigations: ${concurrency}c x ${duration}s"
     local output
-    output=$(hey -z "${duration}s" -c "$concurrency" "$API/v1/mitigations" 2>&1)
+    output=$(hey -z "${duration}s" -c "$concurrency" "${AUTH_ARGS[@]}" "$API/v1/mitigations" 2>&1)
     parse_hey "$output"
 
     if [ "$(echo "$_hey_rps > 50" | bc -l 2>/dev/null)" = "1" ]; then
@@ -118,6 +126,7 @@ test_ingestion_throughput() {
     output=$(hey -z "${duration}s" -c "$concurrency" \
         -m POST \
         -H "Content-Type: application/json" \
+        "${AUTH_ARGS[@]}" \
         -D "$body_file" \
         "$API/v1/events" 2>&1)
 
@@ -154,6 +163,7 @@ test_burst() {
     output=$(hey -n "$requests" -c "$concurrency" \
         -m POST \
         -H "Content-Type: application/json" \
+        "${AUTH_ARGS[@]}" \
         -D "$body_file" \
         "$API/v1/events" 2>&1)
 
@@ -191,6 +201,7 @@ test_metrics_under_load() {
 
     hey -z "${duration}s" -c 5 -m POST \
         -H "Content-Type: application/json" \
+        "${AUTH_ARGS[@]}" \
         -D "$body_file" \
         "$API/v1/events" >/dev/null 2>&1 &
     local bg_pid=$!
@@ -199,7 +210,7 @@ test_metrics_under_load() {
 
     # Hit metrics while ingestion is running
     local output
-    output=$(hey -z "$((duration - 3))s" -c 2 "$API/metrics" 2>&1)
+    output=$(hey -z "$((duration - 3))s" -c 2 "${AUTH_ARGS[@]}" "$API/metrics" 2>&1)
 
     wait "$bg_pid" 2>/dev/null || true
     rm -f "$body_file"
@@ -229,6 +240,7 @@ test_sustained() {
     output=$(hey -z "${duration}s" -c "$concurrency" \
         -m POST \
         -H "Content-Type: application/json" \
+        "${AUTH_ARGS[@]}" \
         -D "$body_file" \
         "$API/v1/events" 2>&1)
 
@@ -298,7 +310,7 @@ run_burst() {
 check_prereqs
 
 # Capture starting stats
-events_before=$(curl -sf "$API/v1/stats" 2>/dev/null | jq -r '.total_events // 0')
+events_before=$(curl -sf "${AUTH_ARGS[@]}" "$API/v1/stats" 2>/dev/null | jq -r '.total_events // 0')
 log "Starting stats: $events_before events in database"
 echo ""
 
@@ -322,7 +334,7 @@ case "$profile" in
 esac
 
 # Final stats
-events_after=$(curl -sf "$API/v1/stats" 2>/dev/null | jq -r '.total_events // 0')
+events_after=$(curl -sf "${AUTH_ARGS[@]}" "$API/v1/stats" 2>/dev/null | jq -r '.total_events // 0')
 events_ingested=$((events_after - events_before))
 log "Events ingested during test: $events_ingested ($events_before -> $events_after)"
 

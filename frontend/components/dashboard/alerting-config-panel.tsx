@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Loader2, Bell, Send, CheckCircle2, XCircle, AlertCircle } from "lucide-react"
 import { useAlertingConfig } from "@/hooks/use-api"
+import { usePermissions } from "@/hooks/use-permissions"
 import { testAlerting, type AlertingTestResult } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -41,6 +42,7 @@ function destSummary(d: Record<string, unknown>): string {
 
 export function AlertingConfigPanel() {
   const { data, error, isLoading } = useAlertingConfig()
+  const { canReloadConfig } = usePermissions()
   const [testing, setTesting] = useState(false)
   const [testResults, setTestResults] = useState<AlertingTestResult[] | null>(null)
   const [testError, setTestError] = useState<string | null>(null)
@@ -105,20 +107,22 @@ export function AlertingConfigPanel() {
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm font-mono">Alert Destinations</CardTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleTest}
-              disabled={testing}
-              className="font-mono text-xs"
-            >
-              {testing ? (
-                <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-              ) : (
-                <Send className="h-3 w-3 mr-1.5" />
-              )}
-              Send Test Alert
-            </Button>
+            {canReloadConfig ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleTest}
+                disabled={testing}
+                className="font-mono text-xs"
+              >
+                {testing ? (
+                  <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                ) : (
+                  <Send className="h-3 w-3 mr-1.5" />
+                )}
+                Send Test Alert
+              </Button>
+            ) : null}
           </div>
         </CardHeader>
         <CardContent className="space-y-2">

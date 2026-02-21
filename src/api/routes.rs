@@ -131,7 +131,6 @@ async fn openapi_json() -> impl IntoResponse {
 }
 
 /// Create a router for testing with in-memory session store
-#[cfg(any(test, feature = "test-utils"))]
 pub fn create_test_router(state: Arc<AppState>) -> Router {
     use tower_sessions::MemoryStore;
 

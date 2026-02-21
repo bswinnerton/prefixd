@@ -164,7 +164,7 @@ async fn test_e2e_withdrawal_removes_from_rib() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/v1/mitigations/{}/withdraw", mitigation_id))
+                .uri(format!("/v1/mitigations/{}/withdraw", mitigation_id))
                 .header("content-type", "application/json")
                 .body(Body::from(withdraw_json))
                 .unwrap(),

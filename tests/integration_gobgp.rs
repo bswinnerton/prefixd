@@ -249,7 +249,7 @@ async fn test_reconciliation_detects_missing_rule() {
         active.iter().map(|r| r.nlri_hash()).collect();
 
     // Check which "desired" rules are missing
-    let desired = vec![&rule1, &rule2];
+    let desired = [&rule1, &rule2];
     let missing: Vec<_> = desired
         .iter()
         .filter(|r| !active_hashes.contains(&r.nlri_hash()))

@@ -728,7 +728,8 @@ Returns configured alert destinations with secrets redacted.
 POST /v1/config/alerting/test
 ```
 
-Sends a test alert to all configured destinations. Returns per-destination results.
+Sends a test alert to all configured destinations. Returns per-destination results.  
+Requires admin role.
 
 **Response:**
 

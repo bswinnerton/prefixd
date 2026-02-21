@@ -482,23 +482,22 @@ Exposed at `/metrics`:
 
 ```
 # Mitigations
-prefixd_mitigations_active{customer,pop}
-prefixd_mitigations_created_total{customer,pop,action}
-prefixd_mitigations_expired_total{customer,pop}
-prefixd_mitigations_withdrawn_total{customer,pop,reason}
+prefixd_mitigations_active{action_type,pop}
+prefixd_mitigations_created_total{action_type,pop}
+prefixd_mitigations_expired_total{action_type,pop}
+prefixd_mitigations_withdrawn_total{action_type,pop,reason}
 
 # Events
 prefixd_events_ingested_total{source,vector}
-prefixd_events_rejected_total{reason}
+prefixd_events_rejected_total{source,reason}
 
 # BGP
-prefixd_announcements_total{action,result}
-prefixd_withdrawals_total{result}
+prefixd_announcements_total{peer,status}
+prefixd_announcements_latency_seconds{peer}
 prefixd_bgp_session_up{peer}
 
 # Guardrails
 prefixd_guardrail_rejections_total{reason}
-prefixd_quota_usage{scope,customer}
 
 # HTTP
 prefixd_http_requests_total{method,route,status_class}
@@ -506,12 +505,14 @@ prefixd_http_request_duration_seconds{method,route,status_class}
 prefixd_http_in_flight_requests{method,route}
 
 # Operations
-prefixd_config_reload_total{result}
-prefixd_escalations_total{from_action,to_action}
-prefixd_reconciliation_runs_total{result}
+prefixd_config_reload_total{status}
+prefixd_escalations_total{from_action,to_action,pop}
+prefixd_reconciliation_runs_total{status}
 prefixd_reconciliation_active_count{pop}
 
 # Database
+prefixd_db_row_parse_errors_total{table}
+prefixd_db_pool_connections{state}
 prefixd_db_pool_connections{state=active|idle|total}
 
 # Alerting

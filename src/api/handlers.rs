@@ -206,35 +206,58 @@ fn clamp_limit(limit: u32) -> u32 {
 
 const LOGIN_MAX_ATTEMPTS: u32 = 5;
 const LOGIN_WINDOW_SECS: u64 = 60;
+const LOGIN_MAX_TRACKED_USERS: usize = 10_000;
 
 static LOGIN_ATTEMPTS: std::sync::LazyLock<Mutex<HashMap<String, (u32, Instant)>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
-async fn check_login_throttle(key: &str) -> Result<(), StatusCode> {
-    let attempts = LOGIN_ATTEMPTS.lock().await;
-    if let Some((count, started)) = attempts.get(key) {
-        if started.elapsed().as_secs() < LOGIN_WINDOW_SECS && *count >= LOGIN_MAX_ATTEMPTS {
-            return Err(StatusCode::TOO_MANY_REQUESTS);
+fn prune_login_attempts_locked(attempts: &mut HashMap<String, (u32, Instant)>) {
+    attempts.retain(|_, (_, started)| started.elapsed().as_secs() < LOGIN_WINDOW_SECS);
+
+    if attempts.len() > LOGIN_MAX_TRACKED_USERS {
+        let mut by_age: Vec<_> = attempts
+            .iter()
+            .map(|(key, (_, started))| (key.clone(), *started))
+            .collect();
+        by_age.sort_by_key(|(_, started)| *started);
+
+        let overflow = attempts.len() - LOGIN_MAX_TRACKED_USERS;
+        for (key, _) in by_age.into_iter().take(overflow) {
+            attempts.remove(&key);
         }
     }
-    Ok(())
 }
 
-async fn record_login_attempt(key: &str) {
+async fn check_and_record_login_attempt(key: &str) -> Result<(), StatusCode> {
     let mut attempts = LOGIN_ATTEMPTS.lock().await;
-    let entry = attempts
-        .entry(key.to_string())
-        .or_insert((0, Instant::now()));
+    prune_login_attempts_locked(&mut attempts);
+
+    let now = Instant::now();
+    let entry = attempts.entry(key.to_string()).or_insert((0, now));
+
     if entry.1.elapsed().as_secs() >= LOGIN_WINDOW_SECS {
         *entry = (1, Instant::now());
-    } else {
-        entry.0 += 1;
+        return Ok(());
     }
+
+    if entry.0 >= LOGIN_MAX_ATTEMPTS {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    entry.0 += 1;
+    Ok(())
 }
 
 async fn clear_login_attempts(key: &str) {
     let mut attempts = LOGIN_ATTEMPTS.lock().await;
     attempts.remove(key);
+}
+
+fn is_valid_username(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 const MAX_STRING_LEN: usize = 1024;
@@ -258,13 +281,10 @@ fn validate_ip(ip: &str) -> Result<IpAddr, PrefixdError> {
 }
 
 fn validate_cidr(prefix: &str) -> Result<(), PrefixdError> {
-    if let Some((ip_part, mask_part)) = prefix.split_once('/') {
-        ip_part
-            .parse::<IpAddr>()
+    if prefix.contains('/') {
+        prefix
+            .parse::<ipnet::IpNet>()
             .map_err(|_| PrefixdError::InvalidRequest(format!("invalid prefix: '{}'", prefix)))?;
-        mask_part.parse::<u8>().map_err(|_| {
-            PrefixdError::InvalidRequest(format!("invalid prefix mask: '{}'", prefix))
-        })?;
     } else {
         prefix
             .parse::<IpAddr>()
@@ -275,7 +295,6 @@ fn validate_cidr(prefix: &str) -> Result<(), PrefixdError> {
 
 #[derive(Deserialize)]
 pub struct CreateMitigationRequest {
-    #[allow(dead_code)]
     operator_id: String,
     reason: String,
     victim_ip: String,
@@ -845,6 +864,9 @@ pub async fn create_mitigation(
     if let Err(e) = validate_string_len(&req.reason, "reason", MAX_STRING_LEN) {
         return Ok(AppError(e).into_response());
     }
+    if let Err(e) = validate_string_len(&req.operator_id, "operator_id", MAX_USERNAME_LEN) {
+        return Ok(AppError(e).into_response());
+    }
 
     // Validate protocol - reject unknown values instead of silently converting to None
     let protocol = match req.protocol.as_str() {
@@ -958,6 +980,15 @@ pub async fn withdraw_mitigation(
     // Check auth
     let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
     require_auth(&state, &auth_session, auth_header)?;
+
+    if req.operator_id.is_empty()
+        || validate_string_len(&req.operator_id, "operator_id", MAX_USERNAME_LEN).is_err()
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if validate_string_len(&req.reason, "reason", MAX_STRING_LEN).is_err() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
 
     let mut mitigation = state
         .repo
@@ -1337,13 +1368,17 @@ pub async fn login(
 ) -> Result<Json<LoginResponse>, StatusCode> {
     use crate::auth::Credentials;
 
-    // Validate input lengths
-    if req.username.len() > MAX_USERNAME_LEN || req.password.len() > MAX_PASSWORD_LEN {
+    // Validate input lengths and username format
+    if req.username.len() > MAX_USERNAME_LEN
+        || !is_valid_username(&req.username)
+        || req.password.is_empty()
+        || req.password.len() > MAX_PASSWORD_LEN
+    {
         return Err(StatusCode::BAD_REQUEST);
     }
 
     // Per-username brute-force throttle
-    check_login_throttle(&req.username).await?;
+    check_and_record_login_attempt(&req.username).await?;
 
     let username = req.username.clone();
 
@@ -1354,10 +1389,7 @@ pub async fn login(
 
     let operator = match auth_session.authenticate(creds).await {
         Ok(Some(op)) => op,
-        Ok(None) => {
-            record_login_attempt(&username).await;
-            return Err(StatusCode::UNAUTHORIZED);
-        }
+        Ok(None) => return Err(StatusCode::UNAUTHORIZED),
         Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
 
@@ -1524,14 +1556,7 @@ pub async fn create_operator(
     let role: OperatorRole = req.role.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Validate username
-    if req.username.is_empty() || req.username.len() > MAX_USERNAME_LEN {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    if !req
-        .username
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-    {
+    if req.username.len() > MAX_USERNAME_LEN || !is_valid_username(&req.username) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
@@ -1794,6 +1819,44 @@ mod tests {
 
         assert_eq!(pops.len(), 1);
         assert_eq!(pops[0].pop, "iad1");
+    }
+
+    #[test]
+    fn test_validate_cidr_accepts_valid_values() {
+        assert!(super::validate_cidr("203.0.113.0/24").is_ok());
+        assert!(super::validate_cidr("2001:db8::/64").is_ok());
+        assert!(super::validate_cidr("203.0.113.10").is_ok());
+    }
+
+    #[test]
+    fn test_validate_cidr_rejects_invalid_masks() {
+        assert!(super::validate_cidr("203.0.113.0/33").is_err());
+        assert!(super::validate_cidr("2001:db8::/129").is_err());
+        assert!(super::validate_cidr("203.0.113.0/not-a-mask").is_err());
+    }
+
+    #[test]
+    fn test_is_valid_username() {
+        assert!(super::is_valid_username("alice_1"));
+        assert!(super::is_valid_username("ops-admin"));
+        assert!(!super::is_valid_username(""));
+        assert!(!super::is_valid_username("bad space"));
+        assert!(!super::is_valid_username("no/slash"));
+    }
+
+    #[tokio::test]
+    async fn test_login_throttle_blocks_after_limit() {
+        let user = "throttle_test_user";
+        super::clear_login_attempts(user).await;
+
+        for _ in 0..super::LOGIN_MAX_ATTEMPTS {
+            assert!(super::check_and_record_login_attempt(user).await.is_ok());
+        }
+
+        let blocked = super::check_and_record_login_attempt(user).await;
+        assert_eq!(blocked, Err(axum::http::StatusCode::TOO_MANY_REQUESTS));
+
+        super::clear_login_attempts(user).await;
     }
 }
 
@@ -2147,6 +2210,15 @@ pub async fn get_ip_history(
 }
 
 /// Get alerting configuration (redacted secrets)
+#[utoipa::path(
+    get,
+    path = "/v1/config/alerting",
+    tag = "config",
+    responses(
+        (status = 200, description = "Alerting configuration with redacted secrets"),
+        (status = 401, description = "Not authenticated")
+    )
+)]
 pub async fn get_alerting_config(
     State(state): State<Arc<AppState>>,
     auth_session: AuthSession,
@@ -2166,13 +2238,26 @@ pub async fn get_alerting_config(
 }
 
 /// Send a test alert to all configured destinations
+#[utoipa::path(
+    post,
+    path = "/v1/config/alerting/test",
+    tag = "config",
+    responses(
+        (status = 200, description = "Per-destination alert test results"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Insufficient permissions")
+    )
+)]
 pub async fn test_alerting(
     State(state): State<Arc<AppState>>,
     auth_session: AuthSession,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode> {
+    use super::auth::require_role;
+    use crate::domain::OperatorRole;
+
     let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
-    require_auth(&state, &auth_session, auth_header)?;
+    require_role(&state, &auth_session, auth_header, OperatorRole::Admin)?;
 
     let alert = crate::alerting::Alert::test_alert();
     let results = state.alerting.dispatch(&alert).await;

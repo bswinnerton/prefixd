@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, Fragment } from "react"
+import { Fragment, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { Search, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Download } from "lucide-react"
 import { ActionTypeBadge } from "@/components/dashboard/action-type-badge"
@@ -160,6 +160,16 @@ export function AuditLogContentLive() {
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   )
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, actionFilter, actorFilter])
+
+  useEffect(() => {
+    if (totalPages > 0 && currentPage > totalPages) {
+      setCurrentPage(totalPages)
+    }
+  }, [currentPage, totalPages])
 
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return null

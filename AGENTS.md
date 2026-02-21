@@ -138,7 +138,7 @@ See `docs/adr/` for all 15 Architecture Decision Records.
 - `GET /v1/config/playbooks` - Playbook definitions
 - `POST /v1/config/reload` - Hot-reload inventory + playbooks
 - `GET /v1/config/alerting` - Alerting config (secrets redacted)
-- `POST /v1/config/alerting/test` - Send test alert to all destinations
+- `POST /v1/config/alerting/test` - Send test alert to all destinations (admin only)
 - `GET /v1/stats` - Global statistics
 - `GET /v1/stats/timeseries` - Time-series data for charts
 - `GET /v1/ip/{ip}/history` - IP history (events + mitigations + context)
