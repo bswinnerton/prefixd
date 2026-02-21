@@ -84,6 +84,7 @@ fn test_settings() -> Settings {
         },
         safelist: SafelistConfig { prefixes: vec![] },
         shutdown: ShutdownConfig::default(),
+        alerting: Default::default(),
     }
 }
 

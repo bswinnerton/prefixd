@@ -873,7 +873,7 @@ mod tests {
 
         let pattrs = result.unwrap();
         // Should have origin + extended communities
-        assert!(pattrs.len() >= 1);
+        assert!(!pattrs.is_empty());
     }
 
     #[test]
@@ -889,7 +889,7 @@ mod tests {
         assert!(result.is_ok());
 
         let pattrs = result.unwrap();
-        assert!(pattrs.len() >= 1);
+        assert!(!pattrs.is_empty());
     }
 
     #[test]
