@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, Fragment } from "react"
 import Link from "next/link"
 import { Search, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Download } from "lucide-react"
 import { ActionTypeBadge } from "@/components/dashboard/action-type-badge"
@@ -27,6 +27,74 @@ function formatTimestamp(dateStr: string): string {
   }) + " UTC"
 }
 
+function AuditRow({ entry, index, isExpanded, onToggle }: {
+  entry: AuditEntry
+  index: number
+  isExpanded: boolean
+  onToggle: () => void
+}) {
+  const detailsStr = JSON.stringify(entry.details)
+  const isTruncated = detailsStr.length > 50
+
+  return (
+    <Fragment>
+      <tr
+        className={cn(
+          "border-b border-border/50 hover:bg-secondary/50 transition-colors",
+          isExpanded && "bg-secondary/30",
+          index % 2 === 1 && !isExpanded && "bg-secondary/20",
+          isTruncated && "cursor-pointer",
+        )}
+        onClick={onToggle}
+      >
+        <td className="px-4 py-3 font-mono text-muted-foreground whitespace-nowrap">
+          {formatTimestamp(entry.timestamp)}
+        </td>
+        <td className="px-4 py-3">
+          <ActorBadge type={entry.actor_type} name={entry.actor_id || "system"} />
+        </td>
+        <td className="px-4 py-3">
+          <ActionTypeBadge action={entry.action} />
+        </td>
+        <td className="px-4 py-3 font-mono text-foreground">
+          {entry.target_id ? (
+            entry.target_type === "mitigation" ? (
+              <Link
+                href={`/mitigations/${entry.target_id}`}
+                className="truncate max-w-[200px] inline-block text-primary hover:underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {entry.target_id.slice(0, 8)}
+              </Link>
+            ) : (
+              <span className="truncate max-w-[200px] inline-block">
+                {entry.target_id.length > 20 ? `${entry.target_id.slice(0, 20)}...` : entry.target_id}
+              </span>
+            )
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          )}
+        </td>
+        <td className="px-4 py-3 text-muted-foreground max-w-[300px]">
+          <span className="truncate block text-xs font-mono">
+            {detailsStr.slice(0, 50)}
+            {isTruncated && (isExpanded ? " \u25B2" : "... \u25BC")}
+          </span>
+        </td>
+      </tr>
+      {isExpanded && (
+        <tr className="border-b border-border/50 bg-secondary/20">
+          <td colSpan={5} className="px-4 py-3">
+            <pre className="text-xs font-mono bg-secondary/50 p-3 overflow-auto max-h-[300px] whitespace-pre-wrap">
+              {JSON.stringify(entry.details, null, 2)}
+            </pre>
+          </td>
+        </tr>
+      )}
+    </Fragment>
+  )
+}
+
 export function AuditLogContentLive() {
   const [actionFilter, setActionFilter] = useState<string>("All")
   const [actorFilter, setActorFilter] = useState<string>("All")
@@ -34,6 +102,7 @@ export function AuditLogContentLive() {
   const [sortField, setSortField] = useState<SortField>("timestamp")
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
   const [currentPage, setCurrentPage] = useState(1)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const itemsPerPage = 20
 
   const { data: entries, error, isLoading, mutate } = useAuditLog({ limit: 200 })
@@ -244,44 +313,18 @@ export function AuditLogContentLive() {
                   </tr>
                 ) : (
                   paginatedLogs.map((entry, index) => (
-                    <tr
+                    <AuditRow
                       key={entry.audit_id}
-                      className={cn(
-                        "border-b border-border/50 hover:bg-secondary/50 transition-colors",
-                        index % 2 === 1 && "bg-secondary/20"
-                      )}
-                    >
-                      <td className="px-4 py-3 font-mono text-muted-foreground whitespace-nowrap">
-                        {formatTimestamp(entry.timestamp)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <ActorBadge type={entry.actor_type} name={entry.actor_id || "system"} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <ActionTypeBadge action={entry.action} />
-                      </td>
-                      <td className="px-4 py-3 font-mono text-foreground">
-                        {entry.target_id ? (
-                          entry.target_type === "mitigation" ? (
-                            <Link href={`/mitigations/${entry.target_id}`} className="truncate max-w-[200px] inline-block text-primary hover:underline">
-                              {entry.target_id.slice(0, 8)}
-                            </Link>
-                          ) : (
-                            <span className="truncate max-w-[200px] inline-block">
-                              {entry.target_id.length > 20 ? `${entry.target_id.slice(0, 20)}...` : entry.target_id}
-                            </span>
-                          )
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground max-w-[300px]">
-                        <span className="truncate block text-xs font-mono">
-                          {JSON.stringify(entry.details).slice(0, 50)}
-                          {JSON.stringify(entry.details).length > 50 && "..."}
-                        </span>
-                      </td>
-                    </tr>
+                      entry={entry}
+                      index={index}
+                      isExpanded={expandedId === entry.audit_id}
+                      onToggle={() => {
+                        const detailsStr = JSON.stringify(entry.details)
+                        if (detailsStr.length > 50) {
+                          setExpandedId(expandedId === entry.audit_id ? null : entry.audit_id)
+                        }
+                      }}
+                    />
                   ))
                 )}
               </tbody>

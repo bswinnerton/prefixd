@@ -83,9 +83,19 @@ See [CHANGELOG](CHANGELOG.md) for version history.
   - Events + mitigations interleaved chronologically, customer/service context
   - All victim_ip cells across UI link to IP history page
   - `GET /v1/ip/{ip}/history` backend endpoint with inventory lookup
-- [ ] **Alerting/webhook config UI** (P2 — backend done, frontend remaining)
+- [ ] **Alerting/webhook config UI** (P1 — backend done, frontend remaining)
   - Backend: 7 destinations (Slack, Discord, Teams, Telegram, PagerDuty, OpsGenie, generic), `GET /v1/config/alerting`, `POST /v1/config/alerting/test`
-  - Frontend: configure destinations from dashboard, test notification button
+  - Frontend: read-only destination list with redacted secrets, "Send Test Alert" button, status display
+- [ ] **Audit log detail expansion** (P1 — details truncated at 50 chars)
+  - Click-to-expand or slide-over panel showing full JSON details per audit entry
+- [ ] **Customer/POP filter on mitigations** (P1 — backend supports, no UI)
+  - Add customer and POP dropdown filters; backend `?customer_id=` and `?pop=` already supported
+- [ ] **Timeseries range selector** (P1 — hardcoded 24h view)
+  - Add 1h/6h/24h/7d toggle buttons above activity chart; backend supports arbitrary range/bucket
+- [ ] **Active count badge on sidebar** (P1 — instant awareness)
+  - Show active mitigation count badge on sidebar nav; `useStats()` hook already exists
+- [ ] **Severity badges on mitigations** (P1 — every competitor has this)
+  - Color-coded severity indicators on mitigation rows (critical/high/medium/low)
 - [x] **Dark mode refinement** (P1 — audited, no issues)
   - All hardcoded colors are semantic accents (status green/red/yellow) with good contrast in both themes
   - Admin reload button already has explicit `dark:` hover variants
@@ -217,11 +227,16 @@ Not committed, but on the radar.
 
 ### Dashboard
 
-- **Embedded traffic charts** — Real-time bps/pps sparklines on the overview page (query Prometheus or internal metrics endpoint, reduce context-switching to Grafana)
-- **Attack timeline / history per IP** — Unified "what happened to this IP" view combining events, mitigations, and escalations
-- **Incident reports** — Formatted PDF/Excel post-attack reports (building on existing CSV export)
-- **Webhook/alerting config UI** — Configure alert destinations from dashboard (backend supports Slack, Discord, Teams, Telegram, PagerDuty, OpsGenie, generic webhook; frontend UI not yet built)
-- **GeoIP / ASN / IX enrichment** — Enrich attack events at ingest with source country, ASN, and IX presence. Same pattern as our `ttl` project: `maxminddb` crate with local GeoLite2-City.mmdb, Team Cymru DNS for ASN, PeeringDB REST API for IX detection. In-memory caches with 1h TTL, PeeringDB disk-cached at 24h. Fields added to AttackEvent before policy evaluation.
+- **Bulk withdraw** — Multi-select mitigations and withdraw all at once (critical during attack waves with false positives)
+- **Real-time bps/pps sparklines** — Per-mitigation traffic graphs on overview (query Prometheus or internal metrics)
+- **FlowSpec rule preview** — Human-readable display of announced NLRI on mitigation detail page
+- **Date range filtering** — Time picker on events and audit log pages for incident investigation
+- **Post-attack incident reports** — Formatted PDF/markdown summary (timeline, peak traffic, actions taken)
+- **Notification preferences** — Mute/filter WebSocket toasts, quiet hours (reduce alert fatigue)
+- **POP-level drill-down** — Per-POP dashboard with geographic view for multi-POP deployments
+- **Triggering event link** — Link from mitigation to its triggering event (data exists, not rendered)
+- **OpenAPI/Swagger viewer** — Embed Swagger UI or Redoc in dashboard (backend serves `/openapi.json`)
+- **GeoIP / ASN / IX enrichment** — Enrich attack events at ingest with source country, ASN, and IX presence
 
 ### Advanced FlowSpec
 

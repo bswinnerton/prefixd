@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils"
 import { LayoutDashboard, Shield, Activity, FileText, Settings, X, ChevronsLeft, ChevronsRight, FileCode, Database, History } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { usePermissions } from "@/hooks/use-permissions"
+import { useStats } from "@/hooks/use-api"
 
 const navItems = [
   { href: "/", label: "Overview", icon: LayoutDashboard, adminOnly: false },
@@ -28,6 +29,7 @@ interface SidebarProps {
 export function Sidebar({ isOpen, onClose, isCollapsed = false, onToggleCollapse }: SidebarProps) {
   const pathname = usePathname()
   const permissions = usePermissions()
+  const { data: stats } = useStats()
 
   // Filter nav items based on permissions
   const visibleNavItems = navItems.filter(item => !item.adminOnly || permissions.isAdmin)
@@ -72,6 +74,7 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false, onToggleCollapse
           <nav className={cn("flex-1 py-2", isCollapsed ? "px-2" : "px-2")}>
             {visibleNavItems.map((item) => {
               const isActive = pathname === item.href
+              const activeCount = item.href === "/mitigations" ? (stats?.total_active ?? 0) : 0
 
               if (isCollapsed) {
                 return (
@@ -81,17 +84,22 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false, onToggleCollapse
                         href={item.href}
                         onClick={onClose}
                         className={cn(
-                          "flex h-9 w-full items-center justify-center transition-colors",
+                          "relative flex h-9 w-full items-center justify-center transition-colors",
                           isActive
                             ? "bg-sidebar-accent text-primary"
                             : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
                         )}
                       >
                         <item.icon className="h-4 w-4" />
+                        {activeCount > 0 ? (
+                          <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-[14px] items-center justify-center bg-destructive text-destructive-foreground text-[9px] font-bold px-0.5">
+                            {activeCount > 99 ? "99+" : activeCount}
+                          </span>
+                        ) : null}
                       </Link>
                     </TooltipTrigger>
                     <TooltipContent side="right" className="font-mono text-xs">
-                      {item.label}
+                      {item.label}{activeCount > 0 ? ` (${activeCount})` : ""}
                     </TooltipContent>
                   </Tooltip>
                 )
@@ -110,7 +118,12 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false, onToggleCollapse
                   )}
                 >
                   <item.icon className="h-4 w-4" />
-                  {item.label}
+                  <span className="flex-1">{item.label}</span>
+                  {activeCount > 0 ? (
+                    <span className="flex h-4 min-w-[16px] items-center justify-center bg-destructive text-destructive-foreground text-[10px] font-bold px-1">
+                      {activeCount > 99 ? "99+" : activeCount}
+                    </span>
+                  ) : null}
                 </Link>
               )
             })}

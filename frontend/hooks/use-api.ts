@@ -218,6 +218,14 @@ export function useTimeseries(metric?: string, range?: string, bucket?: string) 
   )
 }
 
+export function useAlertingConfig() {
+  return useSWR(
+    "alerting-config",
+    MOCK_MODE ? async () => ({ destinations: [], events: [] }) : api.getAlertingConfig,
+    { refreshInterval: 0, revalidateOnFocus: !MOCK_MODE }
+  )
+}
+
 export function useIpHistory(ip: string | null) {
   return useSWR(
     ip ? ["ip-history", ip] : null,

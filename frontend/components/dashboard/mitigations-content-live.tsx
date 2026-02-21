@@ -31,6 +31,7 @@ import { withdrawMitigation, type Mitigation } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { downloadCsv } from "@/lib/csv"
 import { MitigateNowDialog } from "@/components/dashboard/mitigate-now-dialog"
+import { SeverityBadge, deriveSeverity } from "@/components/dashboard/severity-badge"
 
 type SortField = "status" | "victim_ip" | "vector" | "customer_id" | "created_at" | "expires_at"
 type SortDirection = "asc" | "desc"
@@ -91,6 +92,8 @@ export function MitigationsContentLive({ initialSearch, initialMitigateOpen }: M
   const [isWithdrawing, setIsWithdrawing] = useState(false)
   const [withdrawError, setWithdrawError] = useState<string | null>(null)
   const [mitigateNowOpen, setMitigateNowOpen] = useState(initialMitigateOpen ?? false)
+  const [customerFilter, setCustomerFilter] = useState("All")
+  const [popFilter, setPopFilter] = useState("All")
   const permissions = usePermissions()
   const itemsPerPage = 20
 
@@ -131,10 +134,23 @@ export function MitigationsContentLive({ initialSearch, initialMitigateOpen }: M
     }
   }
 
+  const { customers, pops } = useMemo(() => {
+    if (!mitigations) return { customers: [] as string[], pops: [] as string[] }
+    const customerSet = new Set<string>()
+    const popSet = new Set<string>()
+    for (const m of mitigations) {
+      if (m.customer_id) customerSet.add(m.customer_id)
+      if (m.pop) popSet.add(m.pop)
+    }
+    return { customers: [...customerSet].sort(), pops: [...popSet].sort() }
+  }, [mitigations])
+
   const filteredMitigations = useMemo(() => {
     if (!mitigations) return []
     return mitigations
       .filter((m) => {
+        if (customerFilter !== "All" && m.customer_id !== customerFilter) return false
+        if (popFilter !== "All" && m.pop !== popFilter) return false
         if (searchQuery) {
           const q = searchQuery.toLowerCase()
           const matches = m.victim_ip.includes(q) ||
@@ -270,6 +286,37 @@ export function MitigationsContentLive({ initialSearch, initialMitigateOpen }: M
           )}
         >
           <div className="flex flex-wrap items-center gap-2">
+            <Select
+              value={customerFilter}
+              onValueChange={(v) => { setCustomerFilter(v); setCurrentPage(1) }}
+            >
+              <SelectTrigger className="w-full sm:w-36 h-9 bg-secondary border-border text-xs font-mono">
+                <SelectValue placeholder="Customer" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="All">All Customers</SelectItem>
+                {customers.map((c) => (
+                  <SelectItem key={c} value={c}>{c}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={popFilter}
+              onValueChange={(v) => { setPopFilter(v); setCurrentPage(1) }}
+            >
+              <SelectTrigger className="w-full sm:w-28 h-9 bg-secondary border-border text-xs font-mono">
+                <SelectValue placeholder="POP" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="All">All POPs</SelectItem>
+                {pops.map((p) => (
+                  <SelectItem key={p} value={p}>{p}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
             {(["active", "escalated", "expired", "withdrawn", "pending"] as const).map((status) => (
               <button
                 key={status}
@@ -311,6 +358,9 @@ export function MitigationsContentLive({ initialSearch, initialMitigateOpen }: M
                       Status
                       <SortIcon field="status" />
                     </span>
+                  </th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">
+                    Severity
                   </th>
                   <th
                     className="text-left px-4 py-3 font-medium text-muted-foreground cursor-pointer hover:text-foreground"
@@ -356,7 +406,7 @@ export function MitigationsContentLive({ initialSearch, initialMitigateOpen }: M
               <tbody>
                 {paginatedMitigations.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
                       No mitigations found
                     </td>
                   </tr>
@@ -374,6 +424,9 @@ export function MitigationsContentLive({ initialSearch, initialMitigateOpen }: M
                       >
                         <td className="px-4 py-3">
                           <StatusBadge status={mitigation.status} />
+                        </td>
+                        <td className="px-4 py-3">
+                          <SeverityBadge severity={deriveSeverity(mitigation.status, mitigation.action_type)} size="sm" />
                         </td>
                         <td className="px-4 py-3 font-mono text-foreground">
                           <Link

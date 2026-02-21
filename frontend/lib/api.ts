@@ -468,6 +468,46 @@ export interface IpHistoryEvent {
   confidence: number | null
 }
 
+// Alerting
+
+export interface AlertingDestination {
+  type: "slack" | "discord" | "teams" | "telegram" | "pagerduty" | "opsgenie" | "generic"
+  webhook_url?: string
+  channel?: string
+  chat_id?: string
+  bot_token?: string
+  routing_key?: string
+  events_url?: string
+  api_key?: string
+  region?: string
+  url?: string
+  secret?: string
+  headers?: Record<string, string>
+}
+
+export interface AlertingConfigResponse {
+  destinations: AlertingDestination[]
+  events: string[]
+}
+
+export interface AlertingTestResult {
+  destination: string
+  status: "ok" | "error"
+  error: string | null
+}
+
+export interface AlertingTestResponse {
+  results: AlertingTestResult[]
+}
+
+export async function getAlertingConfig(): Promise<AlertingConfigResponse> {
+  return fetchApi<AlertingConfigResponse>("/v1/config/alerting")
+}
+
+export async function testAlerting(): Promise<AlertingTestResponse> {
+  return fetchApi<AlertingTestResponse>("/v1/config/alerting/test", { method: "POST" })
+}
+
 export async function getIpHistory(ip: string, limit?: number): Promise<IpHistoryResponse> {
   const searchParams = new URLSearchParams()
   if (limit) searchParams.set("limit", limit.toString())

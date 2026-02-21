@@ -1,9 +1,17 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { useTimeseries } from "@/hooks/use-api"
+import { cn } from "@/lib/utils"
+
+const RANGE_OPTIONS = [
+  { label: "1h", range: "1h", bucket: "5m" },
+  { label: "6h", range: "6h", bucket: "30m" },
+  { label: "24h", range: "24h", bucket: "1h" },
+  { label: "7d", range: "7d", bucket: "6h" },
+] as const
 
 const chartConfig = {
   mitigations: {
@@ -22,8 +30,10 @@ function formatHour(bucket: string) {
 }
 
 export function MitigationActivityChart() {
-  const { data: mitigationData, error: mitigationError } = useTimeseries("mitigations", "24h", "1h")
-  const { data: eventData, error: eventError } = useTimeseries("events", "24h", "1h")
+  const [rangeIdx, setRangeIdx] = useState(2) // default 24h
+  const selectedRange = RANGE_OPTIONS[rangeIdx]
+  const { data: mitigationData, error: mitigationError } = useTimeseries("mitigations", selectedRange.range, selectedRange.bucket)
+  const { data: eventData, error: eventError } = useTimeseries("events", selectedRange.range, selectedRange.bucket)
 
   const chartData = useMemo(() => {
     const bucketMap = new Map<string, { bucket: string; mitigations: number; events: number }>()
@@ -61,7 +71,7 @@ export function MitigationActivityChart() {
     return (
       <div className="border border-border bg-card p-4">
         <h3 className="text-xs font-mono uppercase text-muted-foreground mb-3">
-          Activity (24h)
+          Activity ({selectedRange.label})
         </h3>
         <div className="flex items-center justify-center h-32 text-muted-foreground text-xs">
           Loading...
@@ -74,7 +84,7 @@ export function MitigationActivityChart() {
     return (
       <div className="border border-border bg-card p-4">
         <h3 className="text-xs font-mono uppercase text-muted-foreground mb-3">
-          Activity (24h)
+          Activity ({selectedRange.label})
         </h3>
         <div className="flex items-center justify-center h-32 text-xs text-destructive">
           Unable to load activity chart
@@ -87,10 +97,10 @@ export function MitigationActivityChart() {
     return (
       <div className="border border-border bg-card p-4">
         <h3 className="text-xs font-mono uppercase text-muted-foreground mb-3">
-          Activity (24h)
+          Activity ({selectedRange.label})
         </h3>
         <div className="flex items-center justify-center h-32 text-muted-foreground text-xs">
-          No activity in the last 24 hours
+          No activity in the last {selectedRange.label}
         </div>
       </div>
     )
@@ -100,9 +110,25 @@ export function MitigationActivityChart() {
     <div className="border border-border bg-card p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-xs font-mono uppercase text-muted-foreground">
-          Activity (24h)
+          Activity ({selectedRange.label})
         </h3>
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-0.5 bg-secondary p-0.5">
+            {RANGE_OPTIONS.map((opt, i) => (
+              <button
+                key={opt.label}
+                onClick={() => setRangeIdx(i)}
+                className={cn(
+                  "px-2 py-0.5 text-[10px] font-mono transition-colors",
+                  i === rangeIdx
+                    ? "bg-background text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
           <div className="flex items-center gap-1.5">
             <span className="size-2 rounded-full" style={{ backgroundColor: "var(--color-chart-1)" }} />
             <span className="text-[10px] text-muted-foreground">Mitigations</span>

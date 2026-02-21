@@ -11,7 +11,8 @@ import { useConfigSettings, useConfigPlaybooks } from "@/hooks/use-api"
 import { reloadConfig } from "@/lib/api"
 import { usePermissions } from "@/hooks/use-permissions"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { RefreshCw, Loader2, FileCode, Zap } from "lucide-react"
+import { RefreshCw, Loader2, FileCode, Zap, Bell } from "lucide-react"
+import { AlertingConfigPanel } from "@/components/dashboard/alerting-config-panel"
 
 function formatRate(bps: number): string {
   if (bps >= 1_000_000_000) return `${(bps / 1_000_000_000).toFixed(1)} Gbps`
@@ -108,6 +109,10 @@ export default function ConfigPage() {
                     {playbooksData.total_playbooks}
                   </Badge>
                 )}
+              </TabsTrigger>
+              <TabsTrigger value="alerting" className="text-xs">
+                <Bell className="h-3 w-3 mr-1.5" />
+                Alerting
               </TabsTrigger>
             </TabsList>
 
@@ -219,6 +224,10 @@ export default function ConfigPage() {
                   </Card>
                 ))
               )}
+            </TabsContent>
+
+            <TabsContent value="alerting" className="mt-4">
+              <AlertingConfigPanel />
             </TabsContent>
           </Tabs>
         </div>
