@@ -128,6 +128,16 @@ prefixdctl migrations
 
 ## Version-Specific Notes
 
+### v0.9.1 -> v0.10.0
+
+- **Playbook editor:** New `PUT /v1/config/playbooks` endpoint (admin-only). Config page now has form-based and raw YAML editors for playbooks. Playbooks are saved with atomic write + `.bak` backup.
+- **Interactive alerting config:** New `PUT /v1/config/alerting` endpoint (admin-only). Alerting configuration moved from `prefixd.yaml` to standalone `alerting.yaml` (backward-compatible fallback). Config page alerting tab now supports add/edit/remove destinations with type-specific forms. Secrets preserved via `***` sentinel on update.
+- **SSRF protection:** Webhook destination URLs now require HTTPS and reject localhost/private IPs.
+- **Event cross-links:** Mitigation detail page shows clickable triggering and last event links.
+- **GHCR publishing:** CI publishes Docker images to `ghcr.io` on push to main and version tags.
+- No database migrations required
+- No breaking API changes
+
 ### v0.9.0 -> v0.9.1
 
 - **Security fixes:** Login brute-force throttle hardened (atomic check, bounded state), CIDR validation uses `ipnet::IpNet`, generic webhook headers redacted in API, alerting test endpoint admin-only, CSV formula regex strengthened

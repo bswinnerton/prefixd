@@ -216,7 +216,7 @@ docker compose logs prefixd   # View daemon logs
 
 Services: nginx (80), prefixd (8080), dashboard (3000), postgres (5432), gobgp (50051/179), prometheus (9091), grafana (3001)
 
-## Current State (v0.9.1)
+## Current State (v0.10.0)
 
 Completed:
 - HTTP API with hybrid auth (session + bearer) and rate limiting

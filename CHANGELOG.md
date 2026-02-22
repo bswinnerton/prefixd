@@ -7,25 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-02-22
+
 ### Added
 
 - **Playbook editor** — `PUT /v1/config/playbooks` endpoint (admin-only) with full validation, atomic YAML write with `.bak` backup, and hot-reload. Form-based editor and raw YAML editor on Config page frontend.
+- **Interactive alerting config** — `PUT /v1/config/alerting` endpoint (admin-only) with validation, secret merge (`***` preserves existing secrets), atomic write to `alerting.yaml`, and hot-reload via `RwLock<Arc<AlertingService>>`. Frontend editor with type-specific forms for all 7 destination types, event filter checkboxes, save/discard controls.
+- **Alerting config split** — Alerting configuration moved from `prefixd.yaml` to standalone `alerting.yaml` with backward-compatible fallback. Reloaded on `POST /v1/config/reload`.
 - **Event cross-links** — Mitigation detail shows clickable triggering event and last event (TTL extend) links
 - **GHCR Docker publishing** — CI publishes `prefixd` and `prefixd-dashboard` images to `ghcr.io` on push to main and version tags
 
 ### Security
 
-- **Atomic playbook writes** — Temp-file + `sync_all` + rename pattern prevents corruption on crash; symlink targets rejected
-- **JSON parse rejection** — `PUT /v1/config/playbooks` returns 400 on malformed JSON (not 500)
-- **Concurrent write serialization** — Playbook updates hold write lock across save + in-memory update to prevent races
+- **SSRF protection** — Webhook URLs validated: HTTPS required, localhost and private/link-local IPs rejected
+- **Secret merge ambiguity detection** — Errors on multiple same-type destinations instead of silent first-match
+- **Atomic config writes** — Temp-file + `sync_all` + rename pattern for both playbooks and alerting; symlink targets rejected
+- **Concurrent write serialization** — Both playbook and alerting PUT endpoints hold write locks across merge/validate/save/swap
+- **reload_config() race fix** — Write locks held during load+swap to prevent stale overwrite from concurrent PUT
+- **JSON parse rejection** — PUT endpoints return 400 on malformed JSON (not 500)
 - **Event ID encoding** — All event ID query params in frontend links use `encodeURIComponent`
 - **YAML boolean coercion fix** — Strict `=== true` check prevents `Boolean("false")` from being truthy
-- **Stable React keys** — Playbook/step editors use unique IDs instead of array indices
+- **Stable React keys** — Playbook/step/destination editors use unique IDs instead of array indices
 
 ### Changed
 
-- Backend unit tests: 93 → 104 (11 new: playbook validation, save/roundtrip, symlink rejection)
-- Integration tests: 9 → 13 (4 new: playbook PUT success, validation 400, operator 403, malformed JSON 400)
+- Backend unit tests: 93 → 116 (playbook validation, alerting validation, secret merge, SSRF, save/roundtrip, symlink rejection)
+- Integration tests: 9 → 25 (playbook PUT, alerting PUT, SSRF rejection, hot-reload path, bearer auth)
+- Frontend tests: 26 (unchanged)
 
 ## [0.9.1] - 2026-02-21
 
@@ -738,7 +746,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Safelist prevents mitigation of protected infrastructure
 - Guardrails block overly broad mitigations
 
-[Unreleased]: https://github.com/lance0/prefixd/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/lance0/prefixd/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/lance0/prefixd/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/lance0/prefixd/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/lance0/prefixd/compare/v0.8.5...v0.9.0
 [0.8.5]: https://github.com/lance0/prefixd/compare/v0.8.4...v0.8.5
