@@ -12,7 +12,7 @@ Core functionality is stable:
 - GoBGP v4.x FlowSpec (IPv4/IPv6)
 - Reconciliation loop with drift detection
 - PostgreSQL state storage
-- Session auth + bearer tokens
+- Mode-aware auth (none, credentials, bearer, mtls)
 - WebSocket real-time dashboard
 - CLI tool (prefixdctl)
 
@@ -21,6 +21,8 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 ---
 
 ## Ship Blockers (Before v1.0)
+
+These blockers map directly to the `v1.0` release gates below. Keep both sections in sync when statuses change.
 
 ### Real Router Testing
 
@@ -35,7 +37,7 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 
 ### Documentation Polish
 
-- [ ] Review all docs for accuracy
+- [ ] Review all docs for accuracy (release-candidate freeze)
 - [x] Add example Grafana dashboards
 - [ ] Record demo video: attack → detection → mitigation → recovery
 
@@ -83,8 +85,8 @@ See [CHANGELOG](CHANGELOG.md) for version history.
   - Events + mitigations interleaved chronologically, customer/service context
   - All victim_ip cells across UI link to IP history page
   - `GET /v1/ip/{ip}/history` backend endpoint with inventory lookup
-- [x] **Alerting/webhook config UI** (P1 — read-only + test alert)
-  - "Alerting" tab on Config page: destination list (secrets redacted), "Send Test Alert" button (admin-only), per-destination pass/fail results
+- [x] **Alerting/webhook config UI** (P1 — full editor + test alert)
+  - "Alerting" tab on Config page: add/edit/remove destinations, event filters, redacted secrets, admin-only test alert
 - [x] **Audit log detail expansion** (P1 — click-to-expand)
   - Click truncated details to expand full JSON inline; extracted AuditRow sub-component
 - [x] **Customer/POP filter on mitigations** (P1 — dropdown filters)
@@ -100,7 +102,7 @@ See [CHANGELOG](CHANGELOG.md) for version history.
   - Admin reload button already has explicit `dark:` hover variants
 - [x] **Page layout cleanup** (P1 — admin tabs shipped)
   - Admin page uses Tabs component: Status, Safelist, Users (conditionally rendered)
-  - Config page already tabbed: Settings, Playbooks
+  - Config page already tabbed: Settings, Playbooks, Alerting
 - [x] **Config page editing (Phase 2 shipped)**
   - Playbook editor shipped: form tab + raw YAML tab backed by `PUT /v1/config/playbooks`
   - Alerting editor shipped: destination CRUD + event filters backed by `PUT /v1/config/alerting`
@@ -132,18 +134,23 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 - [x] Credentials auth mode (username/password)
   - Users table in PostgreSQL
   - Argon2id password hashing
-  - Session cookies (HttpOnly, Secure, SameSite=Strict)
+  - Session cookies (HttpOnly, Secure when TLS is enabled, SameSite=Lax)
   - Roles: admin, operator, viewer
 - [x] User management UI in Admin page
 - [x] Real login form (replace placeholder)
-- [ ] LDAP/AD support (optional, config placeholder ready)
-- [ ] RADIUS/ISE support (optional, map attributes to roles)
 
 ---
 
 ## v1.0: Production Ready (Interop + Stability)
 
 Target: Validated with real routers, stable API, production-proven. Operators trust prefixd before we build new features.
+
+### Release Gates (must all be true before tagging v1.0.0)
+
+- [ ] Arista + Cisco XR interop scenarios pass end-to-end in lab
+- [ ] Vendor capability matrix + reference import policy docs published
+- [ ] CVE gate + SBOM generation enabled in CI and green on `main`
+- [ ] Documentation accuracy review + demo video complete
 
 ### Vendor Interop (Priority)
 
@@ -193,7 +200,7 @@ Target: Validated with real routers, stable API, production-proven. Operators tr
 
 ### Documentation Polish
 
-- [ ] Review all docs for accuracy (post-v1.0 freeze)
+- [ ] Review all docs for accuracy (release-candidate freeze)
 - [ ] Record demo video: attack → detection → mitigation → recovery
 - [x] Vendor quirks documented
 
@@ -243,6 +250,8 @@ Example: FastNetMon says UDP flood at 0.6 confidence + router CPU spiking + host
 - [ ] Time-windowed event grouping
 - [ ] Source weighting and reliability scoring
 - [ ] Corroboration requirements ("require 2+ sources")
+- [ ] Correlation explainability (`why` details in API/UI for each mitigation decision)
+- [ ] Replay mode for tuning (simulate historical incidents without announcing FlowSpec rules)
 
 ### Confidence Model
 
@@ -261,6 +270,8 @@ Broader ecosystem integration and advanced capabilities for large-scale deployme
 - [ ] NetBox inventory sync (replace YAML inventory with NetBox as source-of-truth)
 - [ ] FastNetMon native adapter (common pairing for self-hosted deployments)
 - [ ] Scrubber vendor integrations (complement cloud/hardware mitigation with policy automation)
+- [ ] LDAP/AD auth backend (group-to-role mapping)
+- [ ] RADIUS/ISE auth backend (attribute mapping to roles)
 - [ ] Customer self-service portal (per-customer dashboards for MSSPs)
 - [ ] Native BGP speaker (replace GoBGP dependency)
 
