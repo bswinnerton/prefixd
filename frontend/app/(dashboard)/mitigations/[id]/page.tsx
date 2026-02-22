@@ -1,6 +1,5 @@
 "use client"
 
-import { use } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
@@ -59,8 +58,8 @@ function protocolName(proto: number | null): string {
   }
 }
 
-export default function MitigationDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params)
+export default function MitigationDetailPage({ params }: { params: { id: string } }) {
+  const { id } = params
   const router = useRouter()
   const permissions = usePermissions()
 
@@ -237,7 +236,10 @@ export default function MitigationDetailPage({ params }: { params: Promise<{ id:
                       </p>
                       <p className="text-xs text-muted-foreground mt-2">
                         Triggered by event{" "}
-                        <Link href={`/events?id=${mitigation.triggering_event_id}`} className="font-mono text-primary hover:underline">
+                        <Link
+                          href={`/events?id=${encodeURIComponent(String(mitigation.triggering_event_id))}`}
+                          className="font-mono text-primary hover:underline"
+                        >
                           {mitigation.triggering_event_id.slice(0, 8)}
                         </Link>
                       </p>
@@ -351,14 +353,20 @@ export default function MitigationDetailPage({ params }: { params: Promise<{ id:
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">Triggering Event</p>
-                  <Link href={`/events?id=${mitigation.triggering_event_id}`} className="text-xs font-mono text-primary hover:underline break-all">
+                  <Link
+                    href={`/events?id=${encodeURIComponent(String(mitigation.triggering_event_id))}`}
+                    className="text-xs font-mono text-primary hover:underline break-all"
+                  >
                     {mitigation.triggering_event_id}
                   </Link>
                 </div>
                 {mitigation.last_event_id !== mitigation.triggering_event_id && (
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Last Event (TTL extend)</p>
-                    <Link href={`/events?id=${mitigation.last_event_id}`} className="text-xs font-mono text-primary hover:underline break-all">
+                    <Link
+                      href={`/events?id=${encodeURIComponent(String(mitigation.last_event_id))}`}
+                      className="text-xs font-mono text-primary hover:underline break-all"
+                    >
                       {mitigation.last_event_id}
                     </Link>
                   </div>

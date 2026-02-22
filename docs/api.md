@@ -694,6 +694,46 @@ Returns playbook definitions from `playbooks.yaml`.
 }
 ```
 
+### Update Playbooks
+
+```http
+PUT /v1/config/playbooks
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "playbooks": [
+    {
+      "name": "udp_flood_police_first",
+      "match": { "vector": "udp_flood", "require_top_ports": false },
+      "steps": [
+        { "action": "police", "rate_bps": 5000000, "ttl_seconds": 120 },
+        { "action": "discard", "ttl_seconds": 300, "require_confidence_at_least": 0.7, "require_persistence_seconds": 120 }
+      ]
+    }
+  ]
+}
+```
+
+**Admin only.** Validates, writes to `playbooks.yaml` (with `.bak` backup), and hot-reloads. Returns the updated playbooks response on success.
+
+**Validation rules:**
+- Unique playbook names (max 128 chars)
+- Valid vector (`udp_flood`, `syn_flood`, `ack_flood`, `icmp_flood`, `unknown`)
+- At least one step per playbook
+- `police` steps require `rate_bps > 0`
+- `ttl_seconds` must be 1-86400
+- `require_confidence_at_least` must be 0.0-1.0
+- First step must not have escalation requirements
+
+**Error response (400):**
+
+```json
+{
+  "errors": ["playbook[0] (\"bad\"): police action requires rate_bps > 0"]
+}
+```
+
 ### Alerting Config
 
 ```http

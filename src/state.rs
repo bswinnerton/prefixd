@@ -35,7 +35,7 @@ pub struct AppState {
     pub alerting: Arc<AlertingService>,
     /// PostgreSQL pool for metrics (None in tests with MockRepository)
     pub db_pool: Option<PgPool>,
-    pub config_dir: PathBuf,
+    config_dir: PathBuf,
     shutting_down: AtomicBool,
 }
 
@@ -125,6 +125,10 @@ impl AppState {
 
     pub fn is_dry_run(&self) -> bool {
         matches!(self.settings.mode, crate::config::OperationMode::DryRun)
+    }
+
+    pub fn playbooks_path(&self) -> PathBuf {
+        self.config_dir.join("playbooks.yaml")
     }
 
     /// Reload inventory and playbooks from config files

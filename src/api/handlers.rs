@@ -75,6 +75,8 @@ pub struct MitigationResponse {
     pub withdrawn_at: Option<String>,
     /// ID of the event that triggered this mitigation
     pub triggering_event_id: Uuid,
+    /// Most recent event associated with this mitigation
+    pub last_event_id: Uuid,
     /// Scope hash for deduplication
     pub scope_hash: String,
     /// Reason for the mitigation
@@ -101,6 +103,7 @@ impl From<&Mitigation> for MitigationResponse {
             expires_at: m.expires_at.to_rfc3339(),
             withdrawn_at: m.withdrawn_at.map(|t| t.to_rfc3339()),
             triggering_event_id: m.triggering_event_id,
+            last_event_id: m.last_event_id,
             scope_hash: m.scope_hash.clone(),
             reason: m.reason.clone(),
         }
@@ -2036,7 +2039,7 @@ pub async fn update_playbooks(
     State(state): State<Arc<AppState>>,
     auth_session: AuthSession,
     headers: HeaderMap,
-    Json(body): Json<UpdatePlaybooksRequest>,
+    body: Result<Json<UpdatePlaybooksRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<impl IntoResponse, StatusCode> {
     use super::auth::require_role;
     use crate::config::Playbooks;
@@ -2045,6 +2048,14 @@ pub async fn update_playbooks(
 
     let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
     let operator = require_role(&state, &auth_session, auth_header, OperatorRole::Admin)?;
+
+    let Json(body) = match body {
+        Ok(payload) => payload,
+        Err(rejection) => {
+            tracing::warn!(error = %rejection, "invalid playbook update payload");
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
 
     let new_playbooks = Playbooks {
         playbooks: body.playbooks,
@@ -2060,15 +2071,17 @@ pub async fn update_playbooks(
             .into_response());
     }
 
-    // Save to disk (with .bak backup) and reload
-    let playbooks_path = state.config_dir.join("playbooks.yaml");
+    // Serialize concurrent updates and keep in-memory state consistent with disk updates.
+    let mut playbooks_guard = state.playbooks.write().await;
+    let old_count = playbooks_guard.playbooks.len();
+    let playbooks_path = state.playbooks_path();
     new_playbooks.save(&playbooks_path).map_err(|e| {
         tracing::error!(error = %e, "failed to save playbooks");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let old_count = state.playbooks.read().await.playbooks.len();
-    *state.playbooks.write().await = new_playbooks.clone();
+    *playbooks_guard = new_playbooks.clone();
+    drop(playbooks_guard);
     *state.playbooks_loaded_at.write().await = chrono::Utc::now();
 
     // Audit log

@@ -51,7 +51,7 @@ function parseYaml(text: string): { playbooks?: ConfigPlaybook[]; error?: string
         name: String(pb.name ?? ""),
         match: {
           vector: String(match?.vector ?? "unknown"),
-          require_top_ports: Boolean(match?.require_top_ports),
+          require_top_ports: match?.require_top_ports === true,
         },
         steps: steps.map((s) => ({
           action: (String(s.action ?? "police")) as "police" | "discard",

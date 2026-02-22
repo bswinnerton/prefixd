@@ -136,6 +136,7 @@ See `docs/adr/` for all 15 Architecture Decision Records.
 - `GET /v1/config/settings` - Running config (allowlist-redacted)
 - `GET /v1/config/inventory` - Customer/service/IP data
 - `GET /v1/config/playbooks` - Playbook definitions
+- `PUT /v1/config/playbooks` - Update playbooks (admin only, writes YAML + hot-reload)
 - `POST /v1/config/reload` - Hot-reload inventory + playbooks
 - `GET /v1/config/alerting` - Alerting config (secrets redacted)
 - `POST /v1/config/alerting/test` - Send test alert to all destinations (admin only)

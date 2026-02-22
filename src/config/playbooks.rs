@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::io::Write;
 use std::path::Path;
 
 use crate::domain::AttackVector;
@@ -126,15 +127,59 @@ impl Playbooks {
     /// Save playbooks to a YAML file, creating a .bak backup first.
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path = path.as_ref();
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("invalid playbooks path"))?;
+        let tmp_path = parent.join(format!(
+            ".{}.tmp-{}",
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("playbooks.yaml"),
+            uuid::Uuid::new_v4()
+        ));
+
+        // Refuse to operate on symlink paths for defense-in-depth.
+        if std::fs::symlink_metadata(path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return Err(anyhow::anyhow!(
+                "refusing to write playbooks through symlink"
+            ));
+        }
 
         // Backup existing file
         if path.exists() {
             let bak = path.with_extension("yaml.bak");
+            if std::fs::symlink_metadata(&bak)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                return Err(anyhow::anyhow!(
+                    "refusing to write playbooks backup through symlink"
+                ));
+            }
             std::fs::copy(path, &bak)?;
         }
 
         let yaml = serde_yaml::to_string(self)?;
-        std::fs::write(path, yaml)?;
+        let mut tmp_file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp_path)?;
+
+        tmp_file.write_all(yaml.as_bytes())?;
+        tmp_file.sync_all()?;
+        drop(tmp_file);
+
+        std::fs::rename(&tmp_path, path).inspect_err(|_| {
+            let _ = std::fs::remove_file(&tmp_path);
+        })?;
+
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
+
         Ok(())
     }
 
@@ -303,5 +348,22 @@ mod tests {
         // Second save creates backup
         pb.save(&path).unwrap();
         assert!(dir.path().join("playbooks.yaml.bak").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_rejects_symlink_target() {
+        use std::os::unix::fs::symlink;
+
+        let pb = Playbooks {
+            playbooks: vec![valid_playbook()],
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real.yaml");
+        std::fs::write(&target, "playbooks: []").unwrap();
+        let link = dir.path().join("playbooks.yaml");
+        symlink(&target, &link).unwrap();
+
+        assert!(pb.save(&link).is_err());
     }
 }

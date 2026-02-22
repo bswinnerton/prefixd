@@ -66,7 +66,7 @@ export function ActivityFeedLive() {
         timestamp: event.ingested_at,
         description: `${event.vector.replace("_", " ")} detected from ${event.source}`,
         ip: event.victim_ip,
-        href: `/events?id=${event.event_id}`,
+        href: `/events?id=${encodeURIComponent(event.event_id)}`,
       })
     }
   }

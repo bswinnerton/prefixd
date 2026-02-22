@@ -128,7 +128,7 @@ fn test_playbooks() -> Playbooks {
     }
 }
 
-async fn setup_app() -> axum::Router {
+async fn setup_app_with_config_dir(config_dir: std::path::PathBuf) -> axum::Router {
     let repo: Arc<dyn RepositoryTrait> = Arc::new(MockRepository::new());
     let announcer = Arc::new(MockAnnouncer::new());
 
@@ -138,11 +138,15 @@ async fn setup_app() -> axum::Router {
         test_playbooks(),
         repo,
         announcer,
-        std::path::PathBuf::from("."),
+        config_dir,
     )
     .expect("failed to create app state");
 
     create_test_router(state)
+}
+
+async fn setup_app() -> axum::Router {
+    setup_app_with_config_dir(std::path::PathBuf::from(".")).await
 }
 
 #[tokio::test]
@@ -583,4 +587,106 @@ async fn test_ip_history_rejects_invalid_ip() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_update_playbooks_validation_error_returns_400() {
+    let app = setup_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/config/playbooks")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"playbooks":[]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_update_playbooks_invalid_json_returns_400() {
+    let app = setup_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/config/playbooks")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"playbooks":"not-an-array"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_update_playbooks_success_writes_file() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let config_dir = temp_dir.path().to_path_buf();
+    let app = setup_app_with_config_dir(config_dir.clone()).await;
+
+    let body = r#"{
+        "playbooks": [{
+            "name": "syn_discard_test",
+            "match": { "vector": "syn_flood", "require_top_ports": true },
+            "steps": [
+                { "action": "police", "rate_bps": 3000000, "ttl_seconds": 90 },
+                { "action": "discard", "ttl_seconds": 240, "require_confidence_at_least": 0.8, "require_persistence_seconds": 120 }
+            ]
+        }]
+    }"#;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/config/playbooks")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let written = std::fs::read_to_string(config_dir.join("playbooks.yaml")).unwrap();
+    assert!(written.contains("syn_discard_test"));
+    assert!(written.contains("syn_flood"));
+}
+
+#[tokio::test]
+async fn test_update_playbooks_bearer_operator_forbidden() {
+    let app = setup_app_with_bearer().await;
+
+    let body = r#"{
+        "playbooks": [{
+            "name": "test_playbook",
+            "match": { "vector": "udp_flood" },
+            "steps": [{ "action": "police", "rate_bps": 5000000, "ttl_seconds": 120 }]
+        }]
+    }"#;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/config/playbooks")
+                .header("Authorization", "Bearer test-secret-token-123")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }

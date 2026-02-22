@@ -150,7 +150,9 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 {filteredEvents.map((e) => (
                   <CommandItem
                     key={e.event_id}
-                    onSelect={() => runCommand(() => router.push(`/events?id=${e.event_id}`))}
+                    onSelect={() =>
+                      runCommand(() => router.push(`/events?id=${encodeURIComponent(e.event_id)}`))
+                    }
                     className="flex items-center gap-3 font-mono text-xs"
                   >
                     <span className="h-1.5 w-1.5 bg-muted-foreground" />

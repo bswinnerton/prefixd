@@ -21,16 +21,43 @@ interface PlaybookEditorProps {
   saving: boolean
 }
 
-function emptyStep(): ConfigPlaybook["steps"][0] {
-  return { action: "police", rate_bps: 5_000_000, ttl_seconds: 120 }
+type DraftStep = ConfigPlaybook["steps"][0] & { _id: string }
+type DraftPlaybook = Omit<ConfigPlaybook, "steps"> & { _id: string; steps: DraftStep[] }
+
+function createId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID()
+  }
+  return `pb-${Math.random().toString(36).slice(2, 10)}`
 }
 
-function emptyPlaybook(): ConfigPlaybook {
+function emptyStep(): DraftStep {
+  return { _id: createId(), action: "police", rate_bps: 5_000_000, ttl_seconds: 120 }
+}
+
+function emptyPlaybook(): DraftPlaybook {
   return {
+    _id: createId(),
     name: "",
     match: { vector: "udp_flood" },
     steps: [emptyStep()],
   }
+}
+
+function toDraft(playbooks: ConfigPlaybook[]): DraftPlaybook[] {
+  return playbooks.map((playbook) => ({
+    _id: createId(),
+    name: playbook.name,
+    match: playbook.match,
+    steps: playbook.steps.map((step) => ({ ...step, _id: createId() })),
+  }))
+}
+
+function toApiPlaybooks(playbooks: DraftPlaybook[]): ConfigPlaybook[] {
+  return playbooks.map(({ _id: _playbookId, steps, ...rest }) => ({
+    ...rest,
+    steps: steps.map(({ _id: _stepId, ...step }) => step),
+  }))
 }
 
 function validatePlaybooks(playbooks: ConfigPlaybook[]): string[] {
@@ -55,6 +82,10 @@ function validatePlaybooks(playbooks: ConfigPlaybook[]): string[] {
     }
     names.add(pb.name)
 
+    if (!VECTORS.includes(pb.match.vector as typeof VECTORS[number])) {
+      errors.push(`${ctx}: vector must be one of ${VECTORS.join(", ")}`)
+    }
+
     if (pb.steps.length === 0) {
       errors.push(`${ctx}: at least one step is required`)
       continue
@@ -69,14 +100,31 @@ function validatePlaybooks(playbooks: ConfigPlaybook[]): string[] {
       const step = pb.steps[j]
       const sctx = `${ctx} step ${j + 1}`
 
-      if (step.ttl_seconds < 1 || step.ttl_seconds > 86400) {
+      if (!ACTIONS.includes(step.action as typeof ACTIONS[number])) {
+        errors.push(`${sctx}: action must be one of ${ACTIONS.join(", ")}`)
+      }
+      if (!Number.isFinite(step.ttl_seconds) || step.ttl_seconds < 1 || step.ttl_seconds > 86400) {
         errors.push(`${sctx}: TTL must be 1-86400 seconds`)
       }
-      if (step.action === "police" && (!step.rate_bps || step.rate_bps <= 0)) {
+      if (
+        step.action === "police" &&
+        (!Number.isFinite(step.rate_bps ?? NaN) || !step.rate_bps || step.rate_bps <= 0)
+      ) {
         errors.push(`${sctx}: police action requires rate > 0`)
       }
-      if (step.require_confidence_at_least != null && (step.require_confidence_at_least < 0 || step.require_confidence_at_least > 1)) {
+      if (
+        step.require_confidence_at_least != null &&
+        (!Number.isFinite(step.require_confidence_at_least) ||
+          step.require_confidence_at_least < 0 ||
+          step.require_confidence_at_least > 1)
+      ) {
         errors.push(`${sctx}: confidence must be 0.0-1.0`)
+      }
+      if (
+        step.require_persistence_seconds != null &&
+        (!Number.isFinite(step.require_persistence_seconds) || step.require_persistence_seconds < 0)
+      ) {
+        errors.push(`${sctx}: persistence must be >= 0 seconds`)
       }
     }
   }
@@ -104,10 +152,10 @@ function StepEditor({
   onChange,
   onRemove,
 }: {
-  step: ConfigPlaybook["steps"][0]
+  step: DraftStep
   index: number
   isFirst: boolean
-  onChange: (step: ConfigPlaybook["steps"][0]) => void
+  onChange: (step: DraftStep) => void
   onRemove: () => void
 }) {
   return (
@@ -232,17 +280,18 @@ function ReadOnlyPlaybookCard({ playbook }: { playbook: ConfigPlaybook }) {
 }
 
 export function PlaybookEditor({ playbooks: initialPlaybooks, onSave, saving }: PlaybookEditorProps) {
-  const [draft, setDraft] = useState<ConfigPlaybook[]>(initialPlaybooks)
+  const [draft, setDraft] = useState<DraftPlaybook[]>(() => toDraft(initialPlaybooks))
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
 
+  const apiDraft = useMemo(() => toApiPlaybooks(draft), [draft])
   const hasChanges = useMemo(
-    () => JSON.stringify(draft) !== JSON.stringify(initialPlaybooks),
-    [draft, initialPlaybooks]
+    () => JSON.stringify(apiDraft) !== JSON.stringify(initialPlaybooks),
+    [apiDraft, initialPlaybooks]
   )
 
-  const errors = useMemo(() => validatePlaybooks(draft), [draft])
+  const errors = useMemo(() => validatePlaybooks(apiDraft), [apiDraft])
 
-  const updatePlaybook = useCallback((index: number, updated: ConfigPlaybook) => {
+  const updatePlaybook = useCallback((index: number, updated: DraftPlaybook) => {
     setDraft((prev) => prev.map((p, i) => (i === index ? updated : p)))
   }, [])
 
@@ -257,14 +306,14 @@ export function PlaybookEditor({ playbooks: initialPlaybooks, onSave, saving }: 
   }, [draft.length])
 
   const handleDiscard = useCallback(() => {
-    setDraft(initialPlaybooks)
+    setDraft(toDraft(initialPlaybooks))
     setEditingIndex(null)
   }, [initialPlaybooks])
 
   const handleSave = useCallback(async () => {
-    await onSave(draft)
+    await onSave(apiDraft)
     setEditingIndex(null)
-  }, [draft, onSave])
+  }, [apiDraft, onSave])
 
   return (
     <div className="space-y-3">
@@ -299,7 +348,7 @@ export function PlaybookEditor({ playbooks: initialPlaybooks, onSave, saving }: 
               <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
               <div className="space-y-1">
                 {errors.map((err, i) => (
-                  <p key={i} className="text-xs text-destructive font-mono">{err}</p>
+                  <p key={`${err}-${i}`} className="text-xs text-destructive font-mono">{err}</p>
                 ))}
               </div>
             </div>
@@ -320,7 +369,7 @@ export function PlaybookEditor({ playbooks: initialPlaybooks, onSave, saving }: 
 
           if (!isEditing) {
             return (
-              <Card key={index}>
+              <Card key={playbook._id}>
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -343,7 +392,7 @@ export function PlaybookEditor({ playbooks: initialPlaybooks, onSave, saving }: 
                 <CardContent>
                   <div className="space-y-1.5">
                     {playbook.steps.map((step, i) => (
-                      <div key={i} className="flex items-center gap-3 text-xs font-mono bg-secondary/50 px-3 py-2">
+                      <div key={step._id} className="flex items-center gap-3 text-xs font-mono bg-secondary/50 px-3 py-2">
                         <span className="text-muted-foreground w-4">{i + 1}.</span>
                         <Badge variant={step.action === "discard" ? "destructive" : "default"} className="text-[10px] font-mono">
                           {step.action}
@@ -366,7 +415,7 @@ export function PlaybookEditor({ playbooks: initialPlaybooks, onSave, saving }: 
 
           // Edit mode
           return (
-            <Card key={index} className="border-primary/30 ring-1 ring-primary/10">
+            <Card key={playbook._id} className="border-primary/30 ring-1 ring-primary/10">
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-mono text-primary font-medium">Editing</span>
@@ -401,9 +450,9 @@ export function PlaybookEditor({ playbooks: initialPlaybooks, onSave, saving }: 
                     <Checkbox
                       checked={playbook.match.require_top_ports ?? false}
                       onCheckedChange={(checked) => updatePlaybook(index, { ...playbook, match: { ...playbook.match, require_top_ports: checked === true } })}
-                      id={`ports-${index}`}
+                      id={`ports-${playbook._id}`}
                     />
-                    <Label htmlFor={`ports-${index}`} className="text-xs text-muted-foreground cursor-pointer">Require top ports</Label>
+                    <Label htmlFor={`ports-${playbook._id}`} className="text-xs text-muted-foreground cursor-pointer">Require top ports</Label>
                   </div>
                 </div>
               </CardHeader>
@@ -421,7 +470,7 @@ export function PlaybookEditor({ playbooks: initialPlaybooks, onSave, saving }: 
                 </div>
                 {playbook.steps.map((step, stepIdx) => (
                   <StepEditor
-                    key={stepIdx}
+                    key={step._id}
                     step={step}
                     index={stepIdx}
                     isFirst={stepIdx === 0}

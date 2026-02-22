@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Playbook editor** — `PUT /v1/config/playbooks` endpoint (admin-only) with full validation, atomic YAML write with `.bak` backup, and hot-reload. Form-based editor and raw YAML editor on Config page frontend.
+- **Event cross-links** — Mitigation detail shows clickable triggering event and last event (TTL extend) links
+- **GHCR Docker publishing** — CI publishes `prefixd` and `prefixd-dashboard` images to `ghcr.io` on push to main and version tags
+
+### Security
+
+- **Atomic playbook writes** — Temp-file + `sync_all` + rename pattern prevents corruption on crash; symlink targets rejected
+- **JSON parse rejection** — `PUT /v1/config/playbooks` returns 400 on malformed JSON (not 500)
+- **Concurrent write serialization** — Playbook updates hold write lock across save + in-memory update to prevent races
+- **Event ID encoding** — All event ID query params in frontend links use `encodeURIComponent`
+- **YAML boolean coercion fix** — Strict `=== true` check prevents `Boolean("false")` from being truthy
+- **Stable React keys** — Playbook/step editors use unique IDs instead of array indices
+
+### Changed
+
+- Backend unit tests: 93 → 104 (11 new: playbook validation, save/roundtrip, symlink rejection)
+- Integration tests: 9 → 13 (4 new: playbook PUT success, validation 400, operator 403, malformed JSON 400)
+
 ## [0.9.1] - 2026-02-21
 
 ### Added
