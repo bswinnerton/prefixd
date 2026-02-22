@@ -325,8 +325,12 @@ export function AlertingConfigPanel() {
   }
 
   const addDest = useCallback((type: DestType) => {
-    setDraft((prev) => [...(prev ?? []), emptyDest(type)])
-    setEditingIndex((prev ?? []).length)
+    setDraft((prev) => {
+      const current = prev ?? []
+      const next = [...current, emptyDest(type)]
+      setEditingIndex(current.length)
+      return next
+    })
     setAddingType(null)
   }, [])
 
@@ -346,6 +350,14 @@ export function AlertingConfigPanel() {
       return prev.includes(event) ? prev.filter((e) => e !== event) : [...prev, event]
     })
   }, [])
+
+  const readOnlyDestinations = useMemo(() => {
+    if (!data) return []
+    return data.destinations.map((dest, i) => ({
+      ...dest,
+      _id: `readonly-${dest.type}-${destSummary(dest)}-${i}`,
+    }))
+  }, [data])
 
   if (isLoading) {
     return (
@@ -394,7 +406,7 @@ export function AlertingConfigPanel() {
               </div>
             ) : (
               data.destinations.map((dest, i) => (
-                <ReadOnlyDestCard key={i} dest={dest} testResult={testResults?.find((r) => r.destination === dest.type)} />
+                <ReadOnlyDestCard key={`${dest.type}-${i}`} dest={dest} testResult={testResults?.[i]} />
               ))
             )}
           </CardContent>
@@ -424,7 +436,7 @@ export function AlertingConfigPanel() {
   }
 
   // Editable mode
-  const destinations = isEditing ? draft! : data.destinations.map(toDraft)
+  const destinations = isEditing ? draft! : readOnlyDestinations
   const events = isEditing ? draftEvents! : data.events
 
   return (
@@ -541,15 +553,15 @@ export function AlertingConfigPanel() {
                       </Button>
                     </div>
                   ) : (
-                    testResults?.find((r) => r.destination === dest.type) && (
-                      testResults.find((r) => r.destination === dest.type)!.status === "ok" ? (
+                    testResults?.[i] && (
+                      testResults[i]!.status === "ok" ? (
                         <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
                       ) : (
                         <div className="flex items-center gap-1 shrink-0">
                           <XCircle className="h-4 w-4 text-destructive" />
-                          {testResults.find((r) => r.destination === dest.type)!.error ? (
+                          {testResults[i]!.error ? (
                             <span className="text-[10px] text-destructive font-mono max-w-[150px] truncate">
-                              {testResults.find((r) => r.destination === dest.type)!.error}
+                              {testResults[i]!.error}
                             </span>
                           ) : null}
                         </div>

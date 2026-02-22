@@ -156,9 +156,11 @@ impl AppState {
         // Reload playbooks
         let playbooks_path = self.config_dir.join("playbooks.yaml");
         if playbooks_path.exists() {
+            let mut playbooks_guard = self.playbooks.write().await;
             let new_playbooks = Playbooks::load(&playbooks_path)
                 .map_err(|e| PrefixdError::Config(format!("playbooks: {}", e)))?;
-            *self.playbooks.write().await = new_playbooks;
+            *playbooks_guard = new_playbooks;
+            drop(playbooks_guard);
             *self.playbooks_loaded_at.write().await = Utc::now();
             reloaded.push("playbooks".to_string());
             tracing::info!("reloaded playbooks.yaml");
@@ -167,10 +169,12 @@ impl AppState {
         // Reload alerting (from alerting.yaml if present)
         let alerting_path = self.alerting_path();
         if alerting_path.exists() {
+            let mut alerting_guard = self.alerting.write().await;
             let new_config = crate::alerting::AlertingConfig::load(&alerting_path)
                 .map_err(|e| PrefixdError::Config(format!("alerting: {}", e)))?;
             let new_service = AlertingService::new(new_config);
-            *self.alerting.write().await = new_service;
+            *alerting_guard = new_service;
+            drop(alerting_guard);
             *self.alerting_loaded_at.write().await = Utc::now();
             reloaded.push("alerting".to_string());
             tracing::info!("reloaded alerting.yaml");

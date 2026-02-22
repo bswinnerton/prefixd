@@ -833,3 +833,98 @@ async fn test_update_alerting_operator_forbidden() {
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn test_update_alerting_rejects_link_local_url() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = setup_app_with_config_dir(dir.path().to_path_buf()).await;
+
+    let body = serde_json::json!({
+        "destinations": [
+            {
+                "type": "generic",
+                "url": "https://169.254.169.254/latest/meta-data",
+                "secret": "test",
+                "headers": {}
+            }
+        ],
+        "events": []
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/config/alerting")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_reload_config_reloads_alerting_yaml() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_dir = dir.path().to_path_buf();
+    let app = setup_app_with_config_dir(config_dir.clone()).await;
+
+    std::fs::write(
+        config_dir.join("alerting.yaml"),
+        r##"
+destinations:
+  - type: slack
+    webhook_url: https://hooks.slack.com/services/T/B/C
+    channel: "#ops-alerts"
+events:
+  - mitigation.created
+"##,
+    )
+    .unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/config/reload")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(
+        json["reloaded"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "alerting")
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/config/alerting")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["destinations"][0]["type"], "slack");
+    assert_eq!(json["events"][0], "mitigation.created");
+}

@@ -13,6 +13,7 @@ use prometheus::CounterVec;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
+use std::net::IpAddr;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -420,6 +421,8 @@ impl AlertingConfig {
                         errors.push(format!("{}: webhook_url is required", ctx));
                     } else if webhook_url.len() > 1024 {
                         errors.push(format!("{}: webhook_url exceeds 1024 chars", ctx));
+                    } else {
+                        validate_destination_url(webhook_url, "webhook_url", &ctx, &mut errors);
                     }
                 }
                 DestinationConfig::Discord { webhook_url } => {
@@ -427,6 +430,8 @@ impl AlertingConfig {
                         errors.push(format!("{}: webhook_url is required", ctx));
                     } else if webhook_url.len() > 1024 {
                         errors.push(format!("{}: webhook_url exceeds 1024 chars", ctx));
+                    } else {
+                        validate_destination_url(webhook_url, "webhook_url", &ctx, &mut errors);
                     }
                 }
                 DestinationConfig::Teams { webhook_url } => {
@@ -434,6 +439,8 @@ impl AlertingConfig {
                         errors.push(format!("{}: webhook_url is required", ctx));
                     } else if webhook_url.len() > 1024 {
                         errors.push(format!("{}: webhook_url exceeds 1024 chars", ctx));
+                    } else {
+                        validate_destination_url(webhook_url, "webhook_url", &ctx, &mut errors);
                     }
                 }
                 DestinationConfig::Telegram { bot_token, chat_id } => {
@@ -457,6 +464,8 @@ impl AlertingConfig {
                         errors.push(format!("{}: events_url is required", ctx));
                     } else if events_url.len() > 1024 {
                         errors.push(format!("{}: events_url exceeds 1024 chars", ctx));
+                    } else {
+                        validate_destination_url(events_url, "events_url", &ctx, &mut errors);
                     }
                 }
                 DestinationConfig::Opsgenie { api_key, region } => {
@@ -472,6 +481,8 @@ impl AlertingConfig {
                         errors.push(format!("{}: url is required", ctx));
                     } else if url.len() > 1024 {
                         errors.push(format!("{}: url exceeds 1024 chars", ctx));
+                    } else {
+                        validate_destination_url(url, "url", &ctx, &mut errors);
                     }
                 }
             }
@@ -488,55 +499,128 @@ impl AlertingConfig {
         for (i, dest) in self.destinations.iter_mut().enumerate() {
             let ctx = format!("destination[{}] ({})", i, dest.destination_type());
             match dest {
-                DestinationConfig::Slack { webhook_url, .. } => {
+                DestinationConfig::Slack {
+                    webhook_url,
+                    channel,
+                } => {
                     if webhook_url.as_str() == REDACTED {
-                        let found = current.destinations.iter().find_map(|d| match d {
-                            DestinationConfig::Slack { webhook_url: u, .. } => Some(u.clone()),
-                            _ => None,
-                        });
-                        match found {
-                            Some(u) => *webhook_url = u,
-                            None => errors.push(format!("{}: cannot resolve redacted webhook_url — no existing Slack destination", ctx)),
+                        let channel_match = channel.clone();
+                        let exact_matches: Vec<String> = current
+                            .destinations
+                            .iter()
+                            .filter_map(|d| match d {
+                                DestinationConfig::Slack {
+                                    webhook_url: u,
+                                    channel: existing_channel,
+                                } => {
+                                    if channel_match.is_some() && channel_match == *existing_channel
+                                    {
+                                        return Some(u.clone());
+                                    }
+                                    None
+                                }
+                                _ => None,
+                            })
+                            .collect();
+
+                        let matches = if exact_matches.is_empty() {
+                            current
+                                .destinations
+                                .iter()
+                                .filter_map(|d| match d {
+                                    DestinationConfig::Slack { webhook_url: u, .. } => {
+                                        Some(u.clone())
+                                    }
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                        } else {
+                            exact_matches
+                        };
+
+                        match matches.as_slice() {
+                            [u] => *webhook_url = u.clone(),
+                            [] => errors.push(format!(
+                                "{}: cannot resolve redacted webhook_url — no matching existing Slack destination",
+                                ctx
+                            )),
+                            _ => errors.push(format!(
+                                "{}: ambiguous redacted webhook_url — multiple matching Slack destinations",
+                                ctx
+                            )),
                         }
                     }
                 }
                 DestinationConfig::Discord { webhook_url } => {
                     if webhook_url.as_str() == REDACTED {
-                        let found = current.destinations.iter().find_map(|d| match d {
-                            DestinationConfig::Discord { webhook_url: u } => Some(u.clone()),
-                            _ => None,
-                        });
-                        match found {
-                            Some(u) => *webhook_url = u,
-                            None => errors.push(format!("{}: cannot resolve redacted webhook_url — no existing Discord destination", ctx)),
+                        let matches: Vec<String> = current
+                            .destinations
+                            .iter()
+                            .filter_map(|d| match d {
+                                DestinationConfig::Discord { webhook_url: u } => Some(u.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                        match matches.as_slice() {
+                            [u] => *webhook_url = u.clone(),
+                            [] => errors.push(format!(
+                                "{}: cannot resolve redacted webhook_url — no existing Discord destination",
+                                ctx
+                            )),
+                            _ => errors.push(format!(
+                                "{}: ambiguous redacted webhook_url — multiple Discord destinations",
+                                ctx
+                            )),
                         }
                     }
                 }
                 DestinationConfig::Teams { webhook_url } => {
                     if webhook_url.as_str() == REDACTED {
-                        let found = current.destinations.iter().find_map(|d| match d {
-                            DestinationConfig::Teams { webhook_url: u } => Some(u.clone()),
-                            _ => None,
-                        });
-                        match found {
-                            Some(u) => *webhook_url = u,
-                            None => errors.push(format!("{}: cannot resolve redacted webhook_url — no existing Teams destination", ctx)),
+                        let matches: Vec<String> = current
+                            .destinations
+                            .iter()
+                            .filter_map(|d| match d {
+                                DestinationConfig::Teams { webhook_url: u } => Some(u.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                        match matches.as_slice() {
+                            [u] => *webhook_url = u.clone(),
+                            [] => errors.push(format!(
+                                "{}: cannot resolve redacted webhook_url — no existing Teams destination",
+                                ctx
+                            )),
+                            _ => errors.push(format!(
+                                "{}: ambiguous redacted webhook_url — multiple Teams destinations",
+                                ctx
+                            )),
                         }
                     }
                 }
                 DestinationConfig::Telegram { bot_token, chat_id } => {
                     if bot_token.as_str() == REDACTED {
                         let cid = chat_id.clone();
-                        let found = current.destinations.iter().find_map(|d| match d {
-                            DestinationConfig::Telegram {
-                                bot_token: t,
-                                chat_id: c,
-                            } if c == &cid => Some(t.clone()),
-                            _ => None,
-                        });
-                        match found {
-                            Some(t) => *bot_token = t,
-                            None => errors.push(format!("{}: cannot resolve redacted bot_token — no existing Telegram destination with chat_id={}", ctx, chat_id)),
+                        let matches: Vec<String> = current
+                            .destinations
+                            .iter()
+                            .filter_map(|d| match d {
+                                DestinationConfig::Telegram {
+                                    bot_token: t,
+                                    chat_id: c,
+                                } if c == &cid => Some(t.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                        match matches.as_slice() {
+                            [t] => *bot_token = t.clone(),
+                            [] => errors.push(format!(
+                                "{}: cannot resolve redacted bot_token — no existing Telegram destination with chat_id={}",
+                                ctx, chat_id
+                            )),
+                            _ => errors.push(format!(
+                                "{}: ambiguous redacted bot_token — multiple Telegram destinations with chat_id={}",
+                                ctx, chat_id
+                            )),
                         }
                     }
                 }
@@ -546,49 +630,82 @@ impl AlertingConfig {
                 } => {
                     if routing_key.as_str() == REDACTED {
                         let eu = events_url.clone();
-                        let found = current.destinations.iter().find_map(|d| match d {
-                            DestinationConfig::Pagerduty {
-                                routing_key: k,
-                                events_url: e,
-                            } if e == &eu => Some(k.clone()),
-                            _ => None,
-                        });
-                        match found {
-                            Some(k) => *routing_key = k,
-                            None => errors.push(format!("{}: cannot resolve redacted routing_key — no existing PagerDuty destination", ctx)),
+                        let matches: Vec<String> = current
+                            .destinations
+                            .iter()
+                            .filter_map(|d| match d {
+                                DestinationConfig::Pagerduty {
+                                    routing_key: k,
+                                    events_url: e,
+                                } if e == &eu => Some(k.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                        match matches.as_slice() {
+                            [k] => *routing_key = k.clone(),
+                            [] => errors.push(format!(
+                                "{}: cannot resolve redacted routing_key — no existing PagerDuty destination with events_url={}",
+                                ctx, events_url
+                            )),
+                            _ => errors.push(format!(
+                                "{}: ambiguous redacted routing_key — multiple PagerDuty destinations with events_url={}",
+                                ctx, events_url
+                            )),
                         }
                     }
                 }
                 DestinationConfig::Opsgenie { api_key, region } => {
                     if api_key.as_str() == REDACTED {
                         let r = region.clone();
-                        let found = current.destinations.iter().find_map(|d| match d {
-                            DestinationConfig::Opsgenie {
-                                api_key: k,
-                                region: reg,
-                            } if reg == &r => Some(k.clone()),
-                            _ => None,
-                        });
-                        match found {
-                            Some(k) => *api_key = k,
-                            None => errors.push(format!("{}: cannot resolve redacted api_key — no existing OpsGenie destination for region={}", ctx, region)),
+                        let matches: Vec<String> = current
+                            .destinations
+                            .iter()
+                            .filter_map(|d| match d {
+                                DestinationConfig::Opsgenie {
+                                    api_key: k,
+                                    region: reg,
+                                } if reg == &r => Some(k.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                        match matches.as_slice() {
+                            [k] => *api_key = k.clone(),
+                            [] => errors.push(format!(
+                                "{}: cannot resolve redacted api_key — no existing OpsGenie destination for region={}",
+                                ctx, region
+                            )),
+                            _ => errors.push(format!(
+                                "{}: ambiguous redacted api_key — multiple OpsGenie destinations for region={}",
+                                ctx, region
+                            )),
                         }
                     }
                 }
                 DestinationConfig::Generic { secret, url, .. } => {
                     if secret.as_deref() == Some(REDACTED) {
                         let u = url.clone();
-                        let found = current.destinations.iter().find_map(|d| match d {
-                            DestinationConfig::Generic {
-                                secret: s,
-                                url: existing_url,
-                                ..
-                            } if existing_url == &u => s.clone(),
-                            _ => None,
-                        });
-                        match found {
-                            Some(s) => *secret = Some(s),
-                            None => errors.push(format!("{}: cannot resolve redacted secret — no existing Generic destination for url={}", ctx, url)),
+                        let matches: Vec<String> = current
+                            .destinations
+                            .iter()
+                            .filter_map(|d| match d {
+                                DestinationConfig::Generic {
+                                    secret: Some(s),
+                                    url: existing_url,
+                                    ..
+                                } if existing_url == &u => Some(s.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                        match matches.as_slice() {
+                            [s] => *secret = Some(s.clone()),
+                            [] => errors.push(format!(
+                                "{}: cannot resolve redacted secret — no existing Generic destination for url={}",
+                                ctx, url
+                            )),
+                            _ => errors.push(format!(
+                                "{}: ambiguous redacted secret — multiple Generic destinations for url={}",
+                                ctx, url
+                            )),
                         }
                     }
                 }
@@ -597,6 +714,65 @@ impl AlertingConfig {
 
         errors
     }
+}
+
+fn validate_destination_url(value: &str, field: &str, ctx: &str, errors: &mut Vec<String>) {
+    let parsed = match reqwest::Url::parse(value) {
+        Ok(url) => url,
+        Err(_) => {
+            errors.push(format!("{}: {} must be a valid URL", ctx, field));
+            return;
+        }
+    };
+
+    if parsed.scheme() != "https" {
+        errors.push(format!("{}: {} must use https", ctx, field));
+        return;
+    }
+
+    let Some(host) = parsed.host_str() else {
+        errors.push(format!("{}: {} must include a host", ctx, field));
+        return;
+    };
+
+    let host_lower = host.to_ascii_lowercase();
+    if host_lower == "localhost" || host_lower.ends_with(".localhost") {
+        errors.push(format!("{}: {} host is not allowed", ctx, field));
+        return;
+    }
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_private_or_local_ip(ip) {
+            errors.push(format!("{}: {} host IP is not allowed", ctx, field));
+        }
+    }
+}
+
+fn is_private_or_local_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_multicast()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_unspecified()
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unicast_link_local()
+                || v6.is_unique_local()
+                || v6.is_multicast()
+                || v6.is_unspecified()
+                || is_ipv6_documentation(v6)
+        }
+    }
+}
+
+fn is_ipv6_documentation(v6: std::net::Ipv6Addr) -> bool {
+    let segments = v6.segments();
+    segments[0] == 0x2001 && segments[1] == 0x0db8
 }
 
 /// The alerting service that dispatches to all configured destinations
@@ -846,6 +1022,33 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_rejects_non_https_webhook() {
+        let config = AlertingConfig {
+            destinations: vec![DestinationConfig::Slack {
+                webhook_url: "http://example.com/hook".into(),
+                channel: None,
+            }],
+            events: vec![],
+        };
+        let errors = config.validate();
+        assert!(errors.iter().any(|e| e.contains("must use https")));
+    }
+
+    #[test]
+    fn test_validate_rejects_link_local_url() {
+        let config = AlertingConfig {
+            destinations: vec![DestinationConfig::Generic {
+                url: "https://169.254.169.254/latest/meta-data".into(),
+                secret: None,
+                headers: HashMap::new(),
+            }],
+            events: vec![],
+        };
+        let errors = config.validate();
+        assert!(errors.iter().any(|e| e.contains("host IP is not allowed")));
+    }
+
+    #[test]
     fn test_merge_secrets_preserves_existing() {
         let current = AlertingConfig {
             destinations: vec![DestinationConfig::Slack {
@@ -912,6 +1115,29 @@ mod tests {
         if let DestinationConfig::Generic { secret, .. } = &incoming.destinations[0] {
             assert_eq!(secret.as_deref(), Some("real-secret"));
         }
+    }
+
+    #[test]
+    fn test_merge_secrets_ambiguous_discord() {
+        let current = AlertingConfig {
+            destinations: vec![
+                DestinationConfig::Discord {
+                    webhook_url: "https://discord.com/api/webhooks/one".into(),
+                },
+                DestinationConfig::Discord {
+                    webhook_url: "https://discord.com/api/webhooks/two".into(),
+                },
+            ],
+            events: vec![],
+        };
+        let mut incoming = AlertingConfig {
+            destinations: vec![DestinationConfig::Discord {
+                webhook_url: "***".into(),
+            }],
+            events: vec![],
+        };
+        let errors = incoming.merge_secrets(&current);
+        assert!(errors.iter().any(|e| e.contains("ambiguous")));
     }
 
     #[test]

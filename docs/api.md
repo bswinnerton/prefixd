@@ -786,11 +786,12 @@ Content-Type: application/json
 **Secret merge:** If a secret field (e.g. `webhook_url`, `bot_token`, `routing_key`, `api_key`, `secret`) equals `"***"`, the server carries forward the real secret from the matching existing destination. New destinations must provide actual secrets.
 
 **Validation rules:**
-- Slack/Discord/Teams: `webhook_url` required, max 1024 chars
+- Slack/Discord/Teams: `webhook_url` required, max 1024 chars, must be valid `https://` URL
 - Telegram: `bot_token` and `chat_id` required
-- PagerDuty: `routing_key` required, `events_url` max 1024 chars
+- PagerDuty: `routing_key` required, `events_url` max 1024 chars, must be valid `https://` URL
 - OpsGenie: `api_key` required, `region` must be `us` or `eu`
-- Generic: `url` required, max 1024 chars
+- Generic: `url` required, max 1024 chars, must be valid `https://` URL
+- URL host protections: `localhost`, `.localhost`, and literal private/local IPs (including `169.254.169.254`) are rejected
 
 **Error response (400):**
 
@@ -853,12 +854,8 @@ POST /v1/config/reload
 
 ```json
 {
-  "message": "Configuration reloaded",
-  "inventory": {
-    "customers": 150,
-    "assets": 2340
-  },
-  "playbooks": 12
+  "reloaded": ["inventory", "playbooks", "alerting"],
+  "timestamp": "2026-02-22T21:00:00Z"
 }
 ```
 

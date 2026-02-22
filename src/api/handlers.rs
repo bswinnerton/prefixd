@@ -2349,6 +2349,7 @@ pub async fn get_alerting_config(
     put,
     path = "/v1/config/alerting",
     tag = "config",
+    request_body = crate::alerting::AlertingConfig,
     responses(
         (status = 200, description = "Updated alerting configuration"),
         (status = 400, description = "Validation error"),
@@ -2377,8 +2378,9 @@ pub async fn update_alerting_config(
         }
     };
 
-    // Merge redacted secrets with current config
-    let current_config = state.alerting.read().await.config().clone();
+    // Serialize concurrent updates and merge from the current in-memory config.
+    let mut alerting_guard = state.alerting.write().await;
+    let current_config = alerting_guard.config().clone();
     let merge_errors = new_config.merge_secrets(&current_config);
     if !merge_errors.is_empty() {
         return Ok((
@@ -2408,7 +2410,8 @@ pub async fn update_alerting_config(
     // Rebuild service and hot-swap
     let old_count = current_config.destinations.len();
     let new_service = crate::alerting::AlertingService::new(new_config.clone());
-    *state.alerting.write().await = new_service;
+    *alerting_guard = new_service;
+    drop(alerting_guard);
     *state.alerting_loaded_at.write().await = chrono::Utc::now();
 
     // Audit log
