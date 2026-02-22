@@ -42,7 +42,7 @@ src/
 │   ├── routes.rs      # Route definitions: public_routes(), session_routes(), api_routes(), common_layers()
 │   ├── openapi.rs     # utoipa OpenAPI spec registration
 │   └── metrics.rs     # HTTP request metrics middleware
-├── auth/              # AuthBackend (axum-login), session + bearer hybrid auth
+├── auth/              # AuthBackend (axum-login), mode-aware auth (none/bearer/credentials/mtls)
 ├── bgp/               # FlowSpecAnnouncer trait, GoBGP gRPC client, mock
 ├── config/            # Settings, Inventory, Playbooks (YAML parsing)
 ├── db/                # PostgreSQL repository with sqlx + MockRepository for testing
@@ -52,7 +52,7 @@ src/
 ├── policy/            # Policy engine, playbook evaluation
 ├── scheduler/         # Reconciliation loop, TTL expiry
 ├── error.rs           # PrefixdError enum with thiserror
-├── state.rs           # Arc<AppState> with shutdown coordination, RwLock for inventory/playbooks
+├── state.rs           # Arc<AppState> with shutdown coordination, RwLock for inventory/playbooks/alerting
 ├── lib.rs             # Public module exports
 ├── main.rs            # CLI, daemon startup
 └── bin/prefixdctl.rs  # CLI tool for controlling the daemon
@@ -113,7 +113,7 @@ tests/
 8. **Health endpoint split** - Public liveness vs authenticated detail (ADR 015)
 9. **Nginx single-origin** - All traffic through port 80, no split-origin CORS issues (ADR 005)
 10. **Route-group auth guard** - Next.js `(dashboard)/layout.tsx` wraps all protected pages
-11. **Hybrid auth** - Session cookies (browser) + bearer tokens (CLI/detectors) on same endpoints
+11. **Mode-aware auth** - `none`/`bearer`/`credentials`/`mtls` with role checks on protected endpoints
 
 See `docs/adr/` for all 15 Architecture Decision Records.
 
@@ -128,7 +128,7 @@ See `docs/adr/` for all 15 Architecture Decision Records.
 ### Authenticated
 - `GET /v1/health/detail` - Full operational status (BGP peers, DB, uptime, active mitigations)
 - `POST /v1/events` - Ingest attack event
-- `GET /v1/mitigations` - List mitigations (supports `?status=active&customer=cust_123`)
+- `GET /v1/mitigations` - List mitigations (supports `?status=active&customer_id=cust_123`)
 - `GET /v1/mitigations/{id}` - Get mitigation detail
 - `POST /v1/mitigations/{id}/withdraw` - Withdraw mitigation
 - `GET/POST /v1/safelist` - List/add safelist entries
@@ -137,7 +137,7 @@ See `docs/adr/` for all 15 Architecture Decision Records.
 - `GET /v1/config/inventory` - Customer/service/IP data
 - `GET /v1/config/playbooks` - Playbook definitions
 - `PUT /v1/config/playbooks` - Update playbooks (admin only, writes YAML + hot-reload)
-- `POST /v1/config/reload` - Hot-reload inventory + playbooks
+- `POST /v1/config/reload` - Hot-reload inventory + playbooks + alerting
 - `GET /v1/config/alerting` - Alerting config (secrets redacted)
 - `PUT /v1/config/alerting` - Update alerting config (admin only, writes YAML + hot-reload)
 - `POST /v1/config/alerting/test` - Send test alert to all destinations (admin only)
@@ -219,14 +219,14 @@ Services: nginx (80), prefixd (8080), dashboard (3000), postgres (5432), gobgp (
 ## Current State (v0.10.0)
 
 Completed:
-- HTTP API with hybrid auth (session + bearer) and rate limiting
+- HTTP API with mode-aware auth and rate limiting
 - GoBGP gRPC client with FlowSpec announce/withdraw
 - Policy engine with playbook evaluation and escalation
 - Guardrails, quotas, and safelist protection
 - PostgreSQL state store with reconciliation loop
 - Prometheus metrics + Grafana dashboards
 - Next.js dashboard with real-time WebSocket updates and toast notifications
-- Config/inventory read-only pages with allowlist redaction
+- Config/inventory pages with allowlist redaction plus playbook/alerting editing flows
 - Safelist management and user management on admin page (tabbed layout)
 - Mitigation detail full-page view with timeline and customer context
 - Manual "Mitigate Now" form (POST /v1/events from dashboard)

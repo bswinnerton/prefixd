@@ -94,22 +94,16 @@ Configure in `prefixd.yaml`:
 ```yaml
 http:
   auth:
-    mode: bearer           # API/CLI: bearer token required
-    token: "${PREFIXD_API_TOKEN}"
-    secure_cookies: auto   # auto, true, false
+    mode: credentials      # none, bearer, credentials, mtls
+    bearer_token_env: "PREFIXD_API_TOKEN"  # required for mode=bearer
 ```
 
 | Mode | Dashboard | API/CLI |
 |------|-----------|---------|
 | `none` | No login | No auth |
-| `bearer` | Session login | Bearer token |
-| `hybrid` | Session login | Session or bearer |
-
-### Secure Cookies
-
-- `auto` - Secure cookies if TLS detected (recommended)
-- `true` - Always secure (requires HTTPS)
-- `false` - Never secure (development only)
+| `bearer` | Existing session cookies continue to work | Bearer token |
+| `credentials` | Session login | Session cookie |
+| `mtls` | Client-certificate trusted browser/API access | Client certificate |
 
 ---
 
@@ -488,7 +482,7 @@ http:
     cert_path: "/etc/prefixd/server.crt"
     key_path: "/etc/prefixd/server.key"
   auth:
-    secure_cookies: true  # Required for HTTPS
+    mode: mtls
 ```
 
 ### HTTPS via nginx (Recommended for Production)
@@ -710,7 +704,6 @@ curl -v http://localhost/v1/health 2>&1 | grep x-request-id
 - [ ] Generate strong API token
 - [ ] Create operators with appropriate roles
 - [ ] Enable TLS (or use reverse proxy)
-- [ ] Configure secure_cookies for HTTPS
 - [ ] Network isolation (prefixd ↔ GoBGP on private network)
 - [ ] Firewall rules (only allow trusted detectors)
 

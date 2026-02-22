@@ -353,7 +353,7 @@ prefixdctl operators create --username admin --role admin --password
 **Check session cookies:**
 - Browser: Check Developer Tools > Application > Cookies
 - Ensure `session` cookie is set after login
-- If using HTTPS, ensure `secure_cookies: true` in config
+- If using HTTPS, ensure TLS is correctly terminated and requests include the `Secure` session cookie flag
 
 ### API Bearer Token Rejected
 

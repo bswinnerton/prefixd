@@ -190,7 +190,7 @@ Configure GoBGP neighbors in `configs/gobgp.conf` and set up FlowSpec import pol
 | **Reconciliation** | Auto-expires mitigations, repairs RIB drift every 30s |
 | **Dashboard** | Real-time web UI with WebSocket updates and toast notifications |
 | **Manual Mitigation** | "Mitigate Now" form for operator-initiated events |
-| **Authentication** | Three roles (admin, operator, viewer) with session + bearer hybrid auth |
+| **Authentication** | Three roles (admin, operator, viewer) with mode-aware auth (`none`, `bearer`, `credentials`, `mtls`) |
 | **Observability** | Prometheus metrics, Grafana dashboards, structured logs, audit trail |
 | **CLI** | `prefixdctl` for status, mitigations, safelist, config reload |
 

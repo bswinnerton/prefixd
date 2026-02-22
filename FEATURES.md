@@ -341,10 +341,11 @@ Real-time visibility into mitigation state:
 
 - **Overview** - Active mitigations, BGP session status, quota usage, 24h activity chart
 - **Mitigations** - List with filtering, sorting, pagination, inline withdraw, CSV export
+- **Mitigate Now** - Operator modal (`n` shortcut, command palette action) posts policy-validated ban events
 - **Events** - Attack event history with CSV export
 - **IP History** - Unified timeline per IP (events + mitigations + customer context)
 - **Audit Log** - All actions with operator attribution, CSV export
-- **Config** - System status, safelist viewer, hot-reload button
+- **Config** - Settings viewer, playbook editor (form + YAML), alerting editor, hot-reload controls
 - **Inventory** - Searchable customer/service/IP browser
 - **Admin** - User management, safelist CRUD, system health (tabbed layout)
 - **Embedded Charts** - 24h area chart on overview (PostgreSQL-backed timeseries with gap-filling)
@@ -420,14 +421,15 @@ export PREFIXD_API_TOKEN=your-token-here
 | Mode | Use Case | Configuration |
 |------|----------|---------------|
 | `none` | Development/testing | `auth.mode: none` |
-| `bearer` | API/CLI access | `auth.mode: bearer` + `auth.token` |
-| `session` | Dashboard login | Automatic with operators table |
+| `bearer` | API/CLI access | `auth.mode: bearer` + `auth.bearer_token_env` |
+| `credentials` | Dashboard login | `auth.mode: credentials` with operators table |
+| `mtls` | Machine-to-machine | `auth.mode: mtls` + TLS client certs |
 
-### Hybrid Model
+### Mode-Aware Model
 
-- **Dashboard** - Session cookies (login form)
-- **API/CLI** - Bearer token (Authorization header)
-- **Both accepted** - Routes check session OR bearer token
+- **Credentials mode** - Session cookies only
+- **Bearer mode** - Bearer token accepted; existing dashboard session cookies also work
+- **mTLS mode** - Auth at transport layer (no bearer/session required for API auth)
 
 ### Operators
 

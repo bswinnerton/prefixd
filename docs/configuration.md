@@ -25,8 +25,8 @@ http:
   # API listen address
   listen: "0.0.0.0:8080"
   
-  # CORS origins for dashboard (comma-separated)
-  cors_origins: "http://localhost:3000"
+  # Optional CORS origin when not fronted by nginx
+  cors_origin: "http://localhost:3000"
 ```
 
 ### Authentication
@@ -466,7 +466,7 @@ playbooks:
 ```yaml
 http:
   auth:
-    token: "${PREFIXD_API_TOKEN}"
+    bearer_token_env: "PREFIXD_API_TOKEN"
 
 storage:
   connection_string: "${DATABASE_URL}"

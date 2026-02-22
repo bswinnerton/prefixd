@@ -57,4 +57,4 @@ Playbooks are hot-reloadable via `POST /v1/config/reload` or `prefixdctl reload`
 **Future:**
 - Customer-specific playbook overrides (via inventory.yaml)
 - Time-based rules (different thresholds during maintenance windows)
-- Playbook editor in the dashboard UI (Phase 2 on roadmap)
+- Playbook editor UX enhancements (current UI supports both form and raw YAML editing via `PUT /v1/config/playbooks`)

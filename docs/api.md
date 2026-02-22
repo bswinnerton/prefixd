@@ -41,15 +41,18 @@ Configure in `prefixd.yaml`:
 ```yaml
 http:
   auth:
-    mode: bearer  # none, bearer, or hybrid
-    token: "your-secret-token"
+    mode: credentials  # none, bearer, credentials, or mtls
+    bearer_token_env: "PREFIXD_API_TOKEN" # required for mode=bearer
 ```
 
 | Mode | Description |
 |------|-------------|
 | `none` | No authentication (development only) |
-| `bearer` | Bearer token required |
-| `hybrid` | Accept either session cookie or bearer token |
+| `bearer` | Bearer token auth for API/CLI; existing dashboard sessions remain valid |
+| `credentials` | Username/password login with session cookies |
+| `mtls` | Client certificate auth at TLS layer |
+
+> Unless explicitly marked "Public", `/v1/*` endpoints require authentication.
 
 ---
 
@@ -59,6 +62,7 @@ http:
 
 ```http
 POST /v1/events
+Authorization: Bearer <token>
 Content-Type: application/json
 ```
 
@@ -98,53 +102,60 @@ Content-Type: application/json
 
 ```json
 {
-  "event_id": "evt_abc123",
-  "mitigation_id": "mit_def456",
-  "status": "created"
+  "event_id": "550e8400-e29b-41d4-a716-446655440000",
+  "external_event_id": null,
+  "mitigation_id": "7f72a903-63d1-4a4a-a5db-0517e0a7df1d",
+  "status": "accepted"
 }
 ```
 
-Status values: `"created"`, `"extended"`, `"escalated"`, `"duplicate"`, `"unban_processed"`, `"unban_not_found"`.
+Common status values:
+- Ban path: `"accepted"`, `"extended"`, `"accepted_no_playbook"`, `"accepted_no_mitigation"`
+- Unban path: `"withdrawn"`, `"ignored_no_event_id"`, `"not_found"`, `"no_active_mitigation"`
 
 **Error Responses:**
 
 | Status | Reason |
 |--------|--------|
 | 400 | Invalid request body |
-| 403 | Victim IP is safelisted |
-| 422 | Guardrail rejection (quota, prefix length, etc.) |
+| 401 | Authentication required |
+| 409 | Duplicate event |
+| 422 | Guardrail rejection (safelist, quotas, prefix length, etc.) |
 | 429 | Rate limited |
 
 ### List Events
 
 ```http
 GET /v1/events
+Authorization: Bearer <token>
 ```
 
 **Query Parameters:**
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `source` | string | Filter by detector source |
-| `victim_ip` | string | Filter by victim IP |
-| `vector` | string | Filter by attack vector |
-| `since` | datetime | Events after this time |
-| `limit` | integer | Max results (default 50, max 1000) |
+| `limit` | integer | Max results (default 100, max 1000) |
 | `offset` | integer | Pagination offset |
 
 **Response:**
 
 ```json
 {
-  "items": [
+  "events": [
     {
-      "id": "evt_abc123",
+      "event_id": "550e8400-e29b-41d4-a716-446655440000",
+      "external_event_id": "fm-evt-1234",
       "source": "fastnetmon",
+      "event_timestamp": "2026-01-18T10:29:58Z",
+      "ingested_at": "2026-01-18T10:30:00Z",
       "victim_ip": "203.0.113.10",
       "vector": "udp_flood",
+      "protocol": 17,
       "bps": 1200000000,
+      "pps": 800000,
+      "top_dst_ports_json": "[53,123]",
       "confidence": 0.95,
-      "created_at": "2026-01-18T10:30:00Z"
+      "action": "ban"
     }
   ],
   "count": 1
@@ -159,38 +170,45 @@ GET /v1/events
 
 ```http
 GET /v1/mitigations
+Authorization: Bearer <token>
 ```
 
 **Query Parameters:**
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `status` | string | Filter: active, expired, withdrawn, pending |
+| `status` | string | Filter by one or more statuses (comma-separated): `pending`, `active`, `escalated`, `withdrawn`, `expired`, `rejected` |
 | `customer_id` | string | Filter by customer |
 | `pop` | string | Filter by POP (or "all") |
-| `limit` | integer | Max results (default 50, max 1000) |
+| `limit` | integer | Max results (default 100, max 1000) |
 | `offset` | integer | Pagination offset |
 
 **Response:**
 
 ```json
 {
-  "items": [
+  "mitigations": [
     {
-      "id": "mit_def456",
+      "mitigation_id": "7f72a903-63d1-4a4a-a5db-0517e0a7df1d",
+      "scope_hash": "scope_abc123",
       "status": "active",
       "customer_id": "acme",
       "service_id": "dns",
-      "dst_prefix": "203.0.113.10/32",
-      "protocol": "udp",
-      "dst_ports": [53],
-      "dst_ports_excluded": true,
-      "action": "police",
+      "pop": "iad1",
+      "victim_ip": "203.0.113.10",
+      "vector": "udp_flood",
+      "action_type": "police",
       "rate_bps": 10000000,
-      "ttl_seconds": 120,
-      "expires_at": "2026-01-18T10:32:00Z",
+      "dst_prefix": "203.0.113.10/32",
+      "protocol": 17,
+      "dst_ports": [53],
       "created_at": "2026-01-18T10:30:00Z",
-      "pop": "iad1"
+      "updated_at": "2026-01-18T10:30:00Z",
+      "expires_at": "2026-01-18T10:32:00Z",
+      "withdrawn_at": null,
+      "triggering_event_id": "550e8400-e29b-41d4-a716-446655440000",
+      "last_event_id": "550e8400-e29b-41d4-a716-446655440000",
+      "reason": "Vector policy: udp_flood"
     }
   ],
   "count": 1
@@ -209,6 +227,7 @@ GET /v1/mitigations/{id}
 
 ```http
 POST /v1/mitigations/{id}/withdraw
+Authorization: Bearer <token>
 Content-Type: application/json
 ```
 
@@ -216,6 +235,7 @@ Content-Type: application/json
 
 ```json
 {
+  "operator_id": "jsmith",
   "reason": "false positive"
 }
 ```
@@ -224,10 +244,9 @@ Content-Type: application/json
 
 ```json
 {
-  "id": "mit_def456",
+  "mitigation_id": "7f72a903-63d1-4a4a-a5db-0517e0a7df1d",
   "status": "withdrawn",
-  "withdrawn_at": "2026-01-18T10:31:00Z",
-  "withdrawn_reason": "false positive"
+  "withdrawn_at": "2026-01-18T10:31:00Z"
 }
 ```
 
@@ -239,28 +258,28 @@ Content-Type: application/json
 
 ```http
 GET /v1/safelist
+Authorization: Bearer <token>
 ```
 
 **Response:**
 
 ```json
-{
-  "items": [
-    {
-      "prefix": "10.0.0.1/32",
-      "reason": "Router loopback",
-      "created_by": "admin",
-      "created_at": "2026-01-15T08:00:00Z"
-    }
-  ],
-  "count": 1
-}
+[
+  {
+    "prefix": "10.0.0.1/32",
+    "reason": "Router loopback",
+    "added_by": "admin",
+    "added_at": "2026-01-15T08:00:00Z",
+    "expires_at": null
+  }
+]
 ```
 
 ### Add to Safelist
 
 ```http
 POST /v1/safelist
+Authorization: Bearer <token>
 Content-Type: application/json
 ```
 
@@ -268,26 +287,19 @@ Content-Type: application/json
 
 ```json
 {
+  "operator_id": "admin",
   "prefix": "10.0.0.1/32",
   "reason": "Router loopback"
 }
 ```
 
-**Response (201 Created):**
-
-```json
-{
-  "prefix": "10.0.0.1/32",
-  "reason": "Router loopback",
-  "created_by": "admin",
-  "created_at": "2026-01-18T10:30:00Z"
-}
-```
+**Response (201 Created):** No body
 
 ### Remove from Safelist
 
 ```http
 DELETE /v1/safelist/{prefix}
+Authorization: Bearer <token>
 ```
 
 **Response (204 No Content)**
@@ -316,6 +328,7 @@ Content-Type: application/json
 
 ```json
 {
+  "operator_id": "550e8400-e29b-41d4-a716-446655440000",
   "username": "admin",
   "role": "admin"
 }
@@ -738,6 +751,7 @@ Content-Type: application/json
 
 ```http
 GET /v1/config/alerting
+Authorization: Bearer <token>
 ```
 
 Returns configured alert destinations with secrets redacted.
@@ -805,6 +819,7 @@ Content-Type: application/json
 
 ```http
 POST /v1/config/alerting/test
+Authorization: Bearer <token>
 ```
 
 Sends a test alert to all configured destinations. Returns per-destination results.  
@@ -825,23 +840,24 @@ Requires admin role.
 
 ```http
 GET /v1/pops
+Authorization: Bearer <token>
 ```
 
 **Response:**
 
 ```json
-{
-  "pops": [
-    {
-      "pop": "iad1",
-      "active_mitigations": 8
-    },
-    {
-      "pop": "fra1",
-      "active_mitigations": 4
-    }
-  ]
-}
+[
+  {
+    "pop": "iad1",
+    "active_mitigations": 8,
+    "total_mitigations": 1321
+  },
+  {
+    "pop": "fra1",
+    "active_mitigations": 4,
+    "total_mitigations": 942
+  }
+]
 ```
 
 ### Reload Configuration
@@ -892,37 +908,34 @@ Requires session authentication (send session cookie).
 
 ```http
 GET /v1/audit
+Authorization: Bearer <token>
 ```
 
 **Query Parameters:**
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `action` | string | Filter by action type |
-| `operator_id` | string | Filter by operator |
-| `since` | datetime | Entries after this time |
-| `limit` | integer | Max results (default 50, max 1000) |
+| `limit` | integer | Max results (default 100, max 1000) |
 | `offset` | integer | Pagination offset |
 
 **Response:**
 
 ```json
-{
-  "items": [
-    {
-      "id": "aud_xyz789",
-      "timestamp": "2026-01-18T10:31:00Z",
-      "action": "mitigation_withdrawn",
-      "operator_id": "jsmith",
-      "details": {
-        "mitigation_id": "mit_def456",
-        "reason": "false positive"
-      },
-      "ip_address": "10.0.0.50"
+[
+  {
+    "audit_id": "f4f0f8f1-d715-4ec3-ae8d-f695f5cd4e1a",
+    "timestamp": "2026-01-18T10:31:00Z",
+    "schema_version": 1,
+    "actor_type": "operator",
+    "actor_id": "jsmith",
+    "action": "withdraw",
+    "target_type": "mitigation",
+    "target_id": "7f72a903-63d1-4a4a-a5db-0517e0a7df1d",
+    "details": {
+      "reason": "false positive"
     }
-  ],
-  "count": 1
-}
+  }
+]
 ```
 
 ---
@@ -953,31 +966,32 @@ See [FEATURES.md](../FEATURES.md#prometheus-metrics) for full metric list.
 
 ## Error Responses
 
-All errors follow this format:
+Structured errors follow this format:
 
 ```json
 {
-  "error": "validation_failed",
-  "message": "Destination prefix must be /32 for IPv4",
-  "details": {
-    "field": "dst_prefix",
-    "value": "203.0.113.0/24"
-  }
+  "error": "destination prefix must be /32",
+  "retry_after_seconds": null
 }
 ```
 
+`retry_after_seconds` is only present for rate-limit responses.
+
+Some handlers intentionally return status-only errors (no JSON body), especially for simple auth/CRUD failures.
+
 ### Common Error Codes
 
-| Status | Error | Description |
-|--------|-------|-------------|
-| 400 | `bad_request` | Malformed JSON or missing fields |
-| 401 | `unauthorized` | Missing or invalid authentication |
-| 403 | `forbidden` | Safelisted IP or insufficient permissions |
-| 404 | `not_found` | Resource doesn't exist |
-| 422 | `validation_failed` | Guardrail rejection |
-| 429 | `rate_limited` | Too many requests |
-| 500 | `internal_error` | Server error |
-| 503 | `service_unavailable` | Database or GoBGP unavailable |
+| Status | Description |
+|--------|-------------|
+| 400 | Invalid request payload or validation failure |
+| 401 | Missing or invalid authentication |
+| 403 | Insufficient permissions |
+| 404 | Resource not found |
+| 409 | Conflict (duplicate resource/event) |
+| 422 | Guardrail rejection |
+| 429 | Too many requests (includes `retry_after_seconds`) |
+| 500 | Internal server error |
+| 503 | Service unavailable |
 
 ---
 
@@ -1002,8 +1016,7 @@ X-RateLimit-Reset: 1705578600
 
 ```json
 {
-  "error": "rate_limited",
-  "message": "Rate limit exceeded",
+  "error": "rate limited",
   "retry_after_seconds": 5
 }
 ```

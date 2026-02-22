@@ -101,9 +101,10 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 - [x] **Page layout cleanup** (P1 — admin tabs shipped)
   - Admin page uses Tabs component: Status, Safelist, Users (conditionally rendered)
   - Config page already tabbed: Settings, Playbooks
-- [ ] Config page (Phase 2)
-  - Playbook editor (form-based, with validation)
-  - Requires `PUT /v1/config/playbooks` endpoint, file persistence, rollback
+- [x] **Config page editing (Phase 2 shipped)**
+  - Playbook editor shipped: form tab + raw YAML tab backed by `PUT /v1/config/playbooks`
+  - Alerting editor shipped: destination CRUD + event filters backed by `PUT /v1/config/alerting`
+  - Atomic YAML writes, `.bak` backups, and hot-reload on save
 - [x] Vitest setup (vitest.config.ts, jsdom, @testing-library/react, bun run test)
 - [x] Component tests (ErrorBoundary test with 3 cases)
 - [x] Hook tests (usePermissions 5 tests, useAuth 5 tests)
