@@ -141,17 +141,34 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 
 ---
 
-## v1.0: Production Ready
+## v1.0: Production Ready (Interop + Stability)
 
-Target: Stable API, comprehensive testing, production-proven.
+Target: Validated with real routers, stable API, production-proven. Operators trust prefixd before we build new features.
 
-### Stability
+### Vendor Interop (Priority)
+
+- [x] Juniper PTX (cJunosEvolved 25.4R1.13-EVO) - verified
+- [ ] Arista cEOS / 7xxx (EOS 4.20+) — validate FlowSpec announce/withdraw/reconcile
+- [ ] Cisco XRd / IOS-XR (ASR 9000, NCS) — known FlowSpec quirks to document
+- [x] Juniper quirks documented (FlowSpec-only AFI-SAFI, import policy, no-validate)
+- [ ] Vendor capability matrix (what works, what doesn't, per vendor)
+- [ ] Reference import policies per vendor (copy-paste ready)
+- [ ] Graceful degradation for unsupported features
+
+### Dependency Security Cadence
+
+- [ ] Monthly GoBGP baseline bump policy (track upstream releases, especially parser hardening like v3.35.0)
+- [ ] CVE gate in CI (fail build on known vulnerabilities in dependency tree)
+- [ ] SBOM generation (CycloneDX or SPDX, published with releases)
+- [ ] FlowSpec NLRI parser fuzz/regression tests (protect against malformed BGP update edge cases)
+
+### Stability (Done)
 
 - [x] API versioning and deprecation policy (`docs/api-versioning.md`)
 - [x] Database migration tooling (`schema_migrations` table, `prefixdctl migrations`)
 - [x] Upgrade path documentation (`docs/upgrading.md`)
 
-### Hardening
+### Hardening (Done)
 
 - [x] Config API allowlist redaction (prevent accidental secret exposure)
 - [x] Public health endpoint slimmed (no DB/GoBGP calls, no operational data)
@@ -160,31 +177,65 @@ Target: Stable API, comprehensive testing, production-proven.
 - [x] Route-group auth guard (structural, not opt-in per page)
 - [x] Route definition deduplication (shared helpers for production + test routers)
 - [x] OpenAPI spec covers all endpoints (health split, config read-only)
-- [x] Integration tests for config/health endpoints (12 tests, up from 8)
+- [x] Integration tests for config/health endpoints (25 integration tests)
 - [x] Event ingestion endpoint auth enforcement (require_auth on POST /v1/events)
 - [x] Chaos testing — 17 tests across 4 categories (Postgres, GoBGP, prefixd, network), all passing
 - [x] Load testing — 7 HTTP load tests with hey (~4,700 events/sec, ~8,000 health req/s)
-- [x] Security audit — 20 backend + 9 frontend findings, actionable items fixed (login throttle, input validation, CSV injection, client token removal)
+- [x] Security audit — 20 backend + 9 frontend findings, actionable items fixed
 - [x] Reconciliation loop pagination (pages through all active mitigations, no cap)
+- [x] SSRF protection on webhook URLs (HTTPS required, private IPs rejected)
 
-### Observability
+### Observability (Done)
 
 - [x] Database metrics (connection pool: active, idle, total via `prefixd_db_pool_connections`)
 - [x] Request tracing with correlation IDs (`x-request-id` header, tracing span, nginx forwarding)
 - [x] Grafana dashboard templates
 
+### Documentation Polish
+
+- [ ] Review all docs for accuracy (post-v1.0 freeze)
+- [ ] Record demo video: attack → detection → mitigation → recovery
+- [x] Vendor quirks documented
+
 ---
 
-## v1.5: Multi-Signal Correlation
+## v1.1: Operator Ergonomics
 
-**The killer feature.** Combine weak signals from multiple detectors into high-confidence decisions.
+Target: Quality-of-life for operators during active incidents. These are the features that reduce time-to-action during attack waves.
+
+### Bulk Operations
+
+- [ ] **Bulk withdraw** — Multi-select mitigations and withdraw all at once (critical during false-positive waves)
+- [ ] **Bulk acknowledge** — Mark mitigations as reviewed without withdrawing
+
+### Investigation UX
+
+- [ ] **Date range filtering** — Time picker on events and audit log pages for incident investigation
+- [ ] **Post-attack incident reports** — Formatted PDF/markdown summary (timeline, peak traffic, actions taken)
+- [ ] **FlowSpec rule preview** — Human-readable display of announced NLRI on mitigation detail page
+
+### Notification Tuning
+
+- [ ] **Notification preferences** — Mute/filter WebSocket toasts, quiet hours (reduce alert fatigue)
+- [ ] **Per-destination event routing** — Route different event types to different alerting destinations
+
+### Pagination + Performance
+
+- [ ] **Server-side cursor pagination** — Replace client-side limit (~1000 rows) with proper cursor-based pagination
+- [ ] **Event batching** — Batch ingest endpoint for high-volume detectors
+
+---
+
+## v1.2: Multi-Signal Correlation
+
+**The killer feature.** Combine weak signals from multiple detectors into high-confidence decisions. Start with one high-value adapter.
 
 Example: FastNetMon says UDP flood at 0.6 confidence + router CPU spiking + host conntrack exhaustion = **high-confidence mitigation**.
 
-### Signal Adapters
+### Signal Adapters (start with one)
 
-- [ ] Enhanced FastNetMon adapter (configurable confidence mapping)
-- [ ] Prometheus/Alertmanager adapter (metric queries, webhook receiver)
+- [ ] Prometheus/Alertmanager adapter (metric queries, webhook receiver) — most universal, many operators already have this
+- [ ] Enhanced FastNetMon adapter (configurable confidence mapping) — common pairing for self-hosted
 - [ ] Router telemetry adapter (JTI, gNMI)
 
 ### Correlation Engine
@@ -201,63 +252,34 @@ Example: FastNetMon says UDP flood at 0.6 confidence + router CPU spiking + host
 
 ---
 
-## v2.0: Multi-Vendor Validation
+## v1.5+: Integrations + Advanced FlowSpec
 
-Validated FlowSpec with major router vendors.
-
-### Vendor Testing
-
-- [x] Juniper PTX (cJunosEvolved 25.4R1.13-EVO) - verified
-- [ ] Arista 7xxx (EOS 4.20+)
-- [ ] Cisco IOS-XR (ASR 9000, NCS)
-- [ ] Nokia SR OS (7750, not SR Linux - SR Linux lacks FlowSpec)
-
-### Vendor Profiles
-
-- [x] Juniper quirks documented (FlowSpec-only AFI-SAFI, import policy, no-validate)
-- [ ] Capability matrix per vendor
-- [ ] Graceful degradation for unsupported features
-- [ ] Reference import policies per vendor
-
----
-
-## Future Ideas
-
-Not committed, but on the radar.
-
-### Dashboard
-
-- **Bulk withdraw** — Multi-select mitigations and withdraw all at once (critical during attack waves with false positives)
-- **Real-time bps/pps sparklines** — Per-mitigation traffic graphs on overview (query Prometheus or internal metrics)
-- **FlowSpec rule preview** — Human-readable display of announced NLRI on mitigation detail page
-- **Date range filtering** — Time picker on events and audit log pages for incident investigation
-- **Post-attack incident reports** — Formatted PDF/markdown summary (timeline, peak traffic, actions taken)
-- **Notification preferences** — Mute/filter WebSocket toasts, quiet hours (reduce alert fatigue)
-- **POP-level drill-down** — Per-POP dashboard with geographic view for multi-POP deployments
-- **Triggering event link** — Link from mitigation to its triggering event (data exists, not rendered)
-- **OpenAPI/Swagger viewer** — Embed Swagger UI or Redoc in dashboard (backend serves `/openapi.json`)
-- **GeoIP / ASN / IX enrichment** — Enrich attack events at ingest with source country, ASN, and IX presence
-
-### Advanced FlowSpec
-
-- Redirect actions (redirect-to-IP, redirect-to-VRF)
-- Extended match criteria (packet length, TCP flags, DSCP)
-- Scrubber integration with diversion orchestration
+Broader ecosystem integration and advanced capabilities for large-scale deployments.
 
 ### Integrations
 
-- NetBox inventory sync (replace YAML inventory with NetBox as source-of-truth)
-- Customer self-service portal (per-customer dashboards for MSSPs)
-- Native BGP speaker (replace GoBGP dependency)
-- Prometheus/Alertmanager as event source (bidirectional: we push metrics, they push alerts)
-- FastNetMon native adapter (common pairing for self-hosted deployments)
-- Scrubber vendor integrations (complement cloud/hardware mitigation with policy automation)
+- [ ] NetBox inventory sync (replace YAML inventory with NetBox as source-of-truth)
+- [ ] FastNetMon native adapter (common pairing for self-hosted deployments)
+- [ ] Scrubber vendor integrations (complement cloud/hardware mitigation with policy automation)
+- [ ] Customer self-service portal (per-customer dashboards for MSSPs)
+- [ ] Native BGP speaker (replace GoBGP dependency)
+
+### Advanced FlowSpec
+
+- [ ] Redirect actions (redirect-to-IP, redirect-to-VRF)
+- [ ] Extended match criteria (packet length, TCP flags, DSCP)
+- [ ] Scrubber integration with diversion orchestration
 
 ### Scale
 
-- Event batching for high-volume detectors
-- Distributed coordination for multi-region
-- Server-side cursor pagination (current client-side limit: ~1000 rows)
+- [ ] Distributed coordination for multi-region
+- [ ] POP-level drill-down dashboard with geographic view
+
+### Dashboard Enhancements
+
+- [ ] Real-time bps/pps sparklines per mitigation (query Prometheus or internal metrics)
+- [ ] OpenAPI/Swagger viewer embedded in dashboard
+- [ ] GeoIP / ASN / IX enrichment at ingest
 
 ---
 
