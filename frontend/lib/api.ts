@@ -691,6 +691,8 @@ export interface SignalGroupsResponse {
 
 export interface SignalGroupDetailResponse extends SignalGroup {
   events: SignalGroupEvent[]
+  /** Linked mitigation ID (present when group status is resolved) */
+  mitigation_id?: string | null
 }
 
 export async function getSignalGroups(params?: {

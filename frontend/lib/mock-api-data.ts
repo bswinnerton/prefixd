@@ -437,6 +437,7 @@ export const mockSignalGroups: import("./api").SignalGroup[] = [
     source_count: 2,
     status: "resolved",
     corroboration_met: true,
+    mitigation_id: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
   },
   {
     group_id: "sg-002-aaaa-bbbb-cccc-dddd",
