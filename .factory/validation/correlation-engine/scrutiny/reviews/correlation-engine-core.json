@@ -1,0 +1,51 @@
+{
+  "featureId": "correlation-engine-core",
+  "reviewedAt": "2026-03-19T18:30:00.000Z",
+  "commitId": "833c0f7",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Well-structured implementation of the core correlation engine. The CorrelationEngine is a pure-logic struct (no I/O) with create_group, compute_derived_confidence, count_distinct_sources, check_corroboration, and compute_explanation. All 8 RepositoryTrait methods are implemented for both PostgreSQL and MockRepository. 5 Prometheus metrics are defined and registered. 23 unit tests and 6 Postgres integration tests provide strong coverage of confidence math, corroboration logic, edge cases (null confidence, empty events, duplicate sources), and concurrent insert behavior. Code follows existing project conventions (thiserror, utoipa, Lazy metrics, RepositoryTrait pattern). Uses f64 intermediates in weighted average to avoid float precision issues. The CTE-based concurrent insert in PostgreSQL handles the sequential case correctly.",
+    "issues": [
+      {
+        "file": "migrations/007_signal_groups.sql",
+        "line": 6,
+        "severity": "non_blocking",
+        "description": "No unique partial index on (victim_ip, vector) WHERE status='open'. The insert_signal_group CTE pattern checks for existing open groups but without a unique partial index, two truly concurrent transactions could both see no existing group and both insert. The race window is very narrow and the CTE handles sequential inserts correctly, but a partial unique index would provide database-level atomicity guarantees as the feature description's 'INSERT ... ON CONFLICT' wording implies."
+      },
+      {
+        "file": "src/db/repository.rs",
+        "line": 1108,
+        "severity": "non_blocking",
+        "description": "SignalGroupRow::into() uses unwrap_or(SignalGroupStatus::Open) for status parsing. If the database contains a corrupted status string, this silently defaults to Open rather than logging a warning. Consider adding tracing::warn! for the error case to aid debugging."
+      },
+      {
+        "file": "migrations/007_signal_groups.sql",
+        "line": 14,
+        "severity": "non_blocking",
+        "description": "signal_group_events.event_id has no REFERENCES events(event_id) foreign key constraint. The list_signal_group_events query uses LEFT JOIN which handles missing events gracefully, but referential integrity is not enforced at the database level. This may be intentional to allow events to be deleted independently."
+      },
+      {
+        "file": "src/observability/metrics.rs",
+        "line": 192,
+        "severity": "non_blocking",
+        "description": "All 5 Prometheus metrics (SIGNAL_GROUPS_TOTAL, SIGNAL_GROUP_SOURCES, CORRELATION_CONFIDENCE, CORROBORATION_MET_TOTAL, CORROBORATION_TIMEOUT_TOTAL) are defined and registered in init_metrics() but not instrumented (never incremented/observed) in this commit. This is acceptable since instrumentation is expected in the integration feature (commit f6e6109), but the verification step 'All 5 Prometheus metrics registered and observable' is only partially met — they are registered but won't produce meaningful data yet."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The CTE pattern used for concurrent-safe insert_signal_group (WITH existing AS (...) INSERT ... WHERE NOT EXISTS) is a project-specific PostgreSQL pattern that isn't documented in AGENTS.md. Future workers adding similar concurrent-safe operations would benefit from knowing this pattern exists vs using INSERT ... ON CONFLICT directly.",
+      "evidence": "src/db/repository.rs:895-925 — CTE with existing/inserted pattern for signal_groups, vs the simpler INSERT ... ON CONFLICT DO NOTHING used for signal_group_events in add_event_to_group at line 985"
+    },
+    {
+      "area": "skills",
+      "observation": "The backend-worker skill prescribes TDD (step 4: 'Write tests FIRST'), but the worker's transcript shows creating the full engine.rs file (564 lines) first, then running tests. The handoff claims followedProcedure: true. The end result is equivalent (comprehensive tests exist), but the procedure wasn't strictly followed. This is a common and reasonable deviation — the skill may want to soften the TDD mandate to 'write tests alongside implementation' rather than strict red-green-refactor.",
+      "evidence": "Transcript skeleton shows: Create engine.rs (564 lines) → Edit traits.rs → Edit repository.rs → Edit mock.rs → Edit metrics.rs → cargo check → cargo test. Tests were co-authored with the implementation, not written first."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The correlation-engine-core feature is well-implemented. All required functionality is present: CorrelationEngine with create_group, compute_derived_confidence, count_distinct_sources, check_corroboration, compute_explanation; 8 RepositoryTrait methods with PostgreSQL and MockRepository implementations; 5 Prometheus metrics registered. 23 unit tests and 6 Postgres integration tests pass, covering weighted confidence math, corroboration with per-playbook overrides, edge cases (null confidence → 0.0, unknown source weight, duplicate source counting), and concurrent insert behavior. Four non-blocking issues identified: (1) missing partial unique index for true concurrent safety, (2) silent status parse fallback, (3) missing FK on signal_group_events.event_id, (4) metrics registered but not yet instrumented. None are blocking. Pass."
+}

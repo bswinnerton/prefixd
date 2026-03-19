@@ -1,0 +1,34 @@
+{
+  "featureId": "correlation-engine-docs",
+  "reviewedAt": "2026-03-19T18:45:00.000Z",
+  "commitId": "47834ba95f607fa223934d0868980b371cb50170",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Documentation updates are comprehensive and accurate across all 5 files (docs/api.md, docs/configuration.md, CHANGELOG.md, ROADMAP.md, AGENTS.md). All feature requirements are met: signal groups endpoints documented with examples, mitigation correlation field documented, configuration section covers all fields with correct defaults matching code, CHANGELOG has correlation entries under Unreleased, ROADMAP items checked off correctly, and AGENTS.md test counts updated accurately (173 unit + 68 integration + 15 postgres = 256 runnable). Two minor non-blocking issues found.",
+    "issues": [
+      {
+        "file": "docs/api.md",
+        "line": 296,
+        "severity": "non_blocking",
+        "description": "The correlation context documentation implies the full object (with contributing_sources and explanation) is available on both GET /v1/mitigations list and GET /v1/mitigations/{id} detail endpoints. However, the list endpoint (handlers.rs:1162-1169) returns a lightweight summary with empty contributing_sources=[] and explanation=\"\" for performance, while only the detail endpoint populates these fields fully. This behavioral difference is not mentioned in the docs and could confuse API consumers."
+      },
+      {
+        "file": "docs/api.md",
+        "line": 553,
+        "severity": "non_blocking",
+        "description": "SignalGroupEvent.source and .confidence are Option types in the Rust struct (engine.rs:67-68) but the API docs example shows them as always-present non-null values. While typical in practice, the docs could note these fields may be null for edge cases."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The mitigation list endpoint returns a lightweight correlation summary (empty contributing_sources and explanation) while the detail endpoint returns the full context. This is a non-obvious API behavior pattern that could be documented in the library for future workers who need to understand or extend the correlation context on API responses.",
+      "evidence": "src/api/handlers.rs:1162-1169 (list endpoint) uses contributing_sources: vec![] and explanation: String::new(), while src/api/handlers.rs:1257-1264 (detail endpoint) computes full contributing_sources and explanation from signal group events."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. All 5 documentation files updated correctly per feature requirements. docs/api.md has complete signal groups endpoint documentation with examples, correlation context on mitigations, and error responses. docs/configuration.md covers all CorrelationConfig fields with correct defaults, derived confidence formula, per-playbook overrides, and hot reload. CHANGELOG.md has comprehensive Unreleased entries. ROADMAP.md correctly checks off 6 implemented items while leaving 2 future items unchecked. AGENTS.md test counts, directory structure, data flow, and API endpoint list all updated accurately. Two non-blocking issues: (1) docs don't distinguish lightweight vs full correlation context between list and detail endpoints, (2) optional fields shown as non-null in examples."
+}
