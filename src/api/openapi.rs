@@ -1,10 +1,11 @@
 use utoipa::OpenApi;
 
 use super::handlers::{
-    AuditListResponse, BulkAcknowledgeRequest, BulkAcknowledgeResponse, BulkAcknowledgeResult,
-    BulkWithdrawRequest, BulkWithdrawResponse, BulkWithdrawResult, ErrorResponse, EventResponse,
-    EventsListResponse, HealthResponse, IpHistoryResponse, MitigationResponse,
-    MitigationsListResponse, PublicHealthResponse, ReloadResponse, TimeseriesResponse,
+    AuditListResponse, BatchEventRequest, BatchEventResponse, BatchEventResult,
+    BulkAcknowledgeRequest, BulkAcknowledgeResponse, BulkAcknowledgeResult, BulkWithdrawRequest,
+    BulkWithdrawResponse, BulkWithdrawResult, ErrorResponse, EventResponse, EventsListResponse,
+    HealthResponse, IpHistoryResponse, MitigationResponse, MitigationsListResponse,
+    PublicHealthResponse, ReloadResponse, TimeseriesResponse,
 };
 use crate::db::{GlobalStats, NotificationPreferences, PopInfo, PopStats, SafelistEntry};
 
@@ -24,6 +25,7 @@ use crate::db::{GlobalStats, NotificationPreferences, PopInfo, PopStats, Safelis
         super::handlers::health,
         super::handlers::health_detail,
         super::handlers::ingest_event,
+        super::handlers::ingest_events_batch,
         super::handlers::list_mitigations,
         super::handlers::get_mitigation,
         super::handlers::bulk_withdraw_mitigations,
@@ -65,6 +67,9 @@ use crate::db::{GlobalStats, NotificationPreferences, PopInfo, PopStats, Safelis
             BulkAcknowledgeRequest,
             BulkAcknowledgeResponse,
             BulkAcknowledgeResult,
+            BatchEventRequest,
+            BatchEventResponse,
+            BatchEventResult,
             EventsListResponse,
             AuditListResponse,
             crate::db::TimeseriesBucket,

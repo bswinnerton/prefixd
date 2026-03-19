@@ -1412,6 +1412,172 @@ async fn test_bulk_acknowledge_mitigations() {
 }
 
 // ---------------------------------------------------------------------------
+// Event batch ingestion
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_batch_event_ingestion_all_accepted() {
+    let app = setup_app().await;
+
+    let body = serde_json::json!({
+        "events": [
+            {
+                "timestamp": "2026-01-16T14:00:00Z",
+                "source": "fastnetmon",
+                "victim_ip": "203.0.113.200",
+                "vector": "udp_flood",
+                "pps": 50000
+            },
+            {
+                "timestamp": "2026-01-16T14:00:01Z",
+                "source": "fastnetmon",
+                "victim_ip": "203.0.113.201",
+                "vector": "syn_flood",
+                "bps": 1000000000
+            },
+            {
+                "timestamp": "2026-01-16T14:00:02Z",
+                "source": "fastnetmon",
+                "victim_ip": "203.0.113.202",
+                "vector": "icmp_flood",
+                "pps": 100000
+            }
+        ]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/events/batch")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["accepted"], 3);
+    assert_eq!(json["rejected"], 0);
+    let results = json["results"].as_array().unwrap();
+    assert_eq!(results.len(), 3);
+    for (i, r) in results.iter().enumerate() {
+        assert_eq!(r["index"], i);
+        assert!(r["event_id"].is_string());
+        assert!(!r["status"].as_str().unwrap().contains("rejected"));
+    }
+}
+
+#[tokio::test]
+async fn test_batch_event_ingestion_partial_success() {
+    let app = setup_app().await;
+
+    let body = serde_json::json!({
+        "events": [
+            {
+                "timestamp": "2026-01-16T14:00:00Z",
+                "source": "fastnetmon",
+                "victim_ip": "203.0.113.210",
+                "vector": "udp_flood",
+                "pps": 50000
+            },
+            {
+                "timestamp": "2026-01-16T14:00:01Z",
+                "source": "fastnetmon",
+                "victim_ip": "not_an_ip",
+                "vector": "syn_flood"
+            },
+            {
+                "timestamp": "2026-01-16T14:00:02Z",
+                "source": "fastnetmon",
+                "victim_ip": "203.0.113.211",
+                "vector": "ack_flood",
+                "pps": 80000
+            }
+        ]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/events/batch")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::MULTI_STATUS);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["accepted"], 2);
+    assert_eq!(json["rejected"], 1);
+    let results = json["results"].as_array().unwrap();
+    assert_eq!(results[1]["status"], "rejected");
+    assert!(results[1]["error"].as_str().unwrap().contains("IP"));
+}
+
+#[tokio::test]
+async fn test_batch_event_ingestion_empty_batch() {
+    let app = setup_app().await;
+
+    let body = serde_json::json!({ "events": [] });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/events/batch")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_batch_event_ingestion_exceeds_limit() {
+    let app = setup_app().await;
+
+    let events: Vec<serde_json::Value> = (0..101)
+        .map(|i| {
+            serde_json::json!({
+                "timestamp": "2026-01-16T14:00:00Z",
+                "source": "test",
+                "victim_ip": format!("203.0.113.{}", i % 256),
+                "vector": "udp_flood"
+            })
+        })
+        .collect();
+
+    let body = serde_json::json!({ "events": events });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/events/batch")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+// ---------------------------------------------------------------------------
 // Per-destination event routing
 // ---------------------------------------------------------------------------
 

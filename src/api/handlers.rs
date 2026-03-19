@@ -1405,6 +1405,150 @@ pub async fn bulk_acknowledge_mitigations(
     }))
 }
 
+const MAX_BATCH_EVENTS: usize = 100;
+
+#[derive(Deserialize, ToSchema)]
+pub struct BatchEventRequest {
+    events: Vec<AttackEventInput>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct BatchEventResult {
+    index: usize,
+    event_id: Uuid,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mitigation_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct BatchEventResponse {
+    accepted: u32,
+    rejected: u32,
+    results: Vec<BatchEventResult>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/events/batch",
+    tag = "events",
+    request_body = BatchEventRequest,
+    responses(
+        (status = 207, description = "Batch results (partial success)", body = BatchEventResponse),
+        (status = 202, description = "All events accepted", body = BatchEventResponse),
+        (status = 400, description = "Empty batch or exceeds limit"),
+    )
+)]
+pub async fn ingest_events_batch(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    Json(req): Json<BatchEventRequest>,
+) -> impl IntoResponse {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    if let Err(_status) = require_auth(&state, &auth_session, auth_header) {
+        return Err(AppError(PrefixdError::Unauthorized(
+            "authentication required".into(),
+        )));
+    }
+
+    if req.events.is_empty() || req.events.len() > MAX_BATCH_EVENTS {
+        return Err(AppError(PrefixdError::InvalidRequest(format!(
+            "batch must contain 1-{} events, got {}",
+            MAX_BATCH_EVENTS,
+            req.events.len()
+        ))));
+    }
+
+    let mut results = Vec::with_capacity(req.events.len());
+    let mut accepted = 0u32;
+    let mut rejected = 0u32;
+
+    for (index, input) in req.events.into_iter().enumerate() {
+        // Validate input
+        let validation_err = validate_ip(&input.victim_ip)
+            .and_then(|_| validate_string_len(&input.source, "source", MAX_STRING_LEN))
+            .and_then(|_| validate_string_len(&input.victim_ip, "victim_ip", 45))
+            .and_then(|_| {
+                if let Some(ref eid) = input.event_id {
+                    validate_string_len(eid, "event_id", MAX_STRING_LEN)
+                } else {
+                    Ok(())
+                }
+            })
+            .err();
+
+        if let Some(err) = validation_err {
+            rejected += 1;
+            results.push(BatchEventResult {
+                index,
+                event_id: Uuid::nil(),
+                status: "rejected".to_string(),
+                mitigation_id: None,
+                error: Some(err.to_string()),
+            });
+            continue;
+        }
+
+        let action = input.action.clone();
+        let result = match action.as_str() {
+            "unban" => handle_unban(state.clone(), input).await,
+            "ban" => handle_ban(state.clone(), input).await,
+            unknown => Err(AppError(PrefixdError::InvalidRequest(format!(
+                "unknown action: '{}', expected 'ban' or 'unban'",
+                unknown
+            )))),
+        };
+
+        match result {
+            Ok((_status, Json(resp))) => {
+                accepted += 1;
+                results.push(BatchEventResult {
+                    index,
+                    event_id: resp.event_id,
+                    status: resp.status,
+                    mitigation_id: resp.mitigation_id,
+                    error: None,
+                });
+            }
+            Err(AppError(err)) => {
+                rejected += 1;
+                results.push(BatchEventResult {
+                    index,
+                    event_id: Uuid::nil(),
+                    status: "rejected".to_string(),
+                    mitigation_id: None,
+                    error: Some(err.to_string()),
+                });
+            }
+        }
+    }
+
+    tracing::info!(
+        accepted = accepted,
+        rejected = rejected,
+        total = results.len(),
+        "batch event ingestion completed"
+    );
+
+    let status = if rejected > 0 {
+        StatusCode::MULTI_STATUS
+    } else {
+        StatusCode::ACCEPTED
+    };
+
+    Ok((
+        status,
+        Json(BatchEventResponse {
+            accepted,
+            rejected,
+            results,
+        }),
+    ))
+}
+
 pub async fn list_safelist(
     State(state): State<Arc<AppState>>,
     auth_session: AuthSession,

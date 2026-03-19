@@ -123,6 +123,69 @@ Common status values:
 | 422 | Guardrail rejection (safelist, quotas, prefix length, etc.) |
 | 429 | Rate limited |
 
+### Batch Ingest Events
+
+```http
+POST /v1/events/batch
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "events": [
+    {
+      "timestamp": "2026-01-15T14:32:00Z",
+      "source": "fastnetmon",
+      "victim_ip": "203.0.113.10",
+      "vector": "udp_flood",
+      "bps": 5000000000,
+      "pps": 500000
+    },
+    {
+      "timestamp": "2026-01-15T14:32:01Z",
+      "source": "fastnetmon",
+      "victim_ip": "203.0.113.11",
+      "vector": "syn_flood",
+      "bps": 2000000000
+    }
+  ]
+}
+```
+
+Accepts up to 100 events in a single request. Each event is processed sequentially through the full pipeline (validation, guardrails, policy engine, FlowSpec announce). Partial success: if some events fail, the rest are still processed.
+
+**Response (all accepted — 202):**
+
+```json
+{
+  "accepted": 2,
+  "rejected": 0,
+  "results": [
+    { "index": 0, "event_id": "550e8400-...", "status": "mitigation_created", "mitigation_id": "660e8400-..." },
+    { "index": 1, "event_id": "770e8400-...", "status": "mitigation_created", "mitigation_id": "880e8400-..." }
+  ]
+}
+```
+
+**Response (partial success — 207):**
+
+```json
+{
+  "accepted": 1,
+  "rejected": 1,
+  "results": [
+    { "index": 0, "event_id": "550e8400-...", "status": "mitigation_created", "mitigation_id": "660e8400-..." },
+    { "index": 1, "event_id": "00000000-...", "status": "rejected", "error": "invalid IP address" }
+  ]
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| 202 | All events accepted |
+| 207 | Partial success (some rejected) |
+| 400 | Empty batch or exceeds 100 event limit |
+| 401 | Authentication required |
+
 ### List Events
 
 ```http

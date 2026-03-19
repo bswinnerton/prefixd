@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Event batching** — `POST /v1/events/batch` accepts up to 100 events in a single request. Sequential processing through the full pipeline (validation, guardrails, policy, announce) with partial success semantics. Returns per-event results with `202 Accepted` (all succeeded) or `207 Multi-Status` (mixed).
+
 ## [0.12.0] - 2026-03-18
 
 ### Added

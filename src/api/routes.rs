@@ -42,6 +42,7 @@ fn api_routes() -> Router<Arc<AppState>> {
             "/v1/events",
             get(handlers::list_events).post(handlers::ingest_event),
         )
+        .route("/v1/events/batch", post(handlers::ingest_events_batch))
         .route(
             "/v1/mitigations",
             get(handlers::list_mitigations).post(handlers::create_mitigation),
