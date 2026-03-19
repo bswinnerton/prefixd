@@ -196,3 +196,53 @@ Key behaviors:
 - FastNetMon adapter testing: 203.0.113.120-129
 - Config API testing: 203.0.113.130-139
 - Cross-area flow testing: 203.0.113.140-149
+
+## Flow Validator Guidance: Browser (Correlation Dashboard)
+
+### Testing Tool
+- Use `agent-browser` skill (invoke via Skill tool at start of session)
+- Dashboard URL: `http://localhost` (nginx reverse proxy on port 80)
+- Auth mode is `none` — no login required, pages load directly
+
+### Navigation Paths
+- Correlation page: `http://localhost/correlation`
+- Signal group detail: `http://localhost/correlation/groups/{group_id}`
+- Mitigation detail: `http://localhost/mitigations/{mitigation_id}`
+- Sidebar has "Correlation" nav item
+- Command palette: Cmd+K (or Ctrl+K) then search "Correlation" or use `g r` shortcut
+
+### Pre-seeded Data
+The Docker stack has pre-seeded signal groups and correlated mitigations:
+- Multiple signal groups in various statuses (open, resolved, expired)
+- Mitigations with correlation data (signal_group_id, derived_confidence, etc.)
+- Sources: fastnetmon (weight 1.0), alertmanager (weight 0.8), dashboard (weight 1.0)
+- Correlation config: enabled=true, window_seconds=300, min_sources=1, confidence_threshold=0.5
+
+### Key API Endpoints (for reference)
+- Signal groups: `GET /v1/signal-groups` (list), `GET /v1/signal-groups/{id}` (detail)
+- Mitigations: `GET /v1/mitigations` (list), `GET /v1/mitigations/{id}` (detail)
+- Correlation config: `GET /v1/config/correlation`
+- Playbooks: `GET /v1/config/playbooks`
+
+### Isolation Rules
+- Browser tests are READ-ONLY by default (viewing pages, checking rendering)
+- Config tab tests (saving settings) should be careful to restore original values
+- Do NOT delete or modify signal groups/mitigations that other subagents may use
+- Each subagent gets a separate browser session (agent-browser --session)
+
+### Dark Mode Toggle
+- Click the theme toggle icon in the top bar to switch between light and dark mode
+- Or look for a sun/moon icon in the UI header area
+
+### Known Data Context
+- Signal groups response uses `groups` array, not `items`
+- Mitigations response uses `mitigations` array
+- Mitigation IDs use `mitigation_id` field (not `id`)
+- Signal group detail includes `events` array and `mitigation_id` (nullable)
+- Mitigations list includes lightweight `correlation` summary (no contributing_sources)
+- Mitigation detail includes full `correlation` with contributing_sources and explanation
+
+### Evidence Capture
+- Take screenshots for visual assertions (rendering, dark mode, etc.)
+- Check browser console for JavaScript errors (use agent-browser console capture)
+- Record URLs at each navigation step for cross-entity navigation tests
