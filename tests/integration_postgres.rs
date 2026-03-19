@@ -836,6 +836,51 @@ async fn test_signal_group_concurrent_insert_returns_existing() {
 }
 
 #[tokio::test]
+async fn test_signal_group_truly_concurrent_insert_no_500() {
+    use prefixd::correlation::engine::CorrelationEngine;
+
+    let ctx = TestContext::new().await;
+    let repo = ctx.repo.clone();
+
+    // Spawn multiple concurrent inserts for the same (victim_ip, vector).
+    // This tests the retry-on-conflict logic when the unique index
+    // (idx_signal_groups_open_unique) causes a unique violation under true
+    // concurrency. All inserts should succeed (return the same group), not 500.
+    let mut handles = Vec::new();
+    for _ in 0..10 {
+        let repo = repo.clone();
+        handles.push(tokio::spawn(async move {
+            let group = CorrelationEngine::create_group("203.0.113.99", "udp_flood", 300);
+            repo.insert_signal_group(&group).await
+        }));
+    }
+
+    let mut group_ids = Vec::new();
+    for handle in handles {
+        let result = handle.await.expect("task panicked");
+        let group = result.expect("insert_signal_group should not fail (no 500)");
+        group_ids.push(group.group_id);
+    }
+
+    // All should return the same group ID
+    let first = group_ids[0];
+    for gid in &group_ids {
+        assert_eq!(
+            *gid, first,
+            "all concurrent inserts should return the same group"
+        );
+    }
+
+    // Only one open group should exist
+    let count = ctx
+        .repo
+        .count_open_groups()
+        .await
+        .expect("Failed to count open groups");
+    assert_eq!(count, 1, "exactly one open group should exist");
+}
+
+#[tokio::test]
 async fn test_signal_group_add_events_and_list() {
     use prefixd::correlation::engine::CorrelationEngine;
     use prefixd::domain::AttackEvent;

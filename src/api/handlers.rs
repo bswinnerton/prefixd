@@ -54,6 +54,11 @@ pub struct EventResponse {
 
 /// Correlation context attached to a mitigation that was created via the
 /// correlation engine's corroboration logic.
+///
+/// The list endpoint provides a lightweight summary with only the core fields
+/// (signal_group_id, derived_confidence, source_count, corroboration_met).
+/// The detail endpoint populates the full context including contributing_sources
+/// and explanation.
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct CorrelationContext {
     /// Signal group ID that triggered this mitigation
@@ -64,10 +69,12 @@ pub struct CorrelationContext {
     pub source_count: i32,
     /// Whether corroboration threshold was met
     pub corroboration_met: bool,
-    /// List of contributing detection sources
-    pub contributing_sources: Vec<String>,
-    /// Human-readable explanation of the correlation decision
-    pub explanation: String,
+    /// List of contributing detection sources (populated on detail endpoint only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contributing_sources: Option<Vec<String>>,
+    /// Human-readable explanation of the correlation decision (populated on detail endpoint only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -781,8 +788,8 @@ async fn handle_ban(
             derived_confidence,
             source_count,
             corroboration_met: true,
-            contributing_sources: unique_sources,
-            explanation: explanation.explanation,
+            contributing_sources: Some(unique_sources),
+            explanation: Some(explanation.explanation),
         });
 
         tracing::info!(
@@ -1163,8 +1170,8 @@ pub async fn list_mitigations(
                         derived_confidence: group.derived_confidence,
                         source_count: group.source_count,
                         corroboration_met: group.corroboration_met,
-                        contributing_sources: vec![],
-                        explanation: String::new(),
+                        contributing_sources: None,
+                        explanation: None,
                     });
                 }
             }
@@ -1258,8 +1265,8 @@ pub async fn get_mitigation(
                     derived_confidence: group.derived_confidence,
                     source_count: group.source_count,
                     corroboration_met: group.corroboration_met,
-                    contributing_sources: unique_sources,
-                    explanation: explanation.explanation,
+                    contributing_sources: Some(unique_sources),
+                    explanation: Some(explanation.explanation),
                 });
             }
         }

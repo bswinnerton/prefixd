@@ -2314,12 +2314,109 @@ async fn test_correlation_mitigations_list_includes_summary() {
 
     let mitigations = json["mitigations"].as_array().unwrap();
     assert!(!mitigations.is_empty());
+    let corr = &mitigations[0]["correlation"];
     assert!(
-        mitigations[0]["correlation"].is_object(),
+        corr.is_object(),
         "list should include correlation summary: {:?}",
         mitigations[0]
     );
-    assert!(mitigations[0]["correlation"]["signal_group_id"].is_string());
+    // Lightweight summary fields are present
+    assert!(corr["signal_group_id"].is_string());
+    assert!(corr["derived_confidence"].is_number());
+    assert!(corr["source_count"].is_number());
+    assert!(corr["corroboration_met"].is_boolean());
+    // Detail-only fields are absent (null) in list view
+    assert!(
+        corr.get("contributing_sources").is_none() || corr["contributing_sources"].is_null(),
+        "contributing_sources should be absent in list view, got: {:?}",
+        corr["contributing_sources"]
+    );
+    assert!(
+        corr.get("explanation").is_none() || corr["explanation"].is_null(),
+        "explanation should be absent in list view, got: {:?}",
+        corr["explanation"]
+    );
+}
+
+/// List vs detail consistency: detail endpoint has contributing_sources and explanation
+#[tokio::test]
+async fn test_correlation_detail_has_full_context_list_has_summary() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    let (_, event_json) = post_event(&app, &event).await;
+    let mitigation_id = event_json["mitigation_id"].as_str().unwrap();
+
+    // Detail endpoint should have full context
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&format!("/v1/mitigations/{}", mitigation_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let detail: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let detail_corr = &detail["correlation"];
+    assert!(
+        detail_corr["contributing_sources"].is_array(),
+        "detail should have contributing_sources"
+    );
+    assert!(
+        detail_corr["explanation"].is_string(),
+        "detail should have explanation"
+    );
+    assert!(
+        !detail_corr["contributing_sources"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "detail contributing_sources should not be empty"
+    );
+    assert!(
+        !detail_corr["explanation"].as_str().unwrap().is_empty(),
+        "detail explanation should not be empty"
+    );
+
+    // List endpoint should have lightweight summary (no contributing_sources, no explanation)
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/mitigations")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let list: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let list_corr = &list["mitigations"][0]["correlation"];
+    assert!(
+        list_corr["signal_group_id"].is_string(),
+        "list should have signal_group_id"
+    );
+    assert!(
+        list_corr["derived_confidence"].is_number(),
+        "list should have derived_confidence"
+    );
+    assert!(
+        list_corr.get("contributing_sources").is_none()
+            || list_corr["contributing_sources"].is_null(),
+        "list should NOT have contributing_sources"
+    );
+    assert!(
+        list_corr.get("explanation").is_none() || list_corr["explanation"].is_null(),
+        "list should NOT have explanation"
+    );
 }
 
 /// VAL-CROSS-009: Corroborated mitigations pass through guardrails — safelisted IP rejected

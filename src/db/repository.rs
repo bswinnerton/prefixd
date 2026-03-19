@@ -900,7 +900,12 @@ impl RepositoryTrait for Repository {
         // If another request already created a group for (victim_ip, vector, status='open'),
         // we return the existing one. The unique constraint is checked via a CTE that
         // tries to find an existing open group first.
-        let row = sqlx::query_as::<_, SignalGroupRow>(
+        //
+        // Under true concurrency, two requests may both execute the CTE simultaneously,
+        // both find no existing group, and both try to INSERT. The partial unique index
+        // (idx_signal_groups_open_unique) will cause one to fail with a unique violation.
+        // When that happens, we retry with a simple SELECT to find the group that won the race.
+        let result = sqlx::query_as::<_, SignalGroupRow>(
             r#"
             WITH existing AS (
                 SELECT group_id, victim_ip, vector, created_at, window_expires_at,
@@ -933,9 +938,36 @@ impl RepositoryTrait for Repository {
         .bind(group.status.as_str())
         .bind(group.corroboration_met)
         .fetch_one(&self.pool)
-        .await?;
+        .await;
 
-        Ok(row.into())
+        match result {
+            Ok(row) => Ok(row.into()),
+            Err(sqlx::Error::Database(ref db_err)) if db_err.code().as_deref() == Some("23505") => {
+                // Unique constraint violation — another concurrent request won the race.
+                // Retry by fetching the existing open group.
+                tracing::debug!(
+                    victim_ip = %group.victim_ip,
+                    vector = %group.vector,
+                    "concurrent signal group insert conflict, retrying SELECT"
+                );
+                let row = sqlx::query_as::<_, SignalGroupRow>(
+                    r#"
+                    SELECT group_id, victim_ip, vector, created_at, window_expires_at,
+                           derived_confidence, source_count, status, corroboration_met
+                    FROM signal_groups
+                    WHERE victim_ip = $1 AND vector = $2 AND status = 'open'
+                      AND window_expires_at > NOW()
+                    LIMIT 1
+                    "#,
+                )
+                .bind(&group.victim_ip)
+                .bind(&group.vector)
+                .fetch_one(&self.pool)
+                .await?;
+                Ok(row.into())
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     async fn update_signal_group(&self, group: &SignalGroup) -> Result<()> {
