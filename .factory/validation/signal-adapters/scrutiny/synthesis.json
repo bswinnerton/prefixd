@@ -1,0 +1,75 @@
+{
+  "milestone": "signal-adapters",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "cargo test --features test-utils", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "cargo clippy -- -D warnings", "exitCode": 0 },
+    "lint": { "passed": true, "command": "cargo fmt --check", "exitCode": 0 },
+    "test_frontend": { "passed": true, "command": "cd frontend && bun run test", "exitCode": 0 },
+    "build_frontend": { "passed": true, "command": "cd frontend && bun run build", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 4,
+    "passed": 4,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Added 'Signal Adapter Handler Pattern' section to .factory/library/architecture.md documenting the two-function split, manual Bytes deserialization, standard flow, and per-source confidence mapping pattern",
+      "sourceFeature": "alertmanager-adapter, fastnetmon-adapter"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add 'Adding a new signal adapter' section to Common Tasks in AGENTS.md documenting the established pattern: (1) create handler with two-function split in handlers.rs, (2) use Bytes deserialization for 400 control, (3) build AttackEventInput and delegate to handle_ban/handle_unban, (4) add route under /v1/signals/<name>, (5) register in OpenAPI, (6) add integration tests.",
+      "evidence": "Both alertmanager-adapter and fastnetmon-adapter follow identical handler structure (auth check → JSON parse → validate → build AttackEventInput → delegate). Pattern now established by 2 adapters but not documented.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add GET/PUT /v1/config/correlation to the Authenticated API Endpoints list in AGENTS.md for discoverability.",
+      "evidence": "correlation-config-api feature added these endpoints (commit 309ccfe) but AGENTS.md was not updated. The AGENTS.md API Endpoints section lists all other config endpoints.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add POST /v1/signals/alertmanager and POST /v1/signals/fastnetmon to the Authenticated API Endpoints list in AGENTS.md.",
+      "evidence": "Both signal adapter endpoints are production features but not listed in the AGENTS.md API reference.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Clarify in the 'Adding a new API endpoint' checklist whether docs/api.md updates are ALWAYS required (step 5) or only when the feature description explicitly requires it. Currently the skill says 'Update documentation if the feature description requires it' which creates ambiguity with the AGENTS.md checklist.",
+      "evidence": "correlation-config-api worker followed the skill procedure and skipped docs/api.md updates since the feature verificationSteps didn't mention it, despite AGENTS.md listing it as step 5.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Update test counts in mission AGENTS.md to reflect current state: 183 unit, 97 integration, 15 postgres, 9 E2E (ignored), 34 frontend.",
+      "evidence": "Mission AGENTS.md says '126 unit, 44 integration, 9 postgres' but actual counts are significantly higher after all correlation-engine and signal-adapters features.",
+      "isSystemic": false
+    },
+    {
+      "target": "skills",
+      "suggestion": "Consider relaxing the TDD requirement in the backend-worker skill for webhook adapter features where the response shape is being designed during implementation. Both adapter workers wrote tests after implementation rather than before. The deviation did not affect quality (all expected behaviors tested), suggesting the TDD-first approach may not be practical for adapter endpoints.",
+      "evidence": "alertmanager-adapter and fastnetmon-adapter transcripts show implementation before tests. Both have comprehensive test suites.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "confidence_mapping pattern in SourceConfig could be documented in library",
+      "reason": "Already self-evident from the SourceConfig struct definition and the broader 'Signal Adapter Handler Pattern' library entry covers the concept at a higher level. Adding a separate entry for this single field would be over-documenting."
+    },
+    {
+      "observation": "E2ETestContext code duplication between new() and with_correlation()",
+      "reason": "This is a code quality suggestion rather than a shared-state/knowledge gap. It's already noted as a non-blocking issue in the review. Not appropriate for library/AGENTS.md — it's a refactoring opportunity that a future worker can address."
+    }
+  ],
+  "previousRound": null
+}

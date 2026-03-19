@@ -69,6 +69,17 @@ This pattern (in `src/db/repository.rs`) returns the existing row if found, or i
 
 Compare with the simpler `INSERT ... ON CONFLICT DO NOTHING` used for `signal_group_events.add_event_to_group()` where the (group_id, event_id) primary key provides natural dedup.
 
+## Signal Adapter Handler Pattern
+
+Signal adapter endpoints (e.g., `/v1/signals/alertmanager`, `/v1/signals/fastnetmon`) follow a consistent pattern:
+
+1. **Two-function split**: A public outer function returning `impl IntoResponse` (for utoipa compatibility) wraps a private inner function with concrete `Result<..., AppError>` return type. This avoids compiler warnings about exposing private types.
+2. **Manual Bytes deserialization**: Uses `axum::body::Bytes` + `serde_json::from_slice()` instead of `Json<T>` extractor. This controls the HTTP error code — returns 400 (not 422) for malformed payloads, which is important for webhook senders like Alertmanager that won't retry 4xx.
+3. **Auth check → parse → validate → build AttackEventInput → delegate**: The standard flow validates auth, parses the payload, validates fields, constructs an `AttackEventInput`, then delegates to `handle_ban()` or `handle_unban()` from the existing ingestion pipeline.
+4. **Per-source confidence mapping**: Sources can define `confidence_mapping: HashMap<String, f32>` in `SourceConfig` for action→confidence value overrides (e.g., ban=0.9, partial_block=0.7, alert=0.5).
+
+Reference files: `src/api/handlers.rs` (ingest_alertmanager_inner, ingest_fastnetmon_inner).
+
 ## API Response Context Levels
 
 The mitigation API uses two levels of correlation context:
