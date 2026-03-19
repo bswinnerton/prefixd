@@ -1,5 +1,6 @@
 "use client"
 
+import { use } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
@@ -60,8 +61,8 @@ function protocolName(proto: number | null): string {
   }
 }
 
-export default function MitigationDetailPage({ params }: { params: { id: string } }) {
-  const { id } = params
+export default function MitigationDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
   const router = useRouter()
   const permissions = usePermissions()
 
