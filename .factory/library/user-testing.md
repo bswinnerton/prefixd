@@ -110,3 +110,89 @@ Testing surface, tools, and resource cost classification for validation.
 - Metrics: `curl http://localhost/metrics`
 - OpenAPI: `curl http://localhost/openapi.json`
 - Config: `curl http://localhost/v1/config/settings`
+- Correlation config: `curl http://localhost/v1/config/correlation`
+
+## Flow Validator Guidance: Signal Adapters (API)
+
+### Alertmanager Webhook Format
+The Alertmanager adapter accepts v4 webhook payloads at POST /v1/signals/alertmanager:
+```json
+{
+  "version": "4",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "vector": "udp_flood",
+        "victim_ip": "203.0.113.X",
+        "severity": "critical"
+      },
+      "annotations": {
+        "bps": "1000000",
+        "pps": "50000"
+      },
+      "startsAt": "2026-03-19T20:00:00Z",
+      "fingerprint": "unique-fingerprint-123"
+    }
+  ],
+  "groupLabels": {},
+  "commonLabels": {},
+  "commonAnnotations": {},
+  "externalURL": "http://alertmanager:9093"
+}
+```
+
+Key behaviors:
+- Returns 200 with per-alert results (not 202)
+- Each alert in batch creates separate event with source="alertmanager"
+- labels.vector → vector (fallback: labels.alertname)
+- labels.victim_ip → victim_ip (fallback: labels.instance with port stripping)
+- labels.severity → confidence: critical=0.9, warning=0.7, info=0.5, missing=0.5
+- annotations.bps/pps → parsed as optional i64
+- fingerprint → external_event_id for dedup
+- status="resolved" → action="unban" (withdraw flow)
+- Empty/malformed payloads → 400 (not 500)
+
+### FastNetMon Webhook Format
+The FastNetMon adapter accepts payloads at POST /v1/signals/fastnetmon:
+```json
+{
+  "action": "ban",
+  "ip": "203.0.113.X",
+  "alert_scope": "host",
+  "attack_details": {
+    "attack_uuid": "unique-uuid-123",
+    "attack_severity": "high",
+    "incoming_udp_pps": 500000,
+    "incoming_udp_traffic_bits": 5000000000,
+    "total_incoming_pps": 500000,
+    "total_incoming_traffic_bits": 5000000000
+  }
+}
+```
+
+Key behaviors:
+- Returns 202 with EventResponse (event_id, status, mitigation_id)
+- source="fastnetmon" always
+- action→confidence: ban=0.9, partial_block=0.7, alert=0.5 (configurable via correlation config)
+- Vector classified from traffic breakdown (UDP dominant→udp_flood, SYN dominant→syn_flood, etc.)
+- attack_details.attack_uuid → external_event_id for dedup
+- Missing/empty action or ip → 400
+
+### Correlation Config API
+- GET /v1/config/correlation → returns current config with loaded_at timestamp
+- PUT /v1/config/correlation → updates config (admin only, but auth_mode=none bypasses)
+- POST /v1/config/reload → reloads all config including correlation
+
+### Auth Notes (auth_mode=none)
+- auth_mode is currently "none" — all requests pass authentication
+- VAL-ADAPT-010 (auth required) and VAL-ADAPT-015 (admin required) CANNOT be fully tested
+  because auth_mode=none means no 401/403 enforcement
+- The auth code paths exist and are tested in integration tests but not exercisable via live API
+
+### Signal Adapter IP Ranges
+- Alertmanager adapter testing: 203.0.113.110-119
+- FastNetMon adapter testing: 203.0.113.120-129
+- Config API testing: 203.0.113.130-139
+- Cross-area flow testing: 203.0.113.140-149
