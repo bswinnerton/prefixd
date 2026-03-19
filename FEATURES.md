@@ -9,6 +9,7 @@ Comprehensive list of prefixd capabilities.
 ### HTTP Event API
 
 - `POST /v1/events` accepts attack signals from any detector
+- `POST /v1/events/batch` accepts up to 100 events per request with partial success semantics (202/207)
 - Unified ban/unban: `action` field supports `"ban"` (default) or `"unban"`
 - Schema: victim IP, attack vector, confidence score, optional ports/protocol
 - Idempotent: duplicate events extend TTL instead of creating new mitigations
@@ -203,6 +204,11 @@ Destination Port: !=53
 Extended Community: traffic-rate: 10000000 (10 Mbps)
 ```
 
+### FlowSpec NLRI Fuzz Testing
+
+- **proptest** — 8 property-based tests covering prefix parsing with arbitrary strings, NLRI v4/v6 build+decode roundtrip, full path roundtrip preserving nlri_hash, and action type roundtrip. Runs in CI with `cargo test`.
+- **cargo-fuzz** — 2 libFuzzer targets (`fuzz_prefix_parse`, `fuzz_nlri_decode`) for continuous offline fuzzing. Run with `cargo +nightly fuzz run <target>`.
+
 ---
 
 ## Reconciliation
@@ -343,8 +349,9 @@ Real-time visibility into mitigation state:
 - **Mitigations** - List with filtering, sorting, pagination, inline withdraw, bulk withdraw (multi-select), CSV export
 - **Mitigate Now** - Operator modal (`n` shortcut, command palette action) posts policy-validated ban events
 - **Events** - Attack event history with CSV export
-- **IP History** - Unified timeline per IP (events + mitigations + customer context)
+- **IP History** - Unified timeline per IP (events + mitigations + customer context), with incident report generation
 - **Audit Log** - All actions with operator attribution, CSV export
+- **Incident Reports** - Generate markdown reports from mitigation detail or IP history pages (`GET /v1/reports/incident`). Summary, timeline, peak traffic, audit trail. Copy to clipboard or download .md
 - **Config** - Settings viewer, playbook editor (form + YAML), alerting editor, hot-reload controls
 - **Inventory** - Searchable customer/service/IP browser
 - **Admin** - User management, safelist CRUD, system health (tabbed layout)
