@@ -574,7 +574,7 @@ All state-changing operations logged:
 ```json
 {
   "status": "ok",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "auth_mode": "none"
 }
 ```
@@ -584,7 +584,7 @@ All state-changing operations logged:
 ```json
 {
   "status": "ok",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "pop": "iad1",
   "uptime_seconds": 86400,
   "active_mitigations": 3,

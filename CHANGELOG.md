@@ -5,7 +5,7 @@ All notable changes to prefixd will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.13.0] - 2026-03-19
 
 ### Added
 
@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **WebSocket rejected all connections when auth_mode is none** — `ws_handler` checked for an authenticated session unconditionally, returning 401 for every connection in no-auth deployments. Dashboard showed "Disconnected" permanently.
 - **Mitigation detail page showed "Not Found" on Next.js 16** — Dynamic route `params` became a Promise in Next.js 15+. Page was destructuring synchronously, getting `undefined` for the ID.
+- **Dark mode outline button hover invisible** — Export CSV, Refresh, and other outline-variant buttons had nearly invisible hover states in dark mode (`bg-input/50` at ~11% opacity). Changed to `bg-accent/20` with accent-foreground text for visible teal-tinted hover.
 
 ## [0.12.0] - 2026-03-18
 
@@ -802,7 +803,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Safelist prevents mitigation of protected infrastructure
 - Guardrails block overly broad mitigations
 
-[Unreleased]: https://github.com/lance0/prefixd/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/lance0/prefixd/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/lance0/prefixd/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/lance0/prefixd/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/lance0/prefixd/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/lance0/prefixd/compare/v0.10.0...v0.10.1

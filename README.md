@@ -69,7 +69,7 @@ docker compose ps
 
 # Test the API
 curl http://localhost/v1/health
-# {"status":"ok","version":"0.12.0","auth_mode":"none"}
+# {"status":"ok","version":"0.13.0","auth_mode":"none"}
 ```
 
 ### 4. Create an admin account
@@ -249,7 +249,7 @@ Database migrations run automatically on startup. See **[docs/upgrading.md](docs
 
 ## Project Status
 
-Current version: **v0.12.0**
+Current version: **v0.13.0**
 
 - Core functionality stable and tested
 - Real-time dashboard with WebSocket updates, toast notifications, and mitigation detail views
