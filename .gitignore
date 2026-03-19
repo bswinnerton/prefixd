@@ -4,4 +4,4 @@
 *.db-*
 lab/clab-*/
 .claude/
-.factory/settings.json
+.factory/
