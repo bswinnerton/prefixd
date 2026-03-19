@@ -4262,6 +4262,261 @@ async fn process_alertmanager_alert(
     }
 }
 
+// ==========================================================================
+// FastNetMon signal adapter
+// ==========================================================================
+
+/// FastNetMon webhook payload (JSON notify format).
+///
+/// Accepts FastNetMon's native notify format with IP, attack details,
+/// direction, and bandwidth metrics. The `action` field determines the
+/// confidence mapping (ban=0.9, partial_block=0.7, alert=0.5 by default,
+/// overridable in correlation config).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct FastNetMonPayload {
+    /// Action type: "ban", "unban", "partial_block", or "alert"
+    pub action: String,
+    /// Victim IP address under attack
+    pub ip: String,
+    /// Scope of the alert: "host" or "total"
+    #[serde(default)]
+    pub alert_scope: Option<String>,
+    /// Attack details with traffic metrics and classification
+    #[serde(default)]
+    pub attack_details: Option<FastNetMonAttackDetails>,
+}
+
+/// Attack details from FastNetMon.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct FastNetMonAttackDetails {
+    /// UUID of the attack (used as external_event_id for dedup)
+    #[serde(default)]
+    pub attack_uuid: Option<String>,
+    /// Attack severity: "low", "middle", "high"
+    #[serde(default)]
+    pub attack_severity: Option<String>,
+    /// Detection source: "automatic", "manual", etc.
+    #[serde(default)]
+    pub attack_detection_source: Option<String>,
+    /// Detection threshold type: "bytes per second", "packets per second", etc.
+    #[serde(default)]
+    pub attack_detection_threshold: Option<String>,
+    /// Detection direction: "incoming", "outgoing"
+    #[serde(default)]
+    pub attack_detection_threshold_direction: Option<String>,
+    /// Attack start timestamp
+    #[serde(default)]
+    pub attack_start: Option<String>,
+    /// Protocol version: "IPv4" or "IPv6"
+    #[serde(default)]
+    pub protocol_version: Option<String>,
+    /// Host group
+    #[serde(default)]
+    pub host_group: Option<String>,
+    /// Host network
+    #[serde(default)]
+    pub host_network: Option<String>,
+
+    // Per-protocol incoming traffic metrics
+    #[serde(default)]
+    pub incoming_udp_pps: Option<i64>,
+    #[serde(default)]
+    pub incoming_udp_traffic_bits: Option<i64>,
+    #[serde(default)]
+    pub incoming_tcp_pps: Option<i64>,
+    #[serde(default)]
+    pub incoming_tcp_traffic_bits: Option<i64>,
+    #[serde(default)]
+    pub incoming_syn_tcp_pps: Option<i64>,
+    #[serde(default)]
+    pub incoming_syn_tcp_traffic_bits: Option<i64>,
+    #[serde(default)]
+    pub incoming_icmp_pps: Option<i64>,
+    #[serde(default)]
+    pub incoming_icmp_traffic_bits: Option<i64>,
+    #[serde(default)]
+    pub incoming_ip_fragmented_pps: Option<i64>,
+    #[serde(default)]
+    pub incoming_ip_fragmented_traffic_bits: Option<i64>,
+
+    // Totals
+    #[serde(default)]
+    pub total_incoming_pps: Option<i64>,
+    #[serde(default)]
+    pub total_incoming_traffic_bits: Option<i64>,
+    #[serde(default)]
+    pub total_incoming_flows: Option<i64>,
+    #[serde(default)]
+    pub total_outgoing_pps: Option<i64>,
+    #[serde(default)]
+    pub total_outgoing_traffic_bits: Option<i64>,
+    #[serde(default)]
+    pub total_outgoing_flows: Option<i64>,
+}
+
+/// Classify attack vector from FastNetMon attack details.
+///
+/// Examines per-protocol traffic breakdown to determine the dominant vector.
+/// Falls back to "unknown" if no clear dominant protocol is found.
+fn classify_fastnetmon_vector(details: &FastNetMonAttackDetails) -> AttackVector {
+    let udp_pps = details.incoming_udp_pps.unwrap_or(0);
+    let tcp_pps = details.incoming_tcp_pps.unwrap_or(0);
+    let syn_pps = details.incoming_syn_tcp_pps.unwrap_or(0);
+    let icmp_pps = details.incoming_icmp_pps.unwrap_or(0);
+
+    // Check for SYN flood: SYN PPS is dominant fraction of TCP
+    if syn_pps > 0 && (tcp_pps == 0 || syn_pps * 100 / tcp_pps.max(1) > 60) && syn_pps > udp_pps {
+        return AttackVector::SynFlood;
+    }
+
+    // Pick the dominant protocol by PPS
+    let max_pps = udp_pps.max(tcp_pps).max(icmp_pps);
+    if max_pps == 0 {
+        return AttackVector::Unknown;
+    }
+
+    if udp_pps == max_pps {
+        AttackVector::UdpFlood
+    } else if icmp_pps == max_pps {
+        AttackVector::IcmpFlood
+    } else {
+        // TCP flood (non-SYN dominant)
+        AttackVector::AckFlood
+    }
+}
+
+/// Ingest a signal from FastNetMon
+#[utoipa::path(
+    post,
+    path = "/v1/signals/fastnetmon",
+    tag = "signals",
+    request_body = FastNetMonPayload,
+    responses(
+        (status = 202, description = "Event accepted", body = EventResponse),
+        (status = 400, description = "Malformed payload"),
+        (status = 401, description = "Authentication required"),
+    )
+)]
+pub async fn ingest_fastnetmon(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    ingest_fastnetmon_inner(state, auth_session, headers, body).await
+}
+
+async fn ingest_fastnetmon_inner(
+    state: Arc<AppState>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<(StatusCode, Json<EventResponse>), AppError> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    if let Err(_status) = require_auth(&state, &auth_session, auth_header) {
+        return Err(AppError(PrefixdError::Unauthorized(
+            "authentication required".into(),
+        )));
+    }
+
+    // Parse body as JSON — return 400 for malformed payloads
+    let payload: FastNetMonPayload = serde_json::from_slice(&body).map_err(|e| {
+        AppError(PrefixdError::InvalidRequest(format!(
+            "malformed FastNetMon payload: {}",
+            e
+        )))
+    })?;
+
+    // Validate required fields
+    if payload.ip.is_empty() {
+        return Err(AppError(PrefixdError::InvalidRequest(
+            "missing required field: ip".into(),
+        )));
+    }
+
+    // Validate IP address
+    if payload.ip.parse::<IpAddr>().is_err() {
+        return Err(AppError(PrefixdError::InvalidRequest(format!(
+            "invalid IP address: '{}'",
+            payload.ip
+        ))));
+    }
+
+    if payload.action.is_empty() {
+        return Err(AppError(PrefixdError::InvalidRequest(
+            "missing required field: action".into(),
+        )));
+    }
+
+    // Classify attack vector from details
+    let vector = payload
+        .attack_details
+        .as_ref()
+        .map(classify_fastnetmon_vector)
+        .unwrap_or(AttackVector::Unknown);
+
+    // Compute confidence from action type via configurable mapping
+    let correlation_config = state.correlation_config.read().await;
+    let confidence = correlation_config.source_action_confidence("fastnetmon", &payload.action);
+    drop(correlation_config);
+
+    // Extract traffic metrics from attack details
+    let (bps, pps) = payload
+        .attack_details
+        .as_ref()
+        .map(|d| (d.total_incoming_traffic_bits, d.total_incoming_pps))
+        .unwrap_or((None, None));
+
+    // Use attack_uuid as external_event_id for dedup
+    let external_event_id = payload
+        .attack_details
+        .as_ref()
+        .and_then(|d| d.attack_uuid.clone());
+
+    // Parse timestamp from attack_start, or use now
+    let timestamp = payload
+        .attack_details
+        .as_ref()
+        .and_then(|d| d.attack_start.as_deref())
+        .and_then(|s| s.parse::<DateTime<Utc>>().ok())
+        .unwrap_or_else(Utc::now);
+
+    // Determine action for the event pipeline
+    let action = match payload.action.as_str() {
+        "unban" => "unban".to_string(),
+        _ => "ban".to_string(), // ban, partial_block, alert all map to ban action in the pipeline
+    };
+
+    // Store raw payload as raw_details for forensics
+    let raw_details = serde_json::to_value(&payload).ok();
+
+    let input = AttackEventInput {
+        event_id: external_event_id,
+        timestamp,
+        source: "fastnetmon".to_string(),
+        victim_ip: payload.ip,
+        vector,
+        bps,
+        pps,
+        top_dst_ports: None,
+        confidence: Some(confidence),
+        action,
+        raw_details,
+    };
+
+    // Delegate to the existing event ingestion pipeline
+    match input.action.as_str() {
+        "unban" => match handle_unban(state.clone(), input).await {
+            Ok(resp) => Ok(resp),
+            Err(e) => Err(e),
+        },
+        _ => match handle_ban(state.clone(), input).await {
+            Ok(resp) => Ok(resp),
+            Err(e) => Err(e),
+        },
+    }
+}
+
 fn format_bps(bps: i64) -> String {
     let abs = bps.unsigned_abs();
     if abs >= 1_000_000_000 {

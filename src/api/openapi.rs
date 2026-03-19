@@ -5,9 +5,10 @@ use super::handlers::{
     AlertmanagerWebhookResponse, AuditListResponse, BatchEventRequest, BatchEventResponse,
     BatchEventResult, BulkAcknowledgeRequest, BulkAcknowledgeResponse, BulkAcknowledgeResult,
     BulkWithdrawRequest, BulkWithdrawResponse, BulkWithdrawResult, CorrelationContext,
-    ErrorResponse, EventResponse, EventsListResponse, HealthResponse, IpHistoryResponse,
-    MitigationResponse, MitigationsListResponse, PublicHealthResponse, ReloadResponse,
-    SignalGroupDetailResponse, SignalGroupsListResponse, TimeseriesResponse,
+    ErrorResponse, EventResponse, EventsListResponse, FastNetMonAttackDetails, FastNetMonPayload,
+    HealthResponse, IpHistoryResponse, MitigationResponse, MitigationsListResponse,
+    PublicHealthResponse, ReloadResponse, SignalGroupDetailResponse, SignalGroupsListResponse,
+    TimeseriesResponse,
 };
 use crate::correlation::engine::{
     CorrelationExplanation, SignalGroup, SignalGroupEvent, SignalGroupStatus, SourceContribution,
@@ -54,6 +55,7 @@ use crate::db::{GlobalStats, NotificationPreferences, PopInfo, PopStats, Safelis
         super::handlers::list_signal_groups,
         super::handlers::get_signal_group,
         super::handlers::ingest_alertmanager,
+        super::handlers::ingest_fastnetmon,
     ),
     components(
         schemas(
@@ -90,6 +92,8 @@ use crate::db::{GlobalStats, NotificationPreferences, PopInfo, PopStats, Safelis
             AlertmanagerAlert,
             AlertmanagerWebhookResponse,
             AlertmanagerAlertResult,
+            FastNetMonPayload,
+            FastNetMonAttackDetails,
             SignalGroup,
             SignalGroupEvent,
             SignalGroupStatus,

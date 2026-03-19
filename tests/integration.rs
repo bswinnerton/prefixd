@@ -1895,6 +1895,7 @@ fn test_settings_with_correlation(
                 prefixd::correlation::SourceConfig {
                     weight: 1.0,
                     r#type: "detector".to_string(),
+                    confidence_mapping: std::collections::HashMap::new(),
                 },
             );
             m.insert(
@@ -1902,6 +1903,7 @@ fn test_settings_with_correlation(
                 prefixd::correlation::SourceConfig {
                     weight: 1.5,
                     r#type: "detector".to_string(),
+                    confidence_mapping: std::collections::HashMap::new(),
                 },
             );
             m
@@ -3691,6 +3693,426 @@ async fn test_alertmanager_partial_batch_failure() {
         results[2]["error"].is_null(),
         "third alert should succeed: {:?}",
         results[2]
+    );
+}
+
+// ==========================================================================
+// FastNetMon webhook adapter tests
+// ==========================================================================
+
+fn make_fastnetmon_payload(action: &str, ip: &str, attack_uuid: Option<&str>) -> String {
+    let mut payload = serde_json::json!({
+        "action": action,
+        "ip": ip,
+        "alert_scope": "host",
+        "attack_details": {
+            "attack_uuid": attack_uuid,
+            "attack_severity": "middle",
+            "attack_detection_source": "automatic",
+            "attack_detection_threshold": "bytes per second",
+            "attack_detection_threshold_direction": "incoming",
+            "attack_start": "2026-01-16T14:00:00Z",
+            "protocol_version": "IPv4",
+            "host_group": "global",
+            "host_network": "192.0.2.0/24",
+            "incoming_udp_pps": 5000,
+            "incoming_udp_traffic_bits": 50000000,
+            "incoming_tcp_pps": 1000,
+            "incoming_tcp_traffic_bits": 10000000,
+            "incoming_syn_tcp_pps": 200,
+            "incoming_syn_tcp_traffic_bits": 2000000,
+            "incoming_icmp_pps": 100,
+            "incoming_icmp_traffic_bits": 1000000,
+            "incoming_ip_fragmented_pps": 0,
+            "incoming_ip_fragmented_traffic_bits": 0,
+            "total_incoming_pps": 6100,
+            "total_incoming_traffic_bits": 61000000,
+            "total_incoming_flows": 50,
+            "total_outgoing_pps": 500,
+            "total_outgoing_traffic_bits": 5000000,
+            "total_outgoing_flows": 20
+        }
+    });
+    // If attack_uuid is None, remove the field
+    if attack_uuid.is_none() {
+        payload["attack_details"]["attack_uuid"] = serde_json::Value::Null;
+    }
+    payload.to_string()
+}
+
+async fn post_fastnetmon(app: &axum::Router, payload: &str) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/fastnetmon")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    (status, json)
+}
+
+/// Helper to setup app with FastNetMon source in correlation config with custom confidence mapping
+async fn setup_app_fastnetmon_with_mapping(
+    confidence_mapping: std::collections::HashMap<String, f32>,
+) -> axum::Router {
+    let repo: Arc<dyn RepositoryTrait> = Arc::new(MockRepository::new());
+    let announcer = Arc::new(MockAnnouncer::new());
+    let mut settings = test_settings_with_correlation(true, 1, 0.5);
+    settings.correlation.sources.insert(
+        "fastnetmon".to_string(),
+        prefixd::correlation::SourceConfig {
+            weight: 1.0,
+            r#type: "detector".to_string(),
+            confidence_mapping,
+        },
+    );
+
+    let state = AppState::new(
+        settings,
+        test_inventory(),
+        test_playbooks(),
+        repo,
+        announcer,
+        std::path::PathBuf::from("."),
+    )
+    .expect("failed to create app state");
+
+    create_test_router(state)
+}
+
+/// VAL-ADAPT-011: Valid FastNetMon payload returns 202 with EventResponse shape
+#[tokio::test]
+async fn test_fastnetmon_valid_payload() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    let payload = make_fastnetmon_payload("ban", "203.0.113.10", Some("test-uuid-1"));
+    let (status, json) = post_fastnetmon(&app, &payload).await;
+
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert!(json["event_id"].is_string(), "should have event_id");
+    assert_eq!(
+        json["status"], "accepted",
+        "status should be 'accepted' (EventResponse shape)"
+    );
+    // mitigation_id should be present since min_sources=1 and confidence >= threshold
+    assert!(
+        json["mitigation_id"].is_string(),
+        "should have mitigation_id with min_sources=1"
+    );
+}
+
+/// VAL-ADAPT-012: FastNetMon confidence mapping — default (ban=0.9, partial_block=0.7, alert=0.5)
+#[tokio::test]
+async fn test_fastnetmon_confidence_mapping_default() {
+    // Test with ban action → default confidence 0.9
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    let payload_ban = make_fastnetmon_payload("ban", "203.0.113.10", Some("conf-uuid-ban"));
+    let (status, json) = post_fastnetmon(&app, &payload_ban).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "ban should succeed");
+    assert!(json["event_id"].is_string(), "ban should have event_id");
+
+    // Test partial_block
+    let payload_partial =
+        make_fastnetmon_payload("partial_block", "203.0.113.11", Some("conf-uuid-partial"));
+    let (status, json) = post_fastnetmon(&app, &payload_partial).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "partial_block should succeed");
+    assert!(
+        json["event_id"].is_string(),
+        "partial_block should have event_id"
+    );
+
+    // Test alert — confidence 0.5 which equals threshold, should succeed
+    let payload_alert = make_fastnetmon_payload("alert", "203.0.113.12", Some("conf-uuid-alert"));
+    let (status, json) = post_fastnetmon(&app, &payload_alert).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "alert should succeed");
+    assert!(json["event_id"].is_string(), "alert should have event_id");
+}
+
+/// VAL-ADAPT-012: Config override changes confidence values
+#[tokio::test]
+async fn test_fastnetmon_confidence_mapping_override() {
+    let mut mapping = std::collections::HashMap::new();
+    mapping.insert("ban".to_string(), 0.6);
+    mapping.insert("partial_block".to_string(), 0.4);
+    mapping.insert("alert".to_string(), 0.2);
+
+    let app = setup_app_fastnetmon_with_mapping(mapping).await;
+
+    // With overridden mapping, ban now has confidence 0.6 (still above 0.5 threshold)
+    let payload_ban = make_fastnetmon_payload("ban", "203.0.113.10", Some("override-uuid-ban"));
+    let (status, json) = post_fastnetmon(&app, &payload_ban).await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "ban should succeed with override mapping"
+    );
+    assert!(
+        json["event_id"].is_string(),
+        "ban with override should have event_id"
+    );
+}
+
+/// VAL-ADAPT-013: Malformed FastNetMon payload returns 400
+#[tokio::test]
+async fn test_fastnetmon_malformed_payload_returns_400() {
+    let app = setup_app().await;
+
+    // Invalid JSON
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/fastnetmon")
+                .header("content-type", "application/json")
+                .body(Body::from("not valid json"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Missing required 'ip' field
+    let missing_ip = serde_json::json!({
+        "action": "ban"
+    })
+    .to_string();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/fastnetmon")
+                .header("content-type", "application/json")
+                .body(Body::from(missing_ip))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Missing required 'action' field
+    let missing_action = serde_json::json!({
+        "ip": "203.0.113.10"
+    })
+    .to_string();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/fastnetmon")
+                .header("content-type", "application/json")
+                .body(Body::from(missing_action))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Empty ip
+    let empty_ip = serde_json::json!({
+        "action": "ban",
+        "ip": ""
+    })
+    .to_string();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/fastnetmon")
+                .header("content-type", "application/json")
+                .body(Body::from(empty_ip))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Invalid IP address
+    let invalid_ip = serde_json::json!({
+        "action": "ban",
+        "ip": "not-an-ip"
+    })
+    .to_string();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/fastnetmon")
+                .header("content-type", "application/json")
+                .body(Body::from(invalid_ip))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// VAL-ADAPT-017: Authentication required for FastNetMon endpoint
+#[tokio::test]
+async fn test_fastnetmon_auth_required() {
+    let repo: Arc<dyn RepositoryTrait> = Arc::new(MockRepository::new());
+    let announcer = Arc::new(MockAnnouncer::new());
+    let mut settings = test_settings_with_correlation(true, 1, 0.5);
+    settings.http.auth = prefixd::config::AuthConfig {
+        mode: prefixd::config::AuthMode::Bearer,
+        bearer_token_env: Some("TEST_PREFIXD_FNM_TOKEN".to_string()),
+        ldap: None,
+        radius: None,
+    };
+    unsafe {
+        std::env::set_var("TEST_PREFIXD_FNM_TOKEN", "fnm-test-token-456");
+    }
+
+    let state = AppState::new(
+        settings,
+        test_inventory(),
+        test_playbooks(),
+        repo,
+        announcer,
+        std::path::PathBuf::from("."),
+    )
+    .expect("failed to create app state");
+
+    let app = create_test_router(state);
+
+    let payload = make_fastnetmon_payload("ban", "203.0.113.10", Some("auth-uuid"));
+
+    // Without auth → 401
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/fastnetmon")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    // With auth → 202
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/fastnetmon")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer fnm-test-token-456")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+}
+
+/// VAL-ENGINE-034: OpenAPI spec includes FastNetMon signal endpoint
+#[tokio::test]
+async fn test_openapi_includes_fastnetmon() {
+    let app = setup_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let spec: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let paths = spec["paths"].as_object().unwrap();
+    assert!(
+        paths.contains_key("/v1/signals/fastnetmon"),
+        "OpenAPI spec should include /v1/signals/fastnetmon"
+    );
+
+    let schemas = spec["components"]["schemas"].as_object().unwrap();
+    assert!(
+        schemas.contains_key("FastNetMonPayload"),
+        "OpenAPI spec should include FastNetMonPayload schema"
+    );
+    assert!(
+        schemas.contains_key("FastNetMonAttackDetails"),
+        "OpenAPI spec should include FastNetMonAttackDetails schema"
+    );
+}
+
+/// FastNetMon events should be stored with source='fastnetmon'
+#[tokio::test]
+async fn test_fastnetmon_source_field() {
+    let (app, _repo) = setup_app_correlation_with_repo(1, 0.5).await;
+
+    let payload = make_fastnetmon_payload("ban", "203.0.113.10", Some("source-uuid"));
+    let (status, _json) = post_fastnetmon(&app, &payload).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+
+    // Verify signal group has 'fastnetmon' source via the API
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let groups_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let groups = groups_json["groups"].as_array().unwrap();
+    assert!(!groups.is_empty(), "should have at least one signal group");
+
+    // List events and check source
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let events_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let events = events_json["events"].as_array().unwrap();
+    assert!(!events.is_empty(), "should have at least one event");
+
+    let event = &events[0];
+    assert_eq!(
+        event["source"], "fastnetmon",
+        "event source should be 'fastnetmon'"
     );
 }
 

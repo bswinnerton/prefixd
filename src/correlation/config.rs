@@ -48,6 +48,12 @@ pub struct SourceConfig {
     /// Descriptive type of the source (e.g., "detector", "telemetry", "manual").
     #[serde(default)]
     pub r#type: String,
+
+    /// Optional per-action confidence mapping. Keys are action types (e.g.,
+    /// "ban", "partial_block", "alert") and values are confidence scores (0.0–1.0).
+    /// Used by signal adapters (e.g., FastNetMon) to map action types to confidence.
+    #[serde(default)]
+    pub confidence_mapping: HashMap<String, f32>,
 }
 
 /// Per-playbook correlation override. When present on a playbook, these values
@@ -121,6 +127,29 @@ impl CorrelationConfig {
         playbook_override
             .and_then(|o| o.confidence_threshold)
             .unwrap_or(self.confidence_threshold)
+    }
+
+    /// Resolve confidence for a given source and action type using the per-source
+    /// `confidence_mapping`. Falls back to `default_confidence_mapping` if no
+    /// source-specific mapping is configured.
+    pub fn source_action_confidence(&self, source: &str, action: &str) -> f32 {
+        if let Some(source_config) = self.sources.get(source) {
+            if let Some(&confidence) = source_config.confidence_mapping.get(action) {
+                return confidence;
+            }
+        }
+        // Default mapping: ban=0.9, partial_block=0.7, alert=0.5
+        default_confidence_mapping(action)
+    }
+}
+
+/// Default confidence mapping for FastNetMon action types.
+fn default_confidence_mapping(action: &str) -> f32 {
+    match action {
+        "ban" => 0.9,
+        "partial_block" => 0.7,
+        "alert" => 0.5,
+        _ => 0.5,
     }
 }
 
@@ -203,6 +232,7 @@ sources:
             SourceConfig {
                 weight: 2.0,
                 r#type: "detector".to_string(),
+                confidence_mapping: HashMap::new(),
             },
         );
         assert_eq!(config.source_weight("fastnetmon"), 2.0);
@@ -376,5 +406,74 @@ sources:
         assert_eq!(config.confidence_threshold, 0.8);
         assert_eq!(config.sources.len(), 1);
         assert_eq!(config.sources["netflow"].weight, 1.5);
+    }
+
+    #[test]
+    fn test_source_action_confidence_default_mapping() {
+        let config = CorrelationConfig::default();
+        assert_eq!(config.source_action_confidence("fastnetmon", "ban"), 0.9);
+        assert_eq!(
+            config.source_action_confidence("fastnetmon", "partial_block"),
+            0.7
+        );
+        assert_eq!(config.source_action_confidence("fastnetmon", "alert"), 0.5);
+        assert_eq!(
+            config.source_action_confidence("fastnetmon", "unknown_action"),
+            0.5
+        );
+    }
+
+    #[test]
+    fn test_source_action_confidence_override() {
+        let mut config = CorrelationConfig::default();
+        let mut mapping = HashMap::new();
+        mapping.insert("ban".to_string(), 0.95);
+        mapping.insert("alert".to_string(), 0.3);
+        config.sources.insert(
+            "fastnetmon".to_string(),
+            SourceConfig {
+                weight: 1.0,
+                r#type: "detector".to_string(),
+                confidence_mapping: mapping,
+            },
+        );
+        // Overridden values
+        assert_eq!(config.source_action_confidence("fastnetmon", "ban"), 0.95);
+        assert_eq!(config.source_action_confidence("fastnetmon", "alert"), 0.3);
+        // Not overridden — falls back to default
+        assert_eq!(
+            config.source_action_confidence("fastnetmon", "partial_block"),
+            0.7
+        );
+    }
+
+    #[test]
+    fn test_source_action_confidence_unknown_source() {
+        let config = CorrelationConfig::default();
+        // Unknown source gets default mapping
+        assert_eq!(
+            config.source_action_confidence("unknown_source", "ban"),
+            0.9
+        );
+    }
+
+    #[test]
+    fn test_confidence_mapping_deserialization() {
+        let yaml = r#"
+enabled: true
+sources:
+  fastnetmon:
+    weight: 1.0
+    type: detector
+    confidence_mapping:
+      ban: 0.95
+      partial_block: 0.8
+      alert: 0.3
+"#;
+        let config: CorrelationConfig = serde_yaml::from_str(yaml).unwrap();
+        let fnm = &config.sources["fastnetmon"];
+        assert_eq!(fnm.confidence_mapping["ban"], 0.95);
+        assert_eq!(fnm.confidence_mapping["partial_block"], 0.8);
+        assert_eq!(fnm.confidence_mapping["alert"], 0.3);
     }
 }
