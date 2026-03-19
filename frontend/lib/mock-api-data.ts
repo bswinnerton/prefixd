@@ -60,6 +60,14 @@ export const mockMitigations: Mitigation[] = [
     reason: "UDP flood detected by FastNetMon",
     acknowledged_at: null,
     acknowledged_by: null,
+    correlation: {
+      signal_group_id: "sg-001-aaaa-bbbb-cccc-dddd",
+      derived_confidence: 0.88,
+      source_count: 2,
+      corroboration_met: true,
+      contributing_sources: ["fastnetmon", "alertmanager"],
+      explanation: "Corroboration achieved: 2 of 2 required sources confirmed UDP flood on 203.0.113.10. Derived confidence 88% (threshold 50%). Sources: fastnetmon (95% × 1.0), alertmanager (80% × 0.8).",
+    },
   },
   {
     mitigation_id: "550e8400-e29b-41d4-a716-446655440001",

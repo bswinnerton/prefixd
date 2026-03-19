@@ -13,6 +13,17 @@ function dispatchAuthExpired() {
   window.dispatchEvent(new CustomEvent("prefixd:auth-expired"))
 }
 
+export interface CorrelationContext {
+  signal_group_id: string
+  derived_confidence: number
+  source_count: number
+  corroboration_met: boolean
+  /** Populated on detail endpoint only (null/absent on list endpoint) */
+  contributing_sources?: string[] | null
+  /** Human-readable explanation (populated on detail endpoint only) */
+  explanation?: string | null
+}
+
 export interface Mitigation {
   mitigation_id: string
   scope_hash: string
@@ -36,6 +47,8 @@ export interface Mitigation {
   reason: string
   acknowledged_at: string | null
   acknowledged_by: string | null
+  /** Correlation context (present when mitigation was created via corroboration) */
+  correlation?: CorrelationContext | null
 }
 
 export interface PaginatedResponse<T> {
