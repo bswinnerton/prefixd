@@ -2353,6 +2353,582 @@ async fn test_correlation_guardrails_still_apply() {
     assert!(json["error"].as_str().unwrap().contains("safelist"));
 }
 
+// ── Signal Groups API Tests ────────────────────────────────────────────
+
+/// Helper: create an app with correlation enabled and a shared repo reference
+async fn setup_app_correlation_with_repo(
+    min_sources: u32,
+    confidence_threshold: f32,
+) -> (axum::Router, Arc<dyn RepositoryTrait>) {
+    let repo: Arc<dyn RepositoryTrait> = Arc::new(MockRepository::new());
+    let announcer = Arc::new(MockAnnouncer::new());
+    let settings = test_settings_with_correlation(true, min_sources, confidence_threshold);
+
+    let state = AppState::new(
+        settings,
+        test_inventory(),
+        test_playbooks(),
+        repo.clone(),
+        announcer,
+        std::path::PathBuf::from("."),
+    )
+    .expect("failed to create app state");
+
+    (create_test_router(state), repo)
+}
+
+/// VAL-ENGINE-016: GET /v1/signal-groups returns paginated list with cursor, has_more
+#[tokio::test]
+async fn test_signal_groups_list_basic() {
+    let (app, _repo) = setup_app_correlation_with_repo(1, 0.5).await;
+
+    // Ingest events to create signal groups
+    let event1 = make_event_json("detector_a", "203.0.113.10", 0.9);
+    let event2 = make_event_json("detector_a", "203.0.113.11", 0.8);
+    post_event(&app, &event1).await;
+    post_event(&app, &event2).await;
+
+    // GET /v1/signal-groups
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert!(json["groups"].is_array());
+    assert_eq!(json["groups"].as_array().unwrap().len(), 2);
+    assert_eq!(json["count"], 2);
+    assert!(!json["has_more"].as_bool().unwrap());
+    assert!(json["next_cursor"].is_null());
+}
+
+/// VAL-ENGINE-016: Cursor pagination works correctly
+#[tokio::test]
+async fn test_signal_groups_list_pagination() {
+    let (app, _repo) = setup_app_correlation_with_repo(1, 0.5).await;
+
+    // Create 3 signal groups (3 different IPs)
+    for i in 10..13 {
+        let event = make_event_json("detector_a", &format!("203.0.113.{}", i), 0.9);
+        post_event(&app, &event).await;
+    }
+
+    // Request page 1 with limit=2
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups?limit=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["groups"].as_array().unwrap().len(), 2);
+    assert_eq!(json["count"], 2);
+    assert!(json["has_more"].as_bool().unwrap());
+    let cursor = json["next_cursor"].as_str().unwrap();
+
+    // Request page 2 using cursor
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&format!("/v1/signal-groups?limit=2&cursor={}", cursor))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json2: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json2["groups"].as_array().unwrap().len(), 1);
+    assert_eq!(json2["count"], 1);
+    assert!(!json2["has_more"].as_bool().unwrap());
+}
+
+/// VAL-ENGINE-016: Status filter returns only matching groups
+#[tokio::test]
+async fn test_signal_groups_list_status_filter() {
+    let (app, _repo) = setup_app_correlation_with_repo(1, 0.5).await;
+
+    // Create events → signal groups with min_sources=1 → groups become resolved
+    let event1 = make_event_json("detector_a", "203.0.113.10", 0.9);
+    let event2 = make_event_json("detector_a", "203.0.113.11", 0.8);
+    post_event(&app, &event1).await;
+    post_event(&app, &event2).await;
+
+    // With min_sources=1 and confidence above threshold, groups should be resolved
+    // Filter for resolved
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups?status=resolved")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // All groups should be resolved since min_sources=1 and confidence >= 0.5
+    for group in json["groups"].as_array().unwrap() {
+        assert_eq!(group["status"], "resolved");
+    }
+
+    // Filter for open — should return 0 since all were resolved
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups?status=open")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["groups"].as_array().unwrap().len(), 0);
+}
+
+/// VAL-ENGINE-016: Vector filter returns only matching groups
+#[tokio::test]
+async fn test_signal_groups_list_vector_filter() {
+    let (app, _repo) = setup_app_correlation_with_repo(1, 0.5).await;
+
+    // Create events (all go through udp_flood playbook)
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    post_event(&app, &event).await;
+
+    // Filter for udp_flood (should match)
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups?vector=udp_flood")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["groups"].as_array().unwrap().len() >= 1);
+
+    // Filter for syn_flood (should not match)
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups?vector=syn_flood")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["groups"].as_array().unwrap().len(), 0);
+}
+
+/// VAL-ENGINE-032: Date range filter works with start/end params
+#[tokio::test]
+async fn test_signal_groups_list_date_range_filter() {
+    let (app, _repo) = setup_app_correlation_with_repo(1, 0.5).await;
+
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    post_event(&app, &event).await;
+
+    // Use a future start date — should return 0 groups
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups?start=2099-01-01T00:00:00Z")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["groups"].as_array().unwrap().len(), 0);
+
+    // Use a past start date — should return groups
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups?start=2020-01-01T00:00:00Z")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["groups"].as_array().unwrap().len() >= 1);
+
+    // Use a past end date — should return 0 groups
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups?end=2020-01-01T00:00:00Z")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["groups"].as_array().unwrap().len(), 0);
+}
+
+/// VAL-ENGINE-017: GET /v1/signal-groups/{id} returns group detail with contributing events
+#[tokio::test]
+async fn test_signal_group_detail_with_events() {
+    let (app, _repo) = setup_app_correlation_with_repo(1, 0.5).await;
+
+    // Create an event to generate a signal group
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    post_event(&app, &event).await;
+
+    // List groups to get the group ID
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let group_id = json["groups"][0]["group_id"].as_str().unwrap().to_string();
+
+    // GET /v1/signal-groups/{id}
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&format!("/v1/signal-groups/{}", group_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let detail: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Verify group metadata
+    assert_eq!(detail["group_id"], group_id);
+    assert_eq!(detail["victim_ip"], "203.0.113.10");
+    assert_eq!(detail["vector"], "udp_flood");
+    assert!(detail["derived_confidence"].is_number());
+    assert!(detail["source_count"].is_number());
+    assert!(detail["status"].is_string());
+    assert!(detail["corroboration_met"].is_boolean());
+
+    // Verify events list
+    assert!(detail["events"].is_array());
+    let events = detail["events"].as_array().unwrap();
+    assert!(!events.is_empty());
+    let ev = &events[0];
+    assert!(ev["event_id"].is_string());
+    assert!(ev["source_weight"].is_number());
+    assert!(ev["source"].is_string());
+    assert!(ev["confidence"].is_number());
+    assert!(ev["ingested_at"].is_string());
+}
+
+/// VAL-ENGINE-017: GET /v1/signal-groups/{id} returns 404 for unknown group
+#[tokio::test]
+async fn test_signal_group_detail_not_found() {
+    let (app, _repo) = setup_app_correlation_with_repo(1, 0.5).await;
+
+    let fake_id = uuid::Uuid::new_v4();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&format!("/v1/signal-groups/{}", fake_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+/// VAL-ENGINE-016/017: Both endpoints require authentication (401 without)
+#[tokio::test]
+async fn test_signal_groups_auth_required() {
+    // Create app with bearer auth
+    let repo: Arc<dyn RepositoryTrait> = Arc::new(MockRepository::new());
+    let announcer = Arc::new(MockAnnouncer::new());
+    let mut settings = test_settings_with_correlation(true, 1, 0.5);
+    settings.http.auth = prefixd::config::AuthConfig {
+        mode: prefixd::config::AuthMode::Bearer,
+        bearer_token_env: Some("TEST_PREFIXD_TOKEN".to_string()),
+        ldap: None,
+        radius: None,
+    };
+    unsafe {
+        std::env::set_var("TEST_PREFIXD_TOKEN", "test-secret-token-123");
+    }
+
+    let state = AppState::new(
+        settings,
+        test_inventory(),
+        test_playbooks(),
+        repo,
+        announcer,
+        std::path::PathBuf::from("."),
+    )
+    .expect("failed to create app state");
+
+    let app = create_test_router(state);
+
+    // GET /v1/signal-groups without auth → 401
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    // GET /v1/signal-groups/{id} without auth → 401
+    let fake_id = uuid::Uuid::new_v4();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&format!("/v1/signal-groups/{}", fake_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    // GET /v1/signal-groups with auth → 200
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups")
+                .header("authorization", "Bearer test-secret-token-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// VAL-ENGINE-034: OpenAPI spec includes signal groups endpoints
+#[tokio::test]
+async fn test_openapi_includes_signal_groups() {
+    let app = setup_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let spec: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let paths = spec["paths"].as_object().unwrap();
+    assert!(
+        paths.contains_key("/v1/signal-groups"),
+        "OpenAPI spec should include /v1/signal-groups"
+    );
+    assert!(
+        paths.contains_key("/v1/signal-groups/{id}"),
+        "OpenAPI spec should include /v1/signal-groups/{{id}}"
+    );
+
+    // Verify schemas are registered
+    let schemas = spec["components"]["schemas"].as_object().unwrap();
+    assert!(
+        schemas.contains_key("SignalGroup"),
+        "OpenAPI spec should include SignalGroup schema"
+    );
+    assert!(
+        schemas.contains_key("SignalGroupEvent"),
+        "OpenAPI spec should include SignalGroupEvent schema"
+    );
+    assert!(
+        schemas.contains_key("SignalGroupsListResponse"),
+        "OpenAPI spec should include SignalGroupsListResponse schema"
+    );
+    assert!(
+        schemas.contains_key("SignalGroupDetailResponse"),
+        "OpenAPI spec should include SignalGroupDetailResponse schema"
+    );
+    assert!(
+        schemas.contains_key("CorrelationContext"),
+        "OpenAPI spec should include CorrelationContext schema"
+    );
+    assert!(
+        schemas.contains_key("CorrelationExplanation"),
+        "OpenAPI spec should include CorrelationExplanation schema"
+    );
+    assert!(
+        schemas.contains_key("SourceContribution"),
+        "OpenAPI spec should include SourceContribution schema"
+    );
+}
+
+/// VAL-ENGINE-017: Signal group detail with multiple contributing events
+#[tokio::test]
+async fn test_signal_group_detail_multiple_events() {
+    // Use min_sources=2 so the group stays open after first event
+    let (app, _repo) = setup_app_correlation_with_repo(2, 0.5).await;
+
+    // Submit events from 2 different sources for same victim/vector
+    let event1 = make_event_json("detector_a", "203.0.113.10", 0.9);
+    let event2 = make_event_json("detector_b", "203.0.113.10", 0.7);
+    post_event(&app, &event1).await;
+    post_event(&app, &event2).await;
+
+    // List groups — should have exactly 1 group
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["groups"].as_array().unwrap().len(),
+        1,
+        "Should have exactly one signal group for same (victim_ip, vector)"
+    );
+
+    let group_id = json["groups"][0]["group_id"].as_str().unwrap().to_string();
+
+    // Get detail
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&format!("/v1/signal-groups/{}", group_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let detail: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Should have 2 contributing events
+    let events = detail["events"].as_array().unwrap();
+    assert_eq!(events.len(), 2, "Should have 2 contributing events");
+
+    // Verify both sources are represented
+    let sources: Vec<&str> = events.iter().filter_map(|e| e["source"].as_str()).collect();
+    assert!(sources.contains(&"detector_a"));
+    assert!(sources.contains(&"detector_b"));
+
+    // Verify source_weight values
+    for ev in events {
+        assert!(ev["source_weight"].as_f64().unwrap() > 0.0);
+    }
+}
+
 /// VAL-CROSS-012: Incident reports include correlation data
 #[tokio::test]
 async fn test_correlation_incident_report_includes_correlation() {

@@ -106,6 +106,8 @@ fn api_routes() -> Router<Arc<AppState>> {
             "/v1/reports/incident",
             get(handlers::generate_incident_report),
         )
+        .route("/v1/signal-groups", get(handlers::list_signal_groups))
+        .route("/v1/signal-groups/{id}", get(handlers::get_signal_group))
 }
 
 /// Common layers applied to both production and test routers

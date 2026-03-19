@@ -3743,6 +3743,155 @@ pub async fn generate_incident_report(
     (StatusCode::OK, response_headers, md).into_response()
 }
 
+// ── Signal Groups API ──────────────────────────────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub struct SignalGroupsListResponse {
+    /// List of signal groups in this page
+    groups: Vec<crate::correlation::SignalGroup>,
+    /// Number of groups returned in this page
+    count: usize,
+    /// Cursor for the next page (null if no more pages)
+    next_cursor: Option<String>,
+    /// Whether there are more pages
+    has_more: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct SignalGroupDetailResponse {
+    /// Signal group metadata
+    #[serde(flatten)]
+    group: crate::correlation::SignalGroup,
+    /// Contributing events with source, confidence, source_weight, ingested_at
+    events: Vec<crate::correlation::SignalGroupEvent>,
+}
+
+#[derive(Deserialize)]
+pub struct ListSignalGroupsQuery {
+    /// Filter by status (open, resolved, expired)
+    status: Option<String>,
+    /// Filter by attack vector
+    vector: Option<String>,
+    /// Number of results per page (default 100, max 1000)
+    #[serde(default = "default_limit")]
+    limit: u32,
+    /// Cursor for pagination (from previous response)
+    cursor: Option<String>,
+    /// Start of date range (ISO 8601, inclusive)
+    start: Option<String>,
+    /// End of date range (ISO 8601, exclusive)
+    end: Option<String>,
+}
+
+/// List signal groups with optional filters and cursor pagination
+#[utoipa::path(
+    get,
+    path = "/v1/signal-groups",
+    tag = "signal-groups",
+    params(
+        ("status" = Option<String>, Query, description = "Filter by status (open, resolved, expired)"),
+        ("vector" = Option<String>, Query, description = "Filter by attack vector"),
+        ("limit" = Option<u32>, Query, description = "Max results (default 100, max 1000)"),
+        ("cursor" = Option<String>, Query, description = "Cursor for pagination (from previous response)"),
+        ("start" = Option<String>, Query, description = "Start of date range (ISO 8601, inclusive)"),
+        ("end" = Option<String>, Query, description = "End of date range (ISO 8601, exclusive)"),
+    ),
+    responses(
+        (status = 200, description = "List of signal groups", body = SignalGroupsListResponse),
+        (status = 401, description = "Authentication required"),
+    )
+)]
+pub async fn list_signal_groups(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    Query(query): Query<ListSignalGroupsQuery>,
+) -> Result<Json<SignalGroupsListResponse>, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_auth(&state, &auth_session, auth_header)?;
+
+    let status_filter = query.status.as_deref().and_then(|s| s.parse().ok());
+
+    let limit = clamp_limit(query.limit);
+    let cursor = query.cursor.as_deref().and_then(decode_cursor);
+    let params = ListParams {
+        limit: limit + 1,
+        cursor,
+        start: query.start.as_deref().and_then(parse_datetime),
+        end: query.end.as_deref().and_then(parse_datetime),
+    };
+
+    let filter = crate::correlation::SignalGroupFilter {
+        status: status_filter,
+        vector: query.vector,
+        start: params.start,
+        end: params.end,
+    };
+
+    let mut groups = state
+        .repo
+        .list_signal_groups(&filter, &params)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let has_more = groups.len() > limit as usize;
+    if has_more {
+        groups.truncate(limit as usize);
+    }
+    let next_cursor = if has_more {
+        groups.last().map(|g| encode_cursor(&g.created_at))
+    } else {
+        None
+    };
+    let count = groups.len();
+
+    Ok(Json(SignalGroupsListResponse {
+        groups,
+        count,
+        next_cursor,
+        has_more,
+    }))
+}
+
+/// Get a specific signal group by ID with contributing events
+#[utoipa::path(
+    get,
+    path = "/v1/signal-groups/{id}",
+    tag = "signal-groups",
+    params(
+        ("id" = Uuid, Path, description = "Signal group ID")
+    ),
+    responses(
+        (status = 200, description = "Signal group detail with contributing events", body = SignalGroupDetailResponse),
+        (status = 401, description = "Authentication required"),
+        (status = 404, description = "Signal group not found"),
+    )
+)]
+pub async fn get_signal_group(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<SignalGroupDetailResponse>, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_auth(&state, &auth_session, auth_header)?;
+
+    let group = state
+        .repo
+        .get_signal_group(id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let events = state
+        .repo
+        .list_signal_group_events(id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(SignalGroupDetailResponse { group, events }))
+}
+
 fn format_bps(bps: i64) -> String {
     let abs = bps.unsigned_abs();
     if abs >= 1_000_000_000 {
