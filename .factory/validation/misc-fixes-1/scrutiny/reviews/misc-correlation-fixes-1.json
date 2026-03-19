@@ -1,0 +1,22 @@
+{
+  "featureId": "misc-correlation-fixes-1",
+  "reviewedAt": "2026-03-19T20:45:00.000Z",
+  "commitId": "2c14447",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Both fixes are clean, minimal, and correct. Fix 1 (concurrent signal group insert retry) properly catches PostgreSQL error code 23505 on the unique constraint violation and retries with a SELECT to find the winning group. The CTE + retry approach is a sound pattern for handling true concurrency. Fix 2 (list vs detail correlation data) converts contributing_sources and explanation to Option types with skip_serializing_if, so the list endpoint omits these fields entirely rather than returning misleading empty values. Both fixes have thorough test coverage: a 10-task concurrent insert test against real Postgres, and a list-vs-detail consistency integration test.",
+    "issues": [
+      {
+        "file": "src/db/repository.rs",
+        "line": 958,
+        "severity": "non_blocking",
+        "description": "Edge case: if the retry SELECT (fetch_one) finds no rows because the group was closed or expired between the failed INSERT and the retry, it will return a RowNotFound error propagated as a 500. This is extremely unlikely in practice (sub-millisecond window) and self-correcting (next request will create a new group), but a fetch_optional + retry-create could make it fully robust."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Pass. Both fixes are well-implemented with good test coverage. Fix 1 adds correct retry-on-conflict logic for concurrent signal group creation using PostgreSQL error code 23505 detection. Fix 2 cleanly separates list (lightweight summary) from detail (full context) by making contributing_sources and explanation Optional with skip_serializing_if. One minor non-blocking edge case noted in the retry path (fetch_one could theoretically fail if the group expires in the sub-ms window between INSERT failure and retry SELECT). Tests cover both concurrent insert with 10 parallel tokio tasks and list-vs-detail field presence assertions."
+}
