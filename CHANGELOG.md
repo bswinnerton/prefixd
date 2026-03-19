@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **FlowSpec NLRI fuzz/property tests** — 8 proptest property-based tests for prefix parsing, NLRI roundtrip, and action roundtrip. Two cargo-fuzz targets (`fuzz_prefix_parse`, `fuzz_nlri_decode`) for offline fuzzing with libFuzzer.
 - **Post-attack incident reports** — `GET /v1/reports/incident?mitigation_id=X` or `?ip=X` generates a markdown incident report with summary, timeline, events, mitigations, and audit trail. "Generate Report" buttons on mitigation detail and IP history pages with copy/download dialog.
 
+### Fixed
+
+- **WebSocket rejected all connections when auth_mode is none** — `ws_handler` checked for an authenticated session unconditionally, returning 401 for every connection in no-auth deployments. Dashboard showed "Disconnected" permanently.
+- **Mitigation detail page showed "Not Found" on Next.js 16** — Dynamic route `params` became a Promise in Next.js 15+. Page was destructuring synchronously, getting `undefined` for the ID.
+
 ## [0.12.0] - 2026-03-18
 
 ### Added
