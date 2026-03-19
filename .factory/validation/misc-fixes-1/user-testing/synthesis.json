@@ -1,0 +1,17 @@
+{
+  "milestone": "misc-fixes-1",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 0,
+    "passed": 0,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "notes": "The misc-fixes-1 milestone contains one implementation feature (misc-correlation-fixes-1) with no fulfills assertions. The feature fixed two non-blocking issues: (1) concurrent signal group insert race condition — verified that 5 parallel events for the same (victim_ip, vector) create exactly one signal group with source_count=5, no 500 errors from idx_signal_groups_open_unique. (2) List endpoint correlation data cleanup — verified that GET /v1/mitigations list endpoint now omits contributing_sources and explanation fields (set to None, skip_serializing_if=is_none) while detail endpoint still provides full data.",
+  "appliedUpdates": [],
+  "previousRound": null
+}
