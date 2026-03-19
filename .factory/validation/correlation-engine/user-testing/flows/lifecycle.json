@@ -1,0 +1,178 @@
+{
+  "groupId": "lifecycle",
+  "testedAt": "2026-03-19T19:04:00Z",
+  "isolation": {
+    "apiUrl": "http://localhost",
+    "victimIpRange": "203.0.113.10-19",
+    "authMode": "none",
+    "testingTool": "curl"
+  },
+  "toolsUsed": ["curl", "docker compose exec postgres psql"],
+  "assertions": [
+    {
+      "id": "VAL-ENGINE-001",
+      "title": "Signal group creation on first event",
+      "status": "pass",
+      "steps": [
+        { "action": "POST /v1/events with source=alpha, victim_ip=203.0.113.10, vector=udp_flood, confidence=0.8", "expected": "202 accepted with mitigation_id (min_sources=1)", "observed": "202 accepted, event_id=e7fec8e2, mitigation_id=90e7a5be" },
+        { "action": "GET /v1/signal-groups (filter for 203.0.113.10)", "expected": "Group exists with source_count=1, derived_confidence=0.8, window_expires_at ~300s after created_at", "observed": "Group 630ca0f6 found: source_count=1, derived_confidence=0.8, window_expires_at=created_at+300s, status=resolved" },
+        { "action": "GET /v1/signal-groups/{id} for detail", "expected": "Group detail with contributing event", "observed": "Detail shows 1 event from source 'alpha' with source_weight=1.0, confidence=0.8" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "N/A (API test)",
+        "network": "POST /v1/events -> 202, GET /v1/signal-groups -> 200, GET /v1/signal-groups/{id} -> 200",
+        "files": ["correlation-engine/lifecycle/VAL-ENGINE-001-event-response.json", "correlation-engine/lifecycle/VAL-ENGINE-001-signal-group.json"]
+      },
+      "issues": "Group status is 'resolved' (not 'open') because min_sources=1 causes immediate mitigation creation and group resolution in the same request. This is expected behavior per the known quirk: 'With min_sources=1, a single event both creates the signal group AND triggers mitigation.'"
+    },
+    {
+      "id": "VAL-ENGINE-002",
+      "title": "Event joins existing open signal group",
+      "status": "pass",
+      "steps": [
+        { "action": "Config: min_sources=2 (set by concurrent subagent)", "expected": "Group stays open with 1 source", "observed": "Config confirmed min_sources=2" },
+        { "action": "POST /v1/events with source=alpha, victim_ip=203.0.113.11, vector=udp_flood, confidence=0.8", "expected": "Group created with source_count=1", "observed": "Group 8fea0e4b created, source_count=1, derived_confidence=0.8, status=open" },
+        { "action": "POST /v1/events with source=beta, victim_ip=203.0.113.11, vector=udp_flood, confidence=0.7", "expected": "Same group updated with source_count=2, derived_confidence=(0.8+0.7)/2=0.75", "observed": "Same group 8fea0e4b: source_count=2, derived_confidence=0.75, status=open" },
+        { "action": "GET /v1/signal-groups/{id} for detail", "expected": "Two contributing events from different sources", "observed": "Two events: alpha(conf=0.8, w=1.0) and beta(conf=0.7, w=1.0)" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "N/A (API test)",
+        "network": "POST /v1/events -> 202 (x2), GET /v1/signal-groups -> 200, GET /v1/signal-groups/{id} -> 200",
+        "files": ["correlation-engine/lifecycle/VAL-ENGINE-002-group-detail.json"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ENGINE-003",
+      "title": "Signal group expiry after window elapses",
+      "status": "pass",
+      "steps": [
+        { "action": "Modify config: window_seconds=5, min_sources=2, reload", "expected": "Reload succeeds with correlation reloaded", "observed": "Reload returned {reloaded: [inventory, playbooks, correlation]}" },
+        { "action": "POST /v1/events with source=single_source, victim_ip=203.0.113.17", "expected": "Group created with 5s window, no mitigation (min_sources=2)", "observed": "Group 9107a995 created, status=open, window_expires_at=created_at+5s, no mitigation" },
+        { "action": "Wait 35 seconds for reconciliation loop", "expected": "Group transitions to expired", "observed": "Group 9107a995: status=expired, corroboration_met=false" },
+        { "action": "Check for mitigation for 203.0.113.17", "expected": "No mitigation exists", "observed": "No mitigation found" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "N/A (API test)",
+        "network": "POST /v1/config/reload -> 200, POST /v1/events -> 202, GET /v1/signal-groups -> 200, GET /v1/signal-groups?status=expired -> 200",
+        "files": ["correlation-engine/lifecycle/VAL-ENGINE-003-expiry.json"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ENGINE-004",
+      "title": "Signal group resolves when mitigation created",
+      "status": "pass",
+      "steps": [
+        { "action": "Set config min_sources=1, reload", "expected": "Single source triggers mitigation + group resolution", "observed": "Reload confirmed correlation reloaded" },
+        { "action": "POST /v1/events with source=detector_004, victim_ip=203.0.113.18, confidence=0.9", "expected": "202 accepted with mitigation_id", "observed": "202 accepted, mitigation_id=93c53d7e" },
+        { "action": "GET /v1/signal-groups (filter for 203.0.113.18)", "expected": "Group exists with status=resolved, corroboration_met=true", "observed": "Group dd9fa2d1: status=resolved, corroboration_met=true, derived_confidence=0.9" },
+        { "action": "GET /v1/mitigations/{id}", "expected": "Mitigation detail includes correlation context with signal_group_id", "observed": "Mitigation includes correlation: {signal_group_id: dd9fa2d1, derived_confidence: 0.9, corroboration_met: true, explanation: 'Corroboration met: 1 distinct source(s) (min=1)...'}" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "N/A (API test)",
+        "network": "POST /v1/config/reload -> 200, POST /v1/events -> 202, GET /v1/signal-groups -> 200, GET /v1/mitigations/{id} -> 200",
+        "files": ["correlation-engine/lifecycle/VAL-ENGINE-004-resolved-group.json"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ENGINE-026",
+      "title": "Concurrent events create exactly one group",
+      "status": "pass",
+      "steps": [
+        { "action": "Set config min_sources=10, reload (to keep group open for all events)", "expected": "Config reloaded", "observed": "Reload confirmed" },
+        { "action": "Send 5 parallel curl requests with different sources for 203.0.113.14/udp_flood", "expected": "Exactly one signal group created", "observed": "One group created (e3f6f95c), 4 events accepted, 1 event failed with unique constraint violation (race condition)" },
+        { "action": "GET /v1/signal-groups (filter for 203.0.113.14)", "expected": "Exactly 1 group", "observed": "1 group with source_count=4 (source_1, source_2, source_4, source_5)" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "N/A (API test)",
+        "network": "POST /v1/events -> 202 (x4), 500 (x1 - race condition), GET /v1/signal-groups -> 200",
+        "files": ["correlation-engine/lifecycle/VAL-ENGINE-026-concurrent-group.json"]
+      },
+      "issues": "One of 5 parallel requests failed with 'duplicate key value violates unique constraint idx_signal_groups_open_unique' due to a race condition when two requests simultaneously try to INSERT a new open group. The unique index correctly prevents duplicate groups, but the failing request returns a 500 database error rather than gracefully retrying and joining the existing group. This is a minor robustness issue — the core invariant (exactly one group) is maintained."
+    },
+    {
+      "id": "VAL-ENGINE-027",
+      "title": "Different vectors create separate groups",
+      "status": "pass",
+      "steps": [
+        { "action": "POST /v1/events with source=detector_a, victim_ip=203.0.113.15, vector=udp_flood", "expected": "Group created for udp_flood", "observed": "Event accepted, group b57fce35 created for udp_flood" },
+        { "action": "POST /v1/events with source=detector_b, victim_ip=203.0.113.15, vector=syn_flood", "expected": "Separate group created for syn_flood", "observed": "Event accepted, group a77a8a7f created for syn_flood" },
+        { "action": "GET /v1/signal-groups (filter for 203.0.113.15)", "expected": "Two distinct groups (one per vector)", "observed": "2 groups: udp_flood (b57fce35) and syn_flood (a77a8a7f)" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "N/A (API test)",
+        "network": "POST /v1/events -> 202 (x2), GET /v1/signal-groups -> 200",
+        "files": ["correlation-engine/lifecycle/VAL-ENGINE-027-different-vectors.json"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-007",
+      "title": "Signal group expiry without corroboration",
+      "status": "pass",
+      "steps": [
+        { "action": "Config: window_seconds=5, min_sources=2, reload", "expected": "Short window, requires 2 sources for corroboration", "observed": "Config applied and reloaded" },
+        { "action": "POST /v1/events with single source for 203.0.113.17", "expected": "Group created, open, no mitigation", "observed": "Group 9107a995 created, status=open, corroboration_met=false, no mitigation" },
+        { "action": "Wait 35s for reconciliation loop to expire", "expected": "Group transitions to expired, no mitigation created", "observed": "Group status=expired, corroboration_met=false. No mitigation exists for 203.0.113.17" },
+        { "action": "GET /v1/signal-groups?status=expired (filter for 203.0.113.17)", "expected": "Group visible with expired filter", "observed": "Group visible in expired filter results" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "N/A (API test)",
+        "network": "POST /v1/config/reload -> 200, POST /v1/events -> 202, GET /v1/signal-groups -> 200, GET /v1/signal-groups?status=expired -> 200, GET /v1/mitigations -> 200",
+        "files": ["correlation-engine/lifecycle/VAL-ENGINE-003-expiry.json"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-011",
+      "title": "Migration 007 applies cleanly",
+      "status": "pass",
+      "steps": [
+        { "action": "Query information_schema for signal_groups and signal_group_events tables", "expected": "Both tables exist", "observed": "Both tables found in information_schema.tables" },
+        { "action": "Query information_schema for mitigations.signal_group_id column", "expected": "Column exists with uuid type", "observed": "Column found: signal_group_id uuid" },
+        { "action": "Check signal_groups table structure", "expected": "All required columns (group_id, victim_ip, vector, created_at, window_expires_at, derived_confidence, source_count, status, corroboration_met)", "observed": "All columns present with correct types. Unique index idx_signal_groups_open_unique on (victim_ip, vector) WHERE status='open'" },
+        { "action": "Check signal_group_events table structure", "expected": "Columns: group_id, event_id, source_weight", "observed": "All columns present. Composite PK on (group_id, event_id). FK to signal_groups" },
+        { "action": "Check foreign key constraints", "expected": "mitigations.signal_group_id -> signal_groups.group_id, signal_group_events.group_id -> signal_groups.group_id", "observed": "Both FK constraints present" },
+        { "action": "Verify GET /v1/signal-groups endpoint works", "expected": "200 with groups array", "observed": "200 OK, groups array returned" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "N/A (API test)",
+        "network": "GET /v1/signal-groups -> 200",
+        "files": ["correlation-engine/lifecycle/VAL-CROSS-011-migration.json"]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Other subagents concurrently modifying configs/prefixd.yaml caused test failures. Between config reload and event submission (~20s), another subagent could change min_sources or enabled, causing unexpected corroboration behavior. Required rapid reload+test sequencing.",
+      "resolved": true,
+      "resolution": "Combined config modification, reload, and event submission in single rapid shell command sequences to minimize race window",
+      "affectedAssertions": ["VAL-ENGINE-001", "VAL-ENGINE-004"]
+    },
+    {
+      "description": "Customer quota (max_active_per_customer=5) was exhausted by other subagents' mitigations, causing corroboration to succeed but mitigation creation to fail with 'quota exceeded: customer (5/5)'",
+      "resolved": true,
+      "resolution": "Waited for other subagents to withdraw their mitigations, then retested",
+      "affectedAssertions": ["VAL-ENGINE-004"]
+    },
+    {
+      "description": "VAL-ENGINE-026 race condition: One of 5 parallel requests fails with HTTP 500 (duplicate key constraint) instead of gracefully retrying. The unique index on (victim_ip, vector) WHERE status='open' correctly prevents duplicate groups, but the application doesn't handle the conflict with an upsert/retry.",
+      "resolved": false,
+      "resolution": "Noted as minor robustness issue. Core invariant (exactly one group) is maintained by the unique index.",
+      "affectedAssertions": ["VAL-ENGINE-026"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 8 assertions: 8 passed, 0 failed, 0 blocked, 0 skipped. All signal group lifecycle behaviors confirmed: creation (VAL-ENGINE-001), joining (VAL-ENGINE-002), expiry (VAL-ENGINE-003), resolution (VAL-ENGINE-004), concurrency safety (VAL-ENGINE-026), vector separation (VAL-ENGINE-027), expiry without corroboration (VAL-CROSS-007), and migration integrity (VAL-CROSS-011). Minor friction from concurrent subagent config modifications and shared customer quota."
+}

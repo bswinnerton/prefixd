@@ -61,6 +61,22 @@ safelist:
     - "10.0.0.0/8"
     - "192.168.0.0/16"
 
+correlation:
+  enabled: true
+  window_seconds: 300
+  min_sources: 1
+  confidence_threshold: 0.5
+  sources:
+    fastnetmon:
+      weight: 1.0
+      type: detector
+    alertmanager:
+      weight: 0.8
+      type: telemetry
+    dashboard:
+      weight: 1.0
+      type: manual
+
 shutdown:
   drain_timeout_seconds: 30
   preserve_announcements: true
