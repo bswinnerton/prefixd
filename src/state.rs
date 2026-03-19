@@ -147,6 +147,10 @@ impl AppState {
         self.config_dir.join("alerting.yaml")
     }
 
+    pub fn correlation_path(&self) -> PathBuf {
+        self.config_dir.join("correlation.yaml")
+    }
+
     /// Reload inventory and playbooks from config files
     pub async fn reload_config(&self) -> Result<Vec<String>> {
         let mut reloaded = Vec::new();
@@ -175,15 +179,25 @@ impl AppState {
             tracing::info!("reloaded playbooks.yaml");
         }
 
-        // Reload correlation config from prefixd.yaml
-        let prefixd_yaml_path = self.config_dir.join("prefixd.yaml");
-        if prefixd_yaml_path.exists() {
-            let new_settings = Settings::load(&prefixd_yaml_path)
-                .map_err(|e| PrefixdError::Config(format!("prefixd.yaml: {}", e)))?;
-            *self.correlation_config.write().await = new_settings.correlation;
+        // Reload correlation config: prefer standalone correlation.yaml, fall back to prefixd.yaml
+        let correlation_path = self.correlation_path();
+        if correlation_path.exists() {
+            let new_config = crate::correlation::CorrelationConfig::load(&correlation_path)
+                .map_err(|e| PrefixdError::Config(format!("correlation.yaml: {}", e)))?;
+            *self.correlation_config.write().await = new_config;
             *self.correlation_loaded_at.write().await = Utc::now();
             reloaded.push("correlation".to_string());
-            tracing::info!("reloaded correlation config from prefixd.yaml");
+            tracing::info!("reloaded correlation config from correlation.yaml");
+        } else {
+            let prefixd_yaml_path = self.config_dir.join("prefixd.yaml");
+            if prefixd_yaml_path.exists() {
+                let new_settings = Settings::load(&prefixd_yaml_path)
+                    .map_err(|e| PrefixdError::Config(format!("prefixd.yaml: {}", e)))?;
+                *self.correlation_config.write().await = new_settings.correlation;
+                *self.correlation_loaded_at.write().await = Utc::now();
+                reloaded.push("correlation".to_string());
+                tracing::info!("reloaded correlation config from prefixd.yaml");
+            }
         }
 
         // Reload alerting (from alerting.yaml if present)

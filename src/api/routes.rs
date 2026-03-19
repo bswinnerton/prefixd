@@ -98,6 +98,10 @@ fn api_routes() -> Router<Arc<AppState>> {
         )
         .route("/v1/config/alerting/test", post(handlers::test_alerting))
         .route(
+            "/v1/config/correlation",
+            get(handlers::get_correlation_config).put(handlers::update_correlation_config),
+        )
+        .route(
             "/v1/preferences",
             get(handlers::get_notification_preferences)
                 .put(handlers::update_notification_preferences),

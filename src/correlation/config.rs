@@ -1,5 +1,8 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Write;
+use std::path::Path;
 
 /// Configuration for the multi-signal correlation engine.
 ///
@@ -140,6 +143,136 @@ impl CorrelationConfig {
         }
         // Default mapping: ban=0.9, partial_block=0.7, alert=0.5
         default_confidence_mapping(action)
+    }
+
+    /// Load correlation config from a YAML file.
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        let config: CorrelationConfig = serde_yaml::from_str(&content)?;
+        Ok(config)
+    }
+
+    /// Save correlation config to a YAML file with atomic write and backup.
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let path = path.as_ref();
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("invalid correlation config path"))?;
+        let tmp_path = parent.join(format!(
+            ".{}.tmp-{}",
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("correlation.yaml"),
+            uuid::Uuid::new_v4()
+        ));
+
+        // Refuse to operate on symlink paths for defense-in-depth.
+        if std::fs::symlink_metadata(path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return Err(anyhow::anyhow!(
+                "refusing to write correlation config through symlink"
+            ));
+        }
+
+        if path.exists() {
+            let bak = path.with_extension("yaml.bak");
+            if std::fs::symlink_metadata(&bak)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                return Err(anyhow::anyhow!(
+                    "refusing to write correlation backup through symlink"
+                ));
+            }
+            std::fs::copy(path, &bak)?;
+        }
+
+        let yaml = serde_yaml::to_string(self)?;
+        let mut tmp_file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp_path)?;
+
+        tmp_file.write_all(yaml.as_bytes())?;
+        tmp_file.sync_all()?;
+        drop(tmp_file);
+
+        std::fs::rename(&tmp_path, path).inspect_err(|_| {
+            let _ = std::fs::remove_file(&tmp_path);
+        })?;
+
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
+
+        Ok(())
+    }
+
+    /// Validate the correlation config. Returns a list of validation errors (empty = valid).
+    pub fn validate(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+
+        if self.window_seconds == 0 {
+            errors.push("window_seconds must be > 0".to_string());
+        }
+
+        if self.min_sources == 0 {
+            errors.push("min_sources must be >= 1".to_string());
+        }
+
+        if self.confidence_threshold < 0.0 || self.confidence_threshold > 1.0 {
+            errors.push("confidence_threshold must be between 0.0 and 1.0".to_string());
+        }
+
+        if self.default_weight < 0.0 {
+            errors.push("default_weight must be >= 0.0".to_string());
+        }
+
+        for (name, source) in &self.sources {
+            if source.weight < 0.0 {
+                errors.push(format!("source '{}': weight must be >= 0.0", name));
+            }
+            for (action, &confidence) in &source.confidence_mapping {
+                if !(0.0..=1.0).contains(&confidence) {
+                    errors.push(format!(
+                        "source '{}': confidence_mapping '{}' must be between 0.0 and 1.0",
+                        name, action
+                    ));
+                }
+            }
+        }
+
+        errors
+    }
+
+    /// Return an allowlist-redacted view of the config suitable for API responses.
+    /// Following ADR 014: only explicitly safe fields are included.
+    pub fn redacted(&self) -> serde_json::Value {
+        let sources: serde_json::Map<String, serde_json::Value> = self
+            .sources
+            .iter()
+            .map(|(name, source)| {
+                (
+                    name.clone(),
+                    serde_json::json!({
+                        "weight": source.weight,
+                        "type": source.r#type,
+                        "confidence_mapping": source.confidence_mapping,
+                    }),
+                )
+            })
+            .collect();
+
+        serde_json::json!({
+            "enabled": self.enabled,
+            "window_seconds": self.window_seconds,
+            "min_sources": self.min_sources,
+            "confidence_threshold": self.confidence_threshold,
+            "default_weight": self.default_weight,
+            "sources": sources,
+        })
     }
 }
 
@@ -475,5 +608,111 @@ sources:
         assert_eq!(fnm.confidence_mapping["ban"], 0.95);
         assert_eq!(fnm.confidence_mapping["partial_block"], 0.8);
         assert_eq!(fnm.confidence_mapping["alert"], 0.3);
+    }
+
+    #[test]
+    fn test_validate_valid_config() {
+        let config = CorrelationConfig::default();
+        let errors = config.validate();
+        assert!(errors.is_empty(), "default config should be valid");
+    }
+
+    #[test]
+    fn test_validate_invalid_config() {
+        let config = CorrelationConfig {
+            window_seconds: 0,
+            min_sources: 0,
+            confidence_threshold: 2.0,
+            default_weight: -1.0,
+            ..Default::default()
+        };
+        let errors = config.validate();
+        assert!(
+            errors.len() >= 4,
+            "should have at least 4 errors: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn test_validate_invalid_source_weight() {
+        let mut config = CorrelationConfig::default();
+        config.sources.insert(
+            "bad_source".to_string(),
+            SourceConfig {
+                weight: -0.5,
+                r#type: "detector".to_string(),
+                confidence_mapping: HashMap::new(),
+            },
+        );
+        let errors = config.validate();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("bad_source"));
+    }
+
+    #[test]
+    fn test_validate_invalid_confidence_mapping() {
+        let mut config = CorrelationConfig::default();
+        let mut mapping = HashMap::new();
+        mapping.insert("ban".to_string(), 1.5);
+        config.sources.insert(
+            "fnm".to_string(),
+            SourceConfig {
+                weight: 1.0,
+                r#type: "detector".to_string(),
+                confidence_mapping: mapping,
+            },
+        );
+        let errors = config.validate();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("confidence_mapping"));
+    }
+
+    #[test]
+    fn test_redacted_includes_safe_fields() {
+        let mut config = CorrelationConfig::default();
+        config.enabled = true;
+        config.sources.insert(
+            "fastnetmon".to_string(),
+            SourceConfig {
+                weight: 2.0,
+                r#type: "detector".to_string(),
+                confidence_mapping: HashMap::new(),
+            },
+        );
+        let redacted = config.redacted();
+        assert_eq!(redacted["enabled"], true);
+        assert_eq!(redacted["window_seconds"], 300);
+        assert_eq!(redacted["min_sources"], 1);
+        assert_eq!(redacted["confidence_threshold"], 0.5);
+        assert_eq!(redacted["default_weight"], 1.0);
+        assert_eq!(redacted["sources"]["fastnetmon"]["weight"], 2.0);
+        assert_eq!(redacted["sources"]["fastnetmon"]["type"], "detector");
+    }
+
+    #[test]
+    fn test_save_and_load_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("correlation.yaml");
+
+        let mut config = CorrelationConfig::default();
+        config.enabled = true;
+        config.min_sources = 3;
+        config.sources.insert(
+            "test".to_string(),
+            SourceConfig {
+                weight: 1.5,
+                r#type: "detector".to_string(),
+                confidence_mapping: HashMap::new(),
+            },
+        );
+
+        config.save(&path).unwrap();
+        assert!(path.exists());
+
+        let loaded = CorrelationConfig::load(&path).unwrap();
+        assert!(loaded.enabled);
+        assert_eq!(loaded.min_sources, 3);
+        assert_eq!(loaded.sources["test"].weight, 1.5);
     }
 }

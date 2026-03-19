@@ -3282,6 +3282,123 @@ pub async fn test_alerting(
 }
 
 // ---------------------------------------------------------------------------
+// Correlation configuration
+// ---------------------------------------------------------------------------
+
+/// Get correlation configuration (allowlist-redacted, ADR 014)
+#[utoipa::path(
+    get,
+    path = "/v1/config/correlation",
+    tag = "config",
+    responses(
+        (status = 200, description = "Correlation configuration with redacted secrets"),
+        (status = 401, description = "Not authenticated")
+    )
+)]
+pub async fn get_correlation_config(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_auth(&state, &auth_session, auth_header)?;
+
+    let config = state.correlation_config.read().await;
+    let loaded_at = state.correlation_loaded_at.read().await;
+
+    Ok(Json(serde_json::json!({
+        "config": config.redacted(),
+        "loaded_at": loaded_at.to_rfc3339(),
+    })))
+}
+
+/// Update correlation configuration (admin only)
+#[utoipa::path(
+    put,
+    path = "/v1/config/correlation",
+    tag = "config",
+    request_body = crate::correlation::CorrelationConfig,
+    responses(
+        (status = 200, description = "Updated correlation configuration"),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Insufficient permissions")
+    )
+)]
+pub async fn update_correlation_config(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    body: Result<
+        Json<crate::correlation::CorrelationConfig>,
+        axum::extract::rejection::JsonRejection,
+    >,
+) -> Result<impl IntoResponse, StatusCode> {
+    use crate::domain::OperatorRole;
+    use crate::observability::{ActorType, AuditEntry};
+
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    let operator = require_role(&state, &auth_session, auth_header, OperatorRole::Admin)?;
+
+    let Json(new_config) = match body {
+        Ok(payload) => payload,
+        Err(rejection) => {
+            tracing::warn!(error = %rejection, "invalid correlation config payload");
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    // Validate config
+    let errors = new_config.validate();
+    if !errors.is_empty() {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "errors": errors })),
+        )
+            .into_response());
+    }
+
+    // Atomic save to correlation.yaml
+    let correlation_path = state.correlation_path();
+    new_config.save(&correlation_path).map_err(|e| {
+        tracing::error!(error = %e, "failed to save correlation config");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // Hot-swap in-memory config
+    let previous_enabled = {
+        let current = state.correlation_config.read().await;
+        current.enabled
+    };
+    *state.correlation_config.write().await = new_config.clone();
+    *state.correlation_loaded_at.write().await = chrono::Utc::now();
+
+    // Audit log
+    let audit = AuditEntry::new(
+        ActorType::Operator,
+        Some(operator.username.clone()),
+        "update_correlation",
+        Some("config"),
+        None,
+        serde_json::json!({
+            "previous_enabled": previous_enabled,
+            "new_enabled": new_config.enabled,
+            "sources": new_config.sources.len(),
+        }),
+    );
+    if let Err(e) = state.repo.insert_audit(&audit).await {
+        tracing::warn!(error = %e, "failed to insert audit entry for correlation update");
+    }
+
+    // Return redacted config
+    Ok(Json(serde_json::json!({
+        "config": new_config.redacted(),
+        "loaded_at": chrono::Utc::now().to_rfc3339(),
+    }))
+    .into_response())
+}
+
+// ---------------------------------------------------------------------------
 // Notification preferences
 // ---------------------------------------------------------------------------
 

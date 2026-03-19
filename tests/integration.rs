@@ -4161,3 +4161,395 @@ async fn test_openapi_includes_alertmanager() {
         "OpenAPI spec should include AlertmanagerAlertResult schema"
     );
 }
+
+// ==========================================================================
+// Correlation config API tests (VAL-ADAPT-014, VAL-ADAPT-015, VAL-ADAPT-016)
+// ==========================================================================
+
+/// VAL-ADAPT-014: GET /v1/config/correlation returns redacted config
+#[tokio::test]
+async fn test_get_correlation_config() {
+    let app = setup_app_correlation(true, 2, 0.7).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/config/correlation")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let config = &json["config"];
+    assert_eq!(config["enabled"], true);
+    assert_eq!(config["window_seconds"], 300);
+    assert_eq!(config["min_sources"], 2);
+    // f32 → JSON f64 loses precision; compare approximately
+    let ct = config["confidence_threshold"].as_f64().unwrap();
+    assert!(
+        (ct - 0.7).abs() < 0.001,
+        "confidence_threshold ~ 0.7, got {ct}"
+    );
+    assert_eq!(config["default_weight"], 1.0);
+    assert!(config["sources"].is_object(), "sources should be an object");
+    assert!(
+        config["sources"]["detector_a"].is_object(),
+        "detector_a should be present"
+    );
+    assert_eq!(config["sources"]["detector_a"]["weight"], 1.0);
+    assert_eq!(config["sources"]["detector_b"]["weight"], 1.5);
+    assert!(json["loaded_at"].is_string(), "loaded_at should be present");
+}
+
+/// VAL-ADAPT-014: GET /v1/config/correlation returns default config when correlation is disabled
+#[tokio::test]
+async fn test_get_correlation_config_default() {
+    let app = setup_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/config/correlation")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let config = &json["config"];
+    assert_eq!(config["enabled"], false);
+    assert_eq!(config["min_sources"], 1);
+    assert_eq!(config["confidence_threshold"], 0.5);
+}
+
+/// VAL-ADAPT-015: PUT /v1/config/correlation requires admin (403 for bearer/operator)
+#[tokio::test]
+async fn test_update_correlation_config_operator_forbidden() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = setup_app_bearer_with_config_dir(dir.path().to_path_buf()).await;
+
+    let body = serde_json::json!({
+        "enabled": true,
+        "window_seconds": 600,
+        "min_sources": 2,
+        "confidence_threshold": 0.7,
+        "default_weight": 1.0,
+        "sources": {}
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/config/correlation")
+                .header("Authorization", "Bearer test-secret-token-123")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+/// VAL-ADAPT-015: PUT /v1/config/correlation succeeds for admin (auth_mode: none)
+#[tokio::test]
+async fn test_update_correlation_config_success() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = setup_app_with_config_dir(dir.path().to_path_buf()).await;
+
+    let body = serde_json::json!({
+        "enabled": true,
+        "window_seconds": 600,
+        "min_sources": 3,
+        "confidence_threshold": 0.8,
+        "default_weight": 0.5,
+        "sources": {
+            "fastnetmon": {
+                "weight": 2.0,
+                "type": "detector",
+                "confidence_mapping": {
+                    "ban": 0.95
+                }
+            }
+        }
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/config/correlation")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let config = &json["config"];
+    assert_eq!(config["enabled"], true);
+    assert_eq!(config["window_seconds"], 600);
+    assert_eq!(config["min_sources"], 3);
+    let ct = config["confidence_threshold"].as_f64().unwrap();
+    assert!(
+        (ct - 0.8).abs() < 0.001,
+        "confidence_threshold ~ 0.8, got {ct}"
+    );
+    assert_eq!(config["default_weight"], 0.5);
+    assert_eq!(config["sources"]["fastnetmon"]["weight"], 2.0);
+
+    // Verify file was written
+    let correlation_path = dir.path().join("correlation.yaml");
+    assert!(
+        correlation_path.exists(),
+        "correlation.yaml should be written"
+    );
+
+    // Verify the file content round-trips correctly
+    let saved_config = prefixd::correlation::CorrelationConfig::load(&correlation_path).unwrap();
+    assert!(saved_config.enabled);
+    assert_eq!(saved_config.window_seconds, 600);
+    assert_eq!(saved_config.min_sources, 3);
+}
+
+/// PUT /v1/config/correlation with invalid JSON returns 400
+#[tokio::test]
+async fn test_update_correlation_config_invalid_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = setup_app_with_config_dir(dir.path().to_path_buf()).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/config/correlation")
+                .header("content-type", "application/json")
+                .body(Body::from("not json"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// PUT /v1/config/correlation with validation errors returns 400
+#[tokio::test]
+async fn test_update_correlation_config_validation_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = setup_app_with_config_dir(dir.path().to_path_buf()).await;
+
+    let body = serde_json::json!({
+        "enabled": true,
+        "window_seconds": 0,
+        "min_sources": 0,
+        "confidence_threshold": 2.0,
+        "default_weight": -1.0,
+        "sources": {}
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/v1/config/correlation")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let errors = json["errors"].as_array().unwrap();
+    assert!(errors.len() >= 3, "should have multiple validation errors");
+}
+
+/// VAL-ADAPT-016: POST /v1/config/reload refreshes correlation config from YAML
+#[tokio::test]
+async fn test_reload_picks_up_correlation_config() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Write initial prefixd.yaml with correlation disabled
+    let initial_config = prefixd::correlation::CorrelationConfig::default();
+    let correlation_path = dir.path().join("correlation.yaml");
+    initial_config.save(&correlation_path).unwrap();
+
+    let app = setup_app_with_config_dir(dir.path().to_path_buf()).await;
+
+    // Verify initial config is disabled
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/config/correlation")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["config"]["enabled"], false);
+
+    // Update the correlation.yaml file on disk
+    let mut updated = prefixd::correlation::CorrelationConfig::default();
+    updated.enabled = true;
+    updated.min_sources = 3;
+    updated.save(&correlation_path).unwrap();
+
+    // Trigger reload
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/config/reload")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let reloaded = json["reloaded"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        reloaded.contains(&"correlation".to_string()),
+        "reload should include 'correlation': {:?}",
+        reloaded
+    );
+
+    // Verify updated config
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/config/correlation")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["config"]["enabled"], true);
+    assert_eq!(json["config"]["min_sources"], 3);
+}
+
+/// VAL-ADAPT-017: Unknown sources handled gracefully (default weight, not 500)
+#[tokio::test]
+async fn test_unknown_source_handled_gracefully() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    // Submit event from an unknown source (not in the configured sources)
+    let event_json = r#"{
+        "timestamp": "2026-01-16T14:00:00Z",
+        "source": "completely_unknown_detector",
+        "victim_ip": "203.0.113.10",
+        "vector": "udp_flood",
+        "bps": 100000000,
+        "pps": 50000,
+        "top_dst_ports": [53],
+        "confidence": 0.9
+    }"#;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/events")
+                .header("content-type", "application/json")
+                .body(Body::from(event_json))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::ACCEPTED,
+        "unknown source should be accepted (not 500)"
+    );
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "accepted");
+}
+
+/// OpenAPI spec includes correlation config endpoints
+#[tokio::test]
+async fn test_openapi_includes_correlation_config() {
+    let app = setup_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let spec: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let paths = spec["paths"].as_object().unwrap();
+    assert!(
+        paths.contains_key("/v1/config/correlation"),
+        "OpenAPI spec should include /v1/config/correlation"
+    );
+
+    let schemas = spec["components"]["schemas"].as_object().unwrap();
+    assert!(
+        schemas.contains_key("CorrelationConfig"),
+        "OpenAPI spec should include CorrelationConfig schema"
+    );
+    assert!(
+        schemas.contains_key("SourceConfig"),
+        "OpenAPI spec should include SourceConfig schema"
+    );
+}

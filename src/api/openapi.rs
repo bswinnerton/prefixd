@@ -10,6 +10,7 @@ use super::handlers::{
     PublicHealthResponse, ReloadResponse, SignalGroupDetailResponse, SignalGroupsListResponse,
     TimeseriesResponse,
 };
+use crate::correlation::config::{CorrelationConfig, SourceConfig};
 use crate::correlation::engine::{
     CorrelationExplanation, SignalGroup, SignalGroupEvent, SignalGroupStatus, SourceContribution,
 };
@@ -56,6 +57,8 @@ use crate::db::{GlobalStats, NotificationPreferences, PopInfo, PopStats, Safelis
         super::handlers::get_signal_group,
         super::handlers::ingest_alertmanager,
         super::handlers::ingest_fastnetmon,
+        super::handlers::get_correlation_config,
+        super::handlers::update_correlation_config,
     ),
     components(
         schemas(
@@ -99,6 +102,8 @@ use crate::db::{GlobalStats, NotificationPreferences, PopInfo, PopStats, Safelis
             SignalGroupStatus,
             CorrelationExplanation,
             SourceContribution,
+            CorrelationConfig,
+            SourceConfig,
         )
     ),
     tags(
