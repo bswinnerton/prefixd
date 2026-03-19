@@ -1872,3 +1872,537 @@ async fn test_notification_preferences_response_includes_null_quiet_hours() {
     assert!(raw.contains("\"quiet_hours_start\":null"));
     assert!(raw.contains("\"quiet_hours_end\":null"));
 }
+
+// ==========================================================================
+// Correlation integration tests
+// ==========================================================================
+
+fn test_settings_with_correlation(
+    enabled: bool,
+    min_sources: u32,
+    confidence_threshold: f32,
+) -> Settings {
+    let mut settings = test_settings();
+    settings.correlation = prefixd::correlation::CorrelationConfig {
+        enabled,
+        window_seconds: 300,
+        min_sources,
+        confidence_threshold,
+        sources: {
+            let mut m = std::collections::HashMap::new();
+            m.insert(
+                "detector_a".to_string(),
+                prefixd::correlation::SourceConfig {
+                    weight: 1.0,
+                    r#type: "detector".to_string(),
+                },
+            );
+            m.insert(
+                "detector_b".to_string(),
+                prefixd::correlation::SourceConfig {
+                    weight: 1.5,
+                    r#type: "detector".to_string(),
+                },
+            );
+            m
+        },
+        default_weight: 1.0,
+    };
+    settings
+}
+
+async fn setup_app_correlation(
+    enabled: bool,
+    min_sources: u32,
+    confidence_threshold: f32,
+) -> axum::Router {
+    let repo: Arc<dyn RepositoryTrait> = Arc::new(MockRepository::new());
+    let announcer = Arc::new(MockAnnouncer::new());
+    let settings = test_settings_with_correlation(enabled, min_sources, confidence_threshold);
+
+    let state = AppState::new(
+        settings,
+        test_inventory(),
+        test_playbooks(),
+        repo,
+        announcer,
+        std::path::PathBuf::from("."),
+    )
+    .expect("failed to create app state");
+
+    create_test_router(state)
+}
+
+fn make_event_json(source: &str, victim_ip: &str, confidence: f32) -> String {
+    format!(
+        r#"{{
+            "timestamp": "2026-01-16T14:00:00Z",
+            "source": "{}",
+            "victim_ip": "{}",
+            "vector": "udp_flood",
+            "bps": 100000000,
+            "pps": 50000,
+            "top_dst_ports": [53],
+            "confidence": {}
+        }}"#,
+        source, victim_ip, confidence
+    )
+}
+
+async fn post_event(app: &axum::Router, event_json: &str) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/events")
+                .header("content-type", "application/json")
+                .body(Body::from(event_json.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    (status, json)
+}
+
+/// VAL-ENGINE-010: Single source triggers when min_sources=1 (backward compat)
+#[tokio::test]
+async fn test_correlation_min_sources_1_triggers_immediately() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    let (status, json) = post_event(&app, &event).await;
+
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(json["status"], "accepted");
+    assert!(
+        json["mitigation_id"].is_string(),
+        "should create mitigation with min_sources=1: {:?}",
+        json
+    );
+}
+
+/// VAL-ENGINE-009: min_sources=2 and one source does NOT create mitigation
+#[tokio::test]
+async fn test_correlation_min_sources_2_one_source_no_mitigation() {
+    let app = setup_app_correlation(true, 2, 0.5).await;
+
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    let (status, json) = post_event(&app, &event).await;
+
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(json["status"], "accepted");
+    assert!(
+        json["mitigation_id"].is_null(),
+        "should NOT create mitigation with 1 source when min_sources=2"
+    );
+}
+
+/// VAL-ENGINE-009: min_sources=2 and two sources creates mitigation
+#[tokio::test]
+async fn test_correlation_min_sources_2_two_sources_creates_mitigation() {
+    let app = setup_app_correlation(true, 2, 0.5).await;
+
+    // First event from detector_a — no mitigation
+    let event_a = make_event_json("detector_a", "203.0.113.10", 0.9);
+    let (status_a, json_a) = post_event(&app, &event_a).await;
+    assert_eq!(status_a, StatusCode::ACCEPTED);
+    assert!(
+        json_a["mitigation_id"].is_null(),
+        "first source alone shouldn't trigger"
+    );
+
+    // Second event from detector_b — mitigation created
+    let event_b = make_event_json("detector_b", "203.0.113.10", 0.8);
+    let (status_b, json_b) = post_event(&app, &event_b).await;
+    assert_eq!(status_b, StatusCode::ACCEPTED);
+    assert_eq!(json_b["status"], "accepted");
+    assert!(
+        json_b["mitigation_id"].is_string(),
+        "second source should trigger mitigation: {:?}",
+        json_b
+    );
+}
+
+/// VAL-ENGINE-020: Events bypass correlation when disabled
+#[tokio::test]
+async fn test_correlation_disabled_bypasses_entirely() {
+    let app = setup_app_correlation(false, 2, 0.5).await;
+
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    let (status, json) = post_event(&app, &event).await;
+
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(json["status"], "accepted");
+    assert!(
+        json["mitigation_id"].is_string(),
+        "should create mitigation immediately when correlation disabled"
+    );
+}
+
+/// VAL-ENGINE-029: EventResponse shape unchanged
+#[tokio::test]
+async fn test_correlation_event_response_shape_unchanged() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    let (status, json) = post_event(&app, &event).await;
+
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert!(json["event_id"].is_string(), "event_id must be present");
+    assert!(json["status"].is_string(), "status must be present");
+    // mitigation_id may be string or null
+    assert!(
+        json["mitigation_id"].is_string() || json["mitigation_id"].is_null(),
+        "mitigation_id must be string or null"
+    );
+}
+
+/// VAL-ENGINE-013: Derived confidence must meet threshold
+#[tokio::test]
+async fn test_correlation_low_confidence_no_mitigation() {
+    // Two sources but very low confidence with threshold 0.7
+    let app = setup_app_correlation(true, 2, 0.7).await;
+
+    let event_a = make_event_json("detector_a", "203.0.113.10", 0.3);
+    post_event(&app, &event_a).await;
+
+    let event_b = make_event_json("detector_b", "203.0.113.10", 0.3);
+    let (status, json) = post_event(&app, &event_b).await;
+
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert!(
+        json["mitigation_id"].is_null(),
+        "low confidence should not trigger even with 2 sources: {:?}",
+        json
+    );
+}
+
+/// VAL-ENGINE-011: Duplicate source counts as one for corroboration
+#[tokio::test]
+async fn test_correlation_duplicate_source_counts_as_one() {
+    let app = setup_app_correlation(true, 2, 0.5).await;
+
+    // Two events from same source
+    let event_a = make_event_json("detector_a", "203.0.113.10", 0.9);
+    post_event(&app, &event_a).await;
+
+    // Use a different event_id to avoid duplicate detection
+    let event_b = make_event_json("detector_a", "203.0.113.10", 0.8);
+    let (status, json) = post_event(&app, &event_b).await;
+
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert!(
+        json["mitigation_id"].is_null(),
+        "same source twice should count as 1 distinct, not trigger with min_sources=2"
+    );
+}
+
+/// VAL-ENGINE-030: Batch endpoint works with correlation
+#[tokio::test]
+async fn test_correlation_batch_endpoint_independent_groups() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    let batch_json = r#"{
+        "events": [
+            {
+                "timestamp": "2026-01-16T14:00:00Z",
+                "source": "detector_a",
+                "victim_ip": "203.0.113.10",
+                "vector": "udp_flood",
+                "bps": 100000000,
+                "pps": 50000,
+                "top_dst_ports": [53],
+                "confidence": 0.9
+            },
+            {
+                "timestamp": "2026-01-16T14:00:01Z",
+                "source": "detector_a",
+                "victim_ip": "203.0.113.11",
+                "vector": "udp_flood",
+                "bps": 50000000,
+                "pps": 25000,
+                "top_dst_ports": [53],
+                "confidence": 0.8
+            }
+        ]
+    }"#;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/events/batch")
+                .header("content-type", "application/json")
+                .body(Body::from(batch_json))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Should be 202 (all accepted) with min_sources=1
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["accepted"], 2);
+    // Each event should create a mitigation independently
+    let results = json["results"].as_array().unwrap();
+    assert!(results[0]["mitigation_id"].is_string());
+    assert!(results[1]["mitigation_id"].is_string());
+    // Different victim IPs = different mitigations
+    assert_ne!(results[0]["mitigation_id"], results[1]["mitigation_id"]);
+}
+
+/// VAL-ENGINE-018 / VAL-ENGINE-033: Mitigation detail/list includes correlation context
+#[tokio::test]
+async fn test_correlation_mitigation_detail_includes_correlation() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    // Create a correlated mitigation
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    let (_, event_json) = post_event(&app, &event).await;
+    let mitigation_id = event_json["mitigation_id"].as_str().unwrap();
+
+    // GET /v1/mitigations/{id}
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&format!("/v1/mitigations/{}", mitigation_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Should have correlation field
+    assert!(
+        json["correlation"].is_object(),
+        "correlation should be present: {:?}",
+        json
+    );
+    let corr = &json["correlation"];
+    assert!(corr["signal_group_id"].is_string());
+    assert!(corr["derived_confidence"].is_number());
+    assert!(corr["source_count"].is_number());
+    assert!(corr["corroboration_met"].is_boolean());
+    assert!(corr["contributing_sources"].is_array());
+    assert!(corr["explanation"].is_string());
+}
+
+/// VAL-ENGINE-019: Non-correlated mitigation has null correlation
+#[tokio::test]
+async fn test_correlation_disabled_mitigation_no_correlation_field() {
+    let app = setup_app_correlation(false, 1, 0.5).await;
+
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    let (_, event_json) = post_event(&app, &event).await;
+    let mitigation_id = event_json["mitigation_id"].as_str().unwrap();
+
+    // GET /v1/mitigations/{id}
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&format!("/v1/mitigations/{}", mitigation_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // correlation should be absent (skipped when None)
+    assert!(
+        json["correlation"].is_null(),
+        "correlation should be null/absent when disabled: {:?}",
+        json
+    );
+}
+
+/// VAL-ENGINE-004: Signal group resolves when mitigation created
+#[tokio::test]
+async fn test_correlation_signal_group_resolves_on_mitigation() {
+    let repo = Arc::new(MockRepository::new());
+    let announcer = Arc::new(MockAnnouncer::new());
+    let settings = test_settings_with_correlation(true, 1, 0.5);
+
+    let state = AppState::new(
+        settings,
+        test_inventory(),
+        test_playbooks(),
+        repo.clone(),
+        announcer,
+        std::path::PathBuf::from("."),
+    )
+    .expect("failed to create app state");
+
+    let app = create_test_router(state);
+
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    post_event(&app, &event).await;
+
+    // Check that the signal group was resolved
+    let groups = repo
+        .list_signal_groups(
+            &prefixd::correlation::SignalGroupFilter {
+                status: Some(prefixd::correlation::SignalGroupStatus::Resolved),
+                ..Default::default()
+            },
+            &prefixd::db::ListParams {
+                limit: 100,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(groups.len(), 1, "should have one resolved group");
+    assert!(
+        groups[0].corroboration_met,
+        "corroboration_met should be true"
+    );
+    assert_eq!(groups[0].source_count, 1);
+}
+
+/// VAL-ENGINE-033: Mitigations list includes correlation summary
+#[tokio::test]
+async fn test_correlation_mitigations_list_includes_summary() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    post_event(&app, &event).await;
+
+    // GET /v1/mitigations
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/mitigations")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let mitigations = json["mitigations"].as_array().unwrap();
+    assert!(!mitigations.is_empty());
+    assert!(
+        mitigations[0]["correlation"].is_object(),
+        "list should include correlation summary: {:?}",
+        mitigations[0]
+    );
+    assert!(mitigations[0]["correlation"]["signal_group_id"].is_string());
+}
+
+/// VAL-CROSS-009: Corroborated mitigations pass through guardrails — safelisted IP rejected
+#[tokio::test]
+async fn test_correlation_guardrails_still_apply() {
+    // Create app with safelist
+    let repo = Arc::new(MockRepository::new());
+    let announcer = Arc::new(MockAnnouncer::new());
+    let settings = test_settings_with_correlation(true, 1, 0.5);
+
+    // Add IP to safelist
+    repo.insert_safelist("203.0.113.10", "admin", Some("core router"))
+        .await
+        .unwrap();
+
+    let state = AppState::new(
+        settings,
+        test_inventory(),
+        test_playbooks(),
+        repo,
+        announcer,
+        std::path::PathBuf::from("."),
+    )
+    .expect("failed to create app state");
+
+    let app = create_test_router(state);
+
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    let (status, json) = post_event(&app, &event).await;
+
+    // Should be rejected by guardrails
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(json["error"].as_str().unwrap().contains("safelist"));
+}
+
+/// VAL-CROSS-012: Incident reports include correlation data
+#[tokio::test]
+async fn test_correlation_incident_report_includes_correlation() {
+    let repo = Arc::new(MockRepository::new());
+    let announcer = Arc::new(MockAnnouncer::new());
+    let settings = test_settings_with_correlation(true, 1, 0.5);
+
+    let state = AppState::new(
+        settings,
+        test_inventory(),
+        test_playbooks(),
+        repo.clone(),
+        announcer,
+        std::path::PathBuf::from("."),
+    )
+    .expect("failed to create app state");
+
+    let app = create_test_router(state);
+
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    post_event(&app, &event).await;
+
+    // Get incident report
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/reports/incident?ip=203.0.113.10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let md = String::from_utf8_lossy(&body);
+
+    assert!(
+        md.contains("## Correlation"),
+        "incident report should include Correlation section: {}",
+        md
+    );
+    assert!(
+        md.contains("Derived Confidence"),
+        "incident report should include derived confidence"
+    );
+    assert!(
+        md.contains("Source Count"),
+        "incident report should include source count"
+    );
+}

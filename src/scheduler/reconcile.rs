@@ -4,6 +4,7 @@ use tokio::sync::broadcast;
 
 use crate::alerting::AlertingService;
 use crate::bgp::FlowSpecAnnouncer;
+use crate::correlation::SignalGroupStatus;
 use crate::db::RepositoryTrait;
 use crate::domain::{FlowSpecAction, FlowSpecNlri, FlowSpecRule, MitigationStatus};
 use crate::ws::WsMessage;
@@ -81,7 +82,10 @@ impl ReconciliationLoop {
         // 1. Expire mitigations past TTL
         self.expire_mitigations().await?;
 
-        // 2. Sync desired vs actual state
+        // 2. Expire signal groups past window
+        self.expire_signal_groups().await?;
+
+        // 3. Sync desired vs actual state
         self.sync_announcements().await?;
 
         Ok(())
@@ -124,6 +128,35 @@ impl ReconciliationLoop {
                 let alerting = alerting_lock.read().await.clone();
                 alerting.notify(crate::alerting::Alert::mitigation_expired(&mitigation));
             }
+        }
+
+        Ok(())
+    }
+
+    async fn expire_signal_groups(&self) -> anyhow::Result<()> {
+        let expired = self.repo.find_expired_signal_groups().await?;
+
+        for mut group in expired {
+            tracing::info!(
+                group_id = %group.group_id,
+                victim_ip = %group.victim_ip,
+                vector = %group.vector,
+                source_count = group.source_count,
+                "expiring signal group (corroboration timeout)"
+            );
+
+            group.status = SignalGroupStatus::Expired;
+            self.repo.update_signal_group(&group).await?;
+
+            // Increment timeout metric
+            crate::observability::metrics::CORROBORATION_TIMEOUT_TOTAL
+                .with_label_values(&[&group.vector])
+                .inc();
+
+            // Record source count for expired group
+            crate::observability::metrics::SIGNAL_GROUP_SOURCES
+                .with_label_values(&[&group.vector])
+                .observe(group.source_count as f64);
         }
 
         Ok(())

@@ -160,6 +160,7 @@ pub struct MitigationRow {
     pub rejection_reason: Option<String>,
     pub acknowledged_at: Option<DateTime<Utc>>,
     pub acknowledged_by: Option<String>,
+    pub signal_group_id: Option<Uuid>,
 }
 
 /// Domain model for mitigation
@@ -187,6 +188,10 @@ pub struct Mitigation {
     pub rejection_reason: Option<String>,
     pub acknowledged_at: Option<DateTime<Utc>>,
     pub acknowledged_by: Option<String>,
+    /// FK to signal_groups table — set when this mitigation was created via
+    /// the correlation engine's corroboration logic.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signal_group_id: Option<Uuid>,
 }
 
 impl Mitigation {
@@ -218,6 +223,7 @@ impl Mitigation {
             rejection_reason: None,
             acknowledged_at: None,
             acknowledged_by: None,
+            signal_group_id: None,
         }
     }
 
@@ -308,6 +314,7 @@ impl Mitigation {
             rejection_reason: row.rejection_reason,
             acknowledged_at: row.acknowledged_at,
             acknowledged_by: row.acknowledged_by,
+            signal_group_id: row.signal_group_id,
         })
     }
 

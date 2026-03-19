@@ -188,8 +188,9 @@ impl RepositoryTrait for Repository {
                 mitigation_id, scope_hash, pop, customer_id, service_id, victim_ip, vector,
                 match_json, action_type, action_params_json, status,
                 created_at, updated_at, expires_at, withdrawn_at,
-                triggering_event_id, last_event_id, escalated_from_id, reason, rejection_reason
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                triggering_event_id, last_event_id, escalated_from_id, reason, rejection_reason,
+                signal_group_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             "#,
         )
         .bind(m.mitigation_id)
@@ -212,6 +213,7 @@ impl RepositoryTrait for Repository {
         .bind(m.escalated_from_id)
         .bind(&m.reason)
         .bind(&m.rejection_reason)
+        .bind(m.signal_group_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -254,7 +256,7 @@ impl RepositoryTrait for Repository {
                    match_json, action_type, action_params_json, status,
                    created_at, updated_at, expires_at, withdrawn_at,
                    triggering_event_id, last_event_id, escalated_from_id, reason, rejection_reason,
-                   acknowledged_at, acknowledged_by
+                   acknowledged_at, acknowledged_by, signal_group_id
             FROM mitigations WHERE mitigation_id = $1
             "#,
         )
@@ -278,7 +280,7 @@ impl RepositoryTrait for Repository {
                    match_json, action_type, action_params_json, status,
                    created_at, updated_at, expires_at, withdrawn_at,
                    triggering_event_id, last_event_id, escalated_from_id, reason, rejection_reason,
-                   acknowledged_at, acknowledged_by
+                   acknowledged_at, acknowledged_by, signal_group_id
             FROM mitigations
             WHERE scope_hash = $1 AND pop = $2 AND status IN ('pending', 'active', 'escalated')
             "#,
@@ -300,7 +302,7 @@ impl RepositoryTrait for Repository {
                    match_json, action_type, action_params_json, status,
                    created_at, updated_at, expires_at, withdrawn_at,
                    triggering_event_id, last_event_id, escalated_from_id, reason, rejection_reason,
-                   acknowledged_at, acknowledged_by
+                   acknowledged_at, acknowledged_by, signal_group_id
             FROM mitigations
             WHERE victim_ip = $1 AND status IN ('pending', 'active', 'escalated')
             "#,
@@ -328,7 +330,7 @@ impl RepositoryTrait for Repository {
                    match_json, action_type, action_params_json, status,
                    created_at, updated_at, expires_at, withdrawn_at,
                    triggering_event_id, last_event_id, escalated_from_id, reason, rejection_reason,
-                   acknowledged_at, acknowledged_by
+                   acknowledged_at, acknowledged_by, signal_group_id
             FROM mitigations
             WHERE triggering_event_id = $1 AND status IN ('pending', 'active', 'escalated')
             "#,
@@ -359,7 +361,7 @@ impl RepositoryTrait for Repository {
                    match_json, action_type, action_params_json, status,
                    created_at, updated_at, expires_at, withdrawn_at,
                    triggering_event_id, last_event_id, escalated_from_id, reason, rejection_reason,
-                   acknowledged_at, acknowledged_by
+                   acknowledged_at, acknowledged_by, signal_group_id
             FROM mitigations
             WHERE ($1::text[] IS NULL OR status = ANY($1))
               AND ($2::text IS NULL OR customer_id = $2)
@@ -453,7 +455,7 @@ impl RepositoryTrait for Repository {
                    match_json, action_type, action_params_json, status,
                    created_at, updated_at, expires_at, withdrawn_at,
                    triggering_event_id, last_event_id, escalated_from_id, reason, rejection_reason,
-                   acknowledged_at, acknowledged_by
+                   acknowledged_at, acknowledged_by, signal_group_id
             FROM mitigations
             WHERE status IN ('active', 'escalated') AND expires_at < $1
             "#,
@@ -616,7 +618,7 @@ impl RepositoryTrait for Repository {
                    match_json, action_type, action_params_json, status,
                    created_at, updated_at, expires_at, withdrawn_at,
                    triggering_event_id, last_event_id, escalated_from_id, reason, rejection_reason,
-                   acknowledged_at, acknowledged_by
+                   acknowledged_at, acknowledged_by, signal_group_id
             FROM mitigations
             WHERE ($1::text[] IS NULL OR status = ANY($1))
               AND ($2::text IS NULL OR customer_id = $2)
@@ -740,7 +742,7 @@ impl RepositoryTrait for Repository {
                    match_json, action_type, action_params_json, status,
                    created_at, updated_at, expires_at, withdrawn_at,
                    triggering_event_id, last_event_id, escalated_from_id, reason, rejection_reason,
-                   acknowledged_at, acknowledged_by
+                   acknowledged_at, acknowledged_by, signal_group_id
             FROM mitigations WHERE victim_ip = $1 ORDER BY created_at DESC LIMIT $2
             "#,
         )
@@ -1064,6 +1066,20 @@ impl RepositoryTrait for Repository {
                 .fetch_one(&self.pool)
                 .await?;
         Ok(row.0 as u32)
+    }
+
+    async fn find_expired_signal_groups(&self) -> Result<Vec<SignalGroup>> {
+        let rows: Vec<SignalGroupRow> = sqlx::query_as(
+            r#"
+            SELECT group_id, victim_ip, vector, created_at, window_expires_at,
+                   derived_confidence, source_count, status, corroboration_met
+            FROM signal_groups
+            WHERE status = 'open' AND window_expires_at <= NOW()
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 }
 

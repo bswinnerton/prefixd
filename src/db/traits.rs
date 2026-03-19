@@ -162,4 +162,6 @@ pub trait RepositoryTrait: Send + Sync {
     ) -> Result<Vec<SignalGroup>>;
     /// Count currently open signal groups.
     async fn count_open_groups(&self) -> Result<u32>;
+    /// Find open signal groups whose window has expired (for expiry sweep).
+    async fn find_expired_signal_groups(&self) -> Result<Vec<SignalGroup>>;
 }

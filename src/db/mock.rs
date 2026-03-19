@@ -655,4 +655,14 @@ impl RepositoryTrait for MockRepository {
             .filter(|g| g.status == SignalGroupStatus::Open)
             .count() as u32)
     }
+
+    async fn find_expired_signal_groups(&self) -> Result<Vec<SignalGroup>> {
+        let now = Utc::now();
+        let groups = self.signal_groups.lock().unwrap();
+        Ok(groups
+            .iter()
+            .filter(|g| g.status == SignalGroupStatus::Open && g.window_expires_at <= now)
+            .cloned()
+            .collect())
+    }
 }

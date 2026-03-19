@@ -52,6 +52,24 @@ pub struct EventResponse {
     pub mitigation_id: Option<Uuid>,
 }
 
+/// Correlation context attached to a mitigation that was created via the
+/// correlation engine's corroboration logic.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct CorrelationContext {
+    /// Signal group ID that triggered this mitigation
+    pub signal_group_id: Uuid,
+    /// Derived confidence (weighted average of contributing events)
+    pub derived_confidence: f32,
+    /// Number of distinct detection sources
+    pub source_count: i32,
+    /// Whether corroboration threshold was met
+    pub corroboration_met: bool,
+    /// List of contributing detection sources
+    pub contributing_sources: Vec<String>,
+    /// Human-readable explanation of the correlation decision
+    pub explanation: String,
+}
+
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct MitigationResponse {
     /// Unique mitigation identifier
@@ -98,6 +116,10 @@ pub struct MitigationResponse {
     pub acknowledged_at: Option<String>,
     /// Operator who acknowledged the mitigation
     pub acknowledged_by: Option<String>,
+    /// Correlation context (present when mitigation was created via
+    /// corroboration from the signal correlation engine)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation: Option<CorrelationContext>,
 }
 
 impl From<&Mitigation> for MitigationResponse {
@@ -125,6 +147,10 @@ impl From<&Mitigation> for MitigationResponse {
             reason: m.reason.clone(),
             acknowledged_at: m.acknowledged_at.map(|t| t.to_rfc3339()),
             acknowledged_by: m.acknowledged_by.clone(),
+            // Correlation context is populated asynchronously by handlers
+            // that have access to the signal group data. The basic From impl
+            // sets it to None — callers enrich it when needed.
+            correlation: None,
         }
     }
 }
@@ -593,13 +619,190 @@ async fn handle_ban(
 
     drop(inventory); // Release read lock before policy evaluation
 
-    // Build policy engine and evaluate
+    // ── Correlation step ───────────────────────────────────────────────
+    // If correlation.enabled, find/create a signal group and add the event.
+    // Check corroboration — if threshold not met, return 'accepted' without
+    // creating a mitigation. If threshold met, proceed to policy evaluation.
+    let correlation_config = state.correlation_config.read().await.clone();
+
+    // Resolve the matching playbook early so we can get per-playbook overrides
     let playbooks = state.playbooks.read().await.clone();
     let policy = PolicyEngine::new(
-        playbooks,
+        playbooks.clone(),
         state.settings.pop.clone(),
         state.settings.timers.default_ttl_seconds,
     );
+
+    // Find the matching playbook's correlation override
+    let vector = event.attack_vector();
+    let event_ports = event.top_dst_ports();
+    let has_ports = !event_ports.is_empty();
+    let matching_playbook = playbooks.find_playbook(vector, has_ports);
+    let playbook_override = matching_playbook.and_then(|p| p.correlation.as_ref());
+
+    let mut signal_group_id: Option<Uuid> = None;
+    let mut correlation_context: Option<CorrelationContext> = None;
+
+    if correlation_config.enabled {
+        use crate::correlation::{CorrelationEngine, SignalGroupStatus};
+
+        let vector_str = event.vector.clone();
+
+        // Find or create signal group
+        let new_group = CorrelationEngine::create_group(
+            &event.victim_ip,
+            &vector_str,
+            correlation_config.window_seconds,
+        );
+        let group = state
+            .repo
+            .insert_signal_group(&new_group)
+            .await
+            .map_err(AppError)?;
+
+        let is_new_group = group.group_id == new_group.group_id;
+        if is_new_group {
+            crate::observability::metrics::SIGNAL_GROUPS_TOTAL
+                .with_label_values(&["open", &vector_str])
+                .inc();
+        }
+
+        // Add event to the group
+        let source_weight = correlation_config.source_weight(&event.source);
+        let _ = state
+            .repo
+            .add_event_to_group(group.group_id, event.event_id, source_weight)
+            .await
+            .map_err(AppError)?;
+
+        // Recompute derived confidence from all events in group
+        let group_events = state
+            .repo
+            .list_signal_group_events(group.group_id)
+            .await
+            .map_err(AppError)?;
+
+        let confidence_pairs: Vec<(Option<f32>, f32)> = group_events
+            .iter()
+            .map(|ge| (ge.confidence, ge.source_weight))
+            .collect();
+        let derived_confidence = CorrelationEngine::compute_derived_confidence(&confidence_pairs);
+
+        let source_names: Vec<String> = group_events
+            .iter()
+            .filter_map(|ge| ge.source.clone())
+            .collect();
+        let source_count = CorrelationEngine::count_distinct_sources(&source_names);
+
+        let corroboration_met = CorrelationEngine::check_corroboration(
+            source_count,
+            derived_confidence,
+            &correlation_config,
+            playbook_override,
+        );
+
+        // Update group in DB
+        let mut updated_group = group.clone();
+        updated_group.derived_confidence = derived_confidence;
+        updated_group.source_count = source_count;
+        updated_group.corroboration_met = corroboration_met;
+        state
+            .repo
+            .update_signal_group(&updated_group)
+            .await
+            .map_err(AppError)?;
+
+        // Record correlation metrics
+        crate::observability::metrics::CORRELATION_CONFIDENCE
+            .with_label_values(&[&vector_str])
+            .observe(derived_confidence as f64);
+
+        if !corroboration_met {
+            // Signal recorded but corroboration not met — no mitigation
+            tracing::info!(
+                group_id = %group.group_id,
+                source_count = source_count,
+                derived_confidence = derived_confidence,
+                "signal recorded, corroboration not met — no mitigation"
+            );
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(EventResponse {
+                    event_id: event.event_id,
+                    external_event_id: event.external_event_id.clone(),
+                    status: "accepted".to_string(),
+                    mitigation_id: None,
+                }),
+            ));
+        }
+
+        // Corroboration met — proceed to create mitigation
+        crate::observability::metrics::CORROBORATION_MET_TOTAL
+            .with_label_values(&[&vector_str])
+            .inc();
+        crate::observability::metrics::SIGNAL_GROUP_SOURCES
+            .with_label_values(&[&vector_str])
+            .observe(source_count as f64);
+
+        signal_group_id = Some(group.group_id);
+
+        // Build contributing sources list
+        let unique_sources: Vec<String> = {
+            let mut seen = std::collections::HashSet::new();
+            source_names
+                .into_iter()
+                .filter(|s| seen.insert(s.clone()))
+                .collect()
+        };
+
+        // Build explanation
+        let contributions: Vec<crate::correlation::SourceContribution> = group_events
+            .iter()
+            .map(|ge| {
+                let conf = ge.confidence.unwrap_or(0.0);
+                crate::correlation::SourceContribution {
+                    source: ge.source.clone().unwrap_or_default(),
+                    confidence: conf,
+                    weight: ge.source_weight,
+                    weighted_confidence: conf * ge.source_weight,
+                }
+            })
+            .collect();
+
+        let explanation = CorrelationEngine::compute_explanation(
+            &updated_group,
+            contributions,
+            &correlation_config,
+            playbook_override,
+        );
+
+        correlation_context = Some(CorrelationContext {
+            signal_group_id: group.group_id,
+            derived_confidence,
+            source_count,
+            corroboration_met: true,
+            contributing_sources: unique_sources,
+            explanation: explanation.explanation,
+        });
+
+        // Resolve signal group to 'resolved' since we are creating a mitigation
+        let mut resolved_group = updated_group;
+        resolved_group.status = SignalGroupStatus::Resolved;
+        state
+            .repo
+            .update_signal_group(&resolved_group)
+            .await
+            .map_err(AppError)?;
+
+        tracing::info!(
+            group_id = %group.group_id,
+            source_count = source_count,
+            derived_confidence = derived_confidence,
+            "corroboration met, creating mitigation"
+        );
+    }
+
+    // ── Policy evaluation ──────────────────────────────────────────────
 
     let intent = match policy.evaluate(&event, context.as_ref()) {
         Ok(i) => i,
@@ -679,6 +882,7 @@ async fn handle_ban(
     // Create mitigation
     let mut mitigation =
         Mitigation::from_intent(intent, event.victim_ip.clone(), event.attack_vector());
+    mitigation.signal_group_id = signal_group_id;
 
     // Announce FlowSpec (if not dry-run)
     if !state.is_dry_run() {
@@ -705,11 +909,15 @@ async fn handle_ban(
         .await
         .map_err(AppError)?;
 
+    // Build response with optional correlation context
+    let mut mit_response = MitigationResponse::from(&mitigation);
+    mit_response.correlation = correlation_context;
+
     // Broadcast new mitigation via WebSocket
     let _ = state
         .ws_broadcast
         .send(crate::ws::WsMessage::MitigationCreated {
-            mitigation: MitigationResponse::from(&mitigation),
+            mitigation: mit_response.clone(),
         });
 
     state
@@ -722,6 +930,7 @@ async fn handle_ban(
         mitigation_id = %mitigation.mitigation_id,
         victim_ip = %mitigation.victim_ip,
         action = %mitigation.action_type,
+        signal_group_id = ?mitigation.signal_group_id,
         "created mitigation"
     );
 
@@ -929,7 +1138,40 @@ pub async fn list_mitigations(
         None
     };
     let count = mitigations.len();
-    let responses: Vec<_> = mitigations.iter().map(MitigationResponse::from).collect();
+
+    // Collect signal group IDs and fetch group data for correlation summaries
+    let group_ids: Vec<Uuid> = mitigations
+        .iter()
+        .filter_map(|m| m.signal_group_id)
+        .collect();
+
+    let mut group_map = std::collections::HashMap::new();
+    for gid in &group_ids {
+        if let Ok(Some(g)) = state.repo.get_signal_group(*gid).await {
+            group_map.insert(g.group_id, g);
+        }
+    }
+
+    let responses: Vec<_> = mitigations
+        .iter()
+        .map(|m| {
+            let mut resp = MitigationResponse::from(m);
+            // Add lightweight correlation summary for correlated mitigations
+            if let Some(group_id) = m.signal_group_id {
+                if let Some(group) = group_map.get(&group_id) {
+                    resp.correlation = Some(CorrelationContext {
+                        signal_group_id: group_id,
+                        derived_confidence: group.derived_confidence,
+                        source_count: group.source_count,
+                        corroboration_met: group.corroboration_met,
+                        contributing_sources: vec![],
+                        explanation: String::new(),
+                    });
+                }
+            }
+            resp
+        })
+        .collect();
 
     Ok(Json(MitigationsListResponse {
         mitigations: responses,
@@ -968,7 +1210,63 @@ pub async fn get_mitigation(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    Ok(Json(MitigationResponse::from(&mitigation)))
+    let mut response = MitigationResponse::from(&mitigation);
+
+    // Enrich with correlation context if signal_group_id is set
+    if let Some(group_id) = mitigation.signal_group_id {
+        if let Ok(Some(group)) = state.repo.get_signal_group(group_id).await {
+            if let Ok(events) = state.repo.list_signal_group_events(group_id).await {
+                let correlation_config = state.correlation_config.read().await.clone();
+                let playbooks = state.playbooks.read().await.clone();
+                let playbook_override = playbooks
+                    .find_playbook(
+                        mitigation.vector,
+                        !mitigation.match_criteria.dst_ports.is_empty(),
+                    )
+                    .and_then(|p| p.correlation.as_ref());
+
+                let contributions: Vec<crate::correlation::SourceContribution> = events
+                    .iter()
+                    .map(|ge| {
+                        let conf = ge.confidence.unwrap_or(0.0);
+                        crate::correlation::SourceContribution {
+                            source: ge.source.clone().unwrap_or_default(),
+                            confidence: conf,
+                            weight: ge.source_weight,
+                            weighted_confidence: conf * ge.source_weight,
+                        }
+                    })
+                    .collect();
+
+                let unique_sources: Vec<String> = {
+                    let mut seen = std::collections::HashSet::new();
+                    events
+                        .iter()
+                        .filter_map(|ge| ge.source.clone())
+                        .filter(|s| seen.insert(s.clone()))
+                        .collect()
+                };
+
+                let explanation = crate::correlation::CorrelationEngine::compute_explanation(
+                    &group,
+                    contributions,
+                    &correlation_config,
+                    playbook_override,
+                );
+
+                response.correlation = Some(CorrelationContext {
+                    signal_group_id: group.group_id,
+                    derived_confidence: group.derived_confidence,
+                    source_count: group.source_count,
+                    corroboration_met: group.corroboration_met,
+                    contributing_sources: unique_sources,
+                    explanation: explanation.explanation,
+                });
+            }
+        }
+    }
+
+    Ok(Json(response))
 }
 
 pub async fn create_mitigation(
@@ -3369,6 +3667,51 @@ pub async fn generate_incident_report(
             ));
         }
         md.push('\n');
+    }
+
+    // Correlation section (for correlated mitigations)
+    let correlated: Vec<_> = mitigations
+        .iter()
+        .filter(|m| m.signal_group_id.is_some())
+        .collect();
+    if !correlated.is_empty() {
+        md.push_str("## Correlation\n\n");
+        for m in &correlated {
+            if let Some(group_id) = m.signal_group_id {
+                md.push_str(&format!(
+                    "### Mitigation `{}` — Signal Group `{}`\n\n",
+                    m.mitigation_id, group_id
+                ));
+                if let Ok(Some(group)) = state.repo.get_signal_group(group_id).await {
+                    md.push_str(&format!(
+                        "- **Derived Confidence**: {:.2}\n",
+                        group.derived_confidence
+                    ));
+                    md.push_str(&format!("- **Source Count**: {}\n", group.source_count));
+                    md.push_str(&format!(
+                        "- **Corroboration Met**: {}\n",
+                        if group.corroboration_met { "Yes" } else { "No" }
+                    ));
+                    md.push_str(&format!("- **Status**: {}\n", group.status));
+
+                    if let Ok(group_events) = state.repo.list_signal_group_events(group_id).await {
+                        if !group_events.is_empty() {
+                            md.push_str("\n| Source | Confidence | Weight |\n");
+                            md.push_str("|--------|------------|--------|\n");
+                            for ge in &group_events {
+                                md.push_str(&format!(
+                                    "| {} | {:.2} | {:.1} |\n",
+                                    ge.source.as_deref().unwrap_or("unknown"),
+                                    ge.confidence.unwrap_or(0.0),
+                                    ge.source_weight,
+                                ));
+                            }
+                        }
+                    }
+                    md.push('\n');
+                }
+            }
+        }
     }
 
     // Audit trail
