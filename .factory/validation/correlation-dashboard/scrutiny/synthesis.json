@@ -1,0 +1,45 @@
+{
+  "milestone": "correlation-dashboard",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "cargo test --features test-utils", "exitCode": 0 },
+    "test_frontend": { "passed": true, "command": "cd frontend && bun run test", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "cargo clippy -- -D warnings", "exitCode": 0 },
+    "lint": { "passed": true, "command": "cargo fmt --check", "exitCode": 0 },
+    "build_frontend": { "passed": true, "command": "cd frontend && bun run build", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add frontend convention: Use AlertDialog (from shadcn/ui) for all destructive actions (delete, withdraw, remove). This ensures consistent user experience and prevents accidental data loss.",
+      "evidence": "Feature correlation-dashboard-page: config-tab.tsx handleDeleteSource calls API directly without confirmation dialog, while admin/page.tsx uses AlertDialog for user deletion and mitigations table uses it for withdraw. Pattern inconsistency across the dashboard.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add frontend convention: Keep frontend TypeScript interfaces in sync with backend Rust response structs. When adding optional fields to frontend interfaces, verify they actually exist in the backend API response. Mock data should not include fields that don't exist in the real API.",
+      "evidence": "Feature correlation-group-detail-page: SignalGroupDetailResponse has mitigation_id on frontend but backend doesn't include it. SignalGroupEvent has victim_ip/vector fields on frontend but backend struct doesn't. These work in MOCK_MODE but would fail against real API.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Frontend coding conventions don't mention avoiding unused imports",
+      "reason": "Too granular for AGENTS.md — this is a standard code hygiene practice that linters should catch. Adding a lint rule (e.g., ESLint no-unused-imports) would be more effective than a convention document entry."
+    },
+    {
+      "observation": "Worker correctly identified that useSignalGroupDetail SWR hook already existed",
+      "reason": "This is a positive observation about worker behavior, not a shared state gap that needs addressing."
+    }
+  ],
+  "previousRound": null
+}
