@@ -18,8 +18,8 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::db::{ListParams, NotificationPreferences};
 use crate::domain::{
-    ActionParams, ActionType, AttackEvent, AttackEventInput, FlowSpecAction, FlowSpecNlri,
-    FlowSpecRule, MatchCriteria, Mitigation, MitigationIntent, MitigationStatus,
+    ActionParams, ActionType, AttackEvent, AttackEventInput, AttackVector, FlowSpecAction,
+    FlowSpecNlri, FlowSpecRule, MatchCriteria, Mitigation, MitigationIntent, MitigationStatus,
 };
 use crate::error::PrefixdError;
 use crate::guardrails::Guardrails;
@@ -3889,6 +3889,377 @@ pub async fn get_signal_group(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(SignalGroupDetailResponse { group, events }))
+}
+
+// ==========================================================================
+// Alertmanager webhook adapter
+// ==========================================================================
+
+/// Alertmanager v4 webhook payload.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AlertmanagerWebhookPayload {
+    /// Payload version (expected "4")
+    pub version: String,
+    /// Group status (firing, resolved)
+    #[serde(default)]
+    pub status: String,
+    /// List of alerts in this notification
+    pub alerts: Vec<AlertmanagerAlert>,
+    /// Labels shared by all alerts in the group
+    #[serde(default)]
+    pub group_labels: HashMap<String, String>,
+    /// Labels common to all alerts in the group
+    #[serde(default)]
+    pub common_labels: HashMap<String, String>,
+    /// Annotations common to all alerts in the group
+    #[serde(default)]
+    pub common_annotations: HashMap<String, String>,
+    /// External Alertmanager URL
+    #[serde(default)]
+    pub external_url: String,
+}
+
+/// A single alert from the Alertmanager webhook.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AlertmanagerAlert {
+    /// Alert status: "firing" or "resolved"
+    pub status: String,
+    /// Alert labels
+    #[serde(default)]
+    pub labels: HashMap<String, String>,
+    /// Alert annotations
+    #[serde(default)]
+    pub annotations: HashMap<String, String>,
+    /// Start time of the alert
+    #[serde(default)]
+    pub starts_at: Option<String>,
+    /// End time of the alert (present when resolved)
+    #[serde(default)]
+    pub ends_at: Option<String>,
+    /// URL for the alert in the generator
+    #[serde(default)]
+    pub generator_url: Option<String>,
+    /// Unique fingerprint for the alert (used for dedup)
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+}
+
+/// Per-alert result in the Alertmanager webhook response.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AlertmanagerAlertResult {
+    /// Index in the alerts array
+    pub index: usize,
+    /// Processing status (processed, duplicate, withdrawn, error)
+    pub status: String,
+    /// Event ID created for this alert (if any)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<Uuid>,
+    /// Mitigation ID affected (if any)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mitigation_id: Option<Uuid>,
+    /// Error message (if processing failed)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Response for the Alertmanager webhook endpoint.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AlertmanagerWebhookResponse {
+    /// Number of alerts successfully processed
+    pub processed: u32,
+    /// Number of alerts that failed processing
+    pub failed: u32,
+    /// Per-alert results
+    pub results: Vec<AlertmanagerAlertResult>,
+}
+
+/// Map Alertmanager severity label to confidence score.
+fn alertmanager_severity_to_confidence(severity: Option<&str>) -> f32 {
+    match severity {
+        Some("critical") => 0.9,
+        Some("warning") => 0.7,
+        Some("info") => 0.5,
+        _ => 0.5,
+    }
+}
+
+/// Extract victim IP from alert labels, stripping port if present.
+/// Checks `victim_ip` first, then `instance` (with port stripping).
+fn extract_victim_ip(labels: &HashMap<String, String>) -> Option<String> {
+    if let Some(ip) = labels.get("victim_ip") {
+        if !ip.is_empty() {
+            return Some(ip.clone());
+        }
+    }
+    if let Some(instance) = labels.get("instance") {
+        if !instance.is_empty() {
+            // Strip port suffix (e.g., "10.0.0.1:9090" → "10.0.0.1")
+            let stripped = if instance.starts_with('[') {
+                // IPv6 with brackets: [::1]:9090
+                instance
+                    .find("]:")
+                    .map(|i| &instance[1..i])
+                    .unwrap_or(instance)
+            } else if instance.contains(':') && instance.matches(':').count() == 1 {
+                // IPv4 with port: 10.0.0.1:9090
+                instance.split(':').next().unwrap_or(instance)
+            } else {
+                // No port (IPv6 without brackets or plain IP)
+                instance
+            };
+            return Some(stripped.to_string());
+        }
+    }
+    None
+}
+
+/// Extract attack vector from alert labels.
+/// Checks `vector` first, then `alertname`.
+fn extract_vector(labels: &HashMap<String, String>) -> Option<String> {
+    if let Some(v) = labels.get("vector") {
+        if !v.is_empty() {
+            return Some(v.clone());
+        }
+    }
+    if let Some(name) = labels.get("alertname") {
+        if !name.is_empty() {
+            return Some(name.clone());
+        }
+    }
+    None
+}
+
+/// Parse an optional i64 from annotations.
+fn parse_optional_i64(annotations: &HashMap<String, String>, key: &str) -> Option<i64> {
+    annotations.get(key).and_then(|v| v.parse::<i64>().ok())
+}
+
+/// Ingest alerts from Alertmanager v4 webhook
+#[utoipa::path(
+    post,
+    path = "/v1/signals/alertmanager",
+    tag = "signals",
+    request_body = AlertmanagerWebhookPayload,
+    responses(
+        (status = 200, description = "Alerts processed", body = AlertmanagerWebhookResponse),
+        (status = 400, description = "Malformed payload"),
+        (status = 401, description = "Authentication required"),
+    )
+)]
+pub async fn ingest_alertmanager(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    ingest_alertmanager_inner(state, auth_session, headers, body).await
+}
+
+async fn ingest_alertmanager_inner(
+    state: Arc<AppState>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<(StatusCode, Json<AlertmanagerWebhookResponse>), AppError> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    if let Err(_status) = require_auth(&state, &auth_session, auth_header) {
+        return Err(AppError(PrefixdError::Unauthorized(
+            "authentication required".into(),
+        )));
+    }
+
+    // Parse body as JSON — return 400 for malformed payloads
+    let payload: AlertmanagerWebhookPayload = serde_json::from_slice(&body).map_err(|e| {
+        AppError(PrefixdError::InvalidRequest(format!(
+            "malformed Alertmanager payload: {}",
+            e
+        )))
+    })?;
+
+    // Validate version
+    if payload.version != "4" {
+        return Err(AppError(PrefixdError::InvalidRequest(format!(
+            "unsupported Alertmanager webhook version: '{}', expected '4'",
+            payload.version
+        ))));
+    }
+
+    // Validate alerts array is not empty
+    if payload.alerts.is_empty() {
+        return Err(AppError(PrefixdError::InvalidRequest(
+            "alerts array is empty".into(),
+        )));
+    }
+
+    let mut results = Vec::with_capacity(payload.alerts.len());
+    let mut processed = 0u32;
+    let mut failed = 0u32;
+
+    for (index, alert) in payload.alerts.into_iter().enumerate() {
+        match process_alertmanager_alert(&state, &alert, index).await {
+            Ok(result) => {
+                processed += 1;
+                results.push(result);
+            }
+            Err(result) => {
+                failed += 1;
+                results.push(result);
+            }
+        }
+    }
+
+    tracing::info!(
+        processed = processed,
+        failed = failed,
+        total = results.len(),
+        "alertmanager webhook processed"
+    );
+
+    Ok((
+        StatusCode::OK,
+        Json(AlertmanagerWebhookResponse {
+            processed,
+            failed,
+            results,
+        }),
+    ))
+}
+
+/// Process a single Alertmanager alert, returning Ok for success or Err for
+/// failure — both carry the per-alert result.
+async fn process_alertmanager_alert(
+    state: &Arc<AppState>,
+    alert: &AlertmanagerAlert,
+    index: usize,
+) -> Result<AlertmanagerAlertResult, AlertmanagerAlertResult> {
+    // Extract vector
+    let vector_str = match extract_vector(&alert.labels) {
+        Some(v) => v,
+        None => {
+            return Err(AlertmanagerAlertResult {
+                index,
+                status: "error".to_string(),
+                event_id: None,
+                mitigation_id: None,
+                error: Some(
+                    "missing vector: neither labels.vector nor labels.alertname present".into(),
+                ),
+            });
+        }
+    };
+
+    // Parse vector
+    let vector: AttackVector = vector_str.parse().unwrap_or(AttackVector::Unknown);
+
+    // Extract victim IP
+    let victim_ip = match extract_victim_ip(&alert.labels) {
+        Some(ip) => ip,
+        None => {
+            return Err(AlertmanagerAlertResult {
+                index,
+                status: "error".to_string(),
+                event_id: None,
+                mitigation_id: None,
+                error: Some(
+                    "missing victim_ip: neither labels.victim_ip nor labels.instance present"
+                        .into(),
+                ),
+            });
+        }
+    };
+
+    // Validate IP
+    if victim_ip.parse::<IpAddr>().is_err() {
+        return Err(AlertmanagerAlertResult {
+            index,
+            status: "error".to_string(),
+            event_id: None,
+            mitigation_id: None,
+            error: Some(format!("invalid IP address: '{}'", victim_ip)),
+        });
+    }
+
+    // Extract optional fields
+    let bps = parse_optional_i64(&alert.annotations, "bps");
+    let pps = parse_optional_i64(&alert.annotations, "pps");
+    let confidence =
+        alertmanager_severity_to_confidence(alert.labels.get("severity").map(|s| s.as_str()));
+
+    // Determine action from alert status
+    let action = if alert.status == "resolved" {
+        "unban".to_string()
+    } else {
+        "ban".to_string()
+    };
+
+    // Use fingerprint as external_event_id for dedup
+    let external_event_id = alert.fingerprint.clone();
+
+    // Parse timestamp
+    let timestamp = alert
+        .starts_at
+        .as_deref()
+        .and_then(|s| s.parse::<DateTime<Utc>>().ok())
+        .unwrap_or_else(Utc::now);
+
+    let input = AttackEventInput {
+        event_id: external_event_id,
+        timestamp,
+        source: "alertmanager".to_string(),
+        victim_ip,
+        vector,
+        bps,
+        pps,
+        top_dst_ports: None,
+        confidence: Some(confidence),
+        action,
+        raw_details: None,
+    };
+
+    // Delegate to the existing event ingestion pipeline
+    match input.action.as_str() {
+        "unban" => match handle_unban(state.clone(), input).await {
+            Ok((_status, Json(resp))) => Ok(AlertmanagerAlertResult {
+                index,
+                status: "withdrawn".to_string(),
+                event_id: Some(resp.event_id),
+                mitigation_id: resp.mitigation_id,
+                error: None,
+            }),
+            Err(AppError(e)) => Ok(AlertmanagerAlertResult {
+                index,
+                status: "withdrawn_noop".to_string(),
+                event_id: None,
+                mitigation_id: None,
+                error: Some(e.to_string()),
+            }),
+        },
+        _ => match handle_ban(state.clone(), input).await {
+            Ok((_status, Json(resp))) => Ok(AlertmanagerAlertResult {
+                index,
+                status: resp.status,
+                event_id: Some(resp.event_id),
+                mitigation_id: resp.mitigation_id,
+                error: None,
+            }),
+            Err(AppError(PrefixdError::DuplicateEvent { .. })) => Ok(AlertmanagerAlertResult {
+                index,
+                status: "duplicate".to_string(),
+                event_id: None,
+                mitigation_id: None,
+                error: None,
+            }),
+            Err(AppError(e)) => Err(AlertmanagerAlertResult {
+                index,
+                status: "error".to_string(),
+                event_id: None,
+                mitigation_id: None,
+                error: Some(e.to_string()),
+            }),
+        },
+    }
 }
 
 fn format_bps(bps: i64) -> String {

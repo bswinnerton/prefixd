@@ -108,6 +108,10 @@ fn api_routes() -> Router<Arc<AppState>> {
         )
         .route("/v1/signal-groups", get(handlers::list_signal_groups))
         .route("/v1/signal-groups/{id}", get(handlers::get_signal_group))
+        .route(
+            "/v1/signals/alertmanager",
+            post(handlers::ingest_alertmanager),
+        )
 }
 
 /// Common layers applied to both production and test routers

@@ -591,6 +591,104 @@ Returns group metadata and all contributing events with source, confidence, and 
 
 ---
 
+## Signal Adapters
+
+Signal adapter endpoints accept webhooks from external detection and telemetry systems, translate their payloads into `AttackEventInput`, and feed them into the standard event ingestion pipeline (including correlation, guardrails, and policy evaluation). See [ADR 019](adr/019-signal-adapter-architecture.md).
+
+### Alertmanager Webhook
+
+```http
+POST /v1/signals/alertmanager
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+Accepts an [Alertmanager v4 webhook payload](https://prometheus.io/docs/alerting/latest/configuration/#webhook_config). Each alert in the `alerts[]` array is processed independently.
+
+**Request:**
+
+```json
+{
+  "version": "4",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "victim_ip": "203.0.113.10",
+        "vector": "udp_flood",
+        "severity": "critical",
+        "alertname": "DDoS_Alert"
+      },
+      "annotations": {
+        "bps": "500000000",
+        "pps": "1000000"
+      },
+      "startsAt": "2026-03-19T10:30:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph",
+      "fingerprint": "abc123def456"
+    }
+  ],
+  "groupLabels": { "alertname": "DDoS_Alert" },
+  "commonLabels": {},
+  "commonAnnotations": {},
+  "externalURL": "http://alertmanager.example.com"
+}
+```
+
+**Label Mapping:**
+
+| AttackEventInput field | Alertmanager source | Fallback |
+|---|---|---|
+| `vector` | `labels.vector` | `labels.alertname` |
+| `victim_ip` | `labels.victim_ip` | `labels.instance` (port stripped) |
+| `bps` | `annotations.bps` (parsed as i64) | None |
+| `pps` | `annotations.pps` (parsed as i64) | None |
+| `confidence` | `labels.severity` → `critical`=0.9, `warning`=0.7, `info`=0.5 | 0.5 |
+| `action` | `alerts[].status` ("resolved" → "unban", else "ban") | "ban" |
+| `event_id` (dedup) | `alerts[].fingerprint` | None |
+| `source` | hardcoded `"alertmanager"` | — |
+
+**Response (200):**
+
+```json
+{
+  "processed": 1,
+  "failed": 0,
+  "results": [
+    {
+      "index": 0,
+      "status": "accepted",
+      "event_id": "550e8400-e29b-41d4-a716-446655440000",
+      "mitigation_id": "660e8400-e29b-41d4-a716-446655440001"
+    }
+  ]
+}
+```
+
+**Per-alert status values:**
+
+| Status | Description |
+|--------|-------------|
+| `accepted` | Event created, mitigation may or may not be created |
+| `extended` | Existing mitigation TTL extended |
+| `duplicate` | Fingerprint already seen (dedup) |
+| `withdrawn` | Resolved alert triggered mitigation withdrawal |
+| `withdrawn_noop` | Resolved alert with no matching active mitigation |
+| `error` | Processing failed for this alert (see `error` field) |
+
+**Error Responses:**
+
+| Status | Reason |
+|--------|--------|
+| 400 | Malformed payload (invalid JSON, wrong version, empty alerts) |
+| 401 | Authentication required |
+
+> **Note:** Alertmanager will not retry 4xx errors, so malformed payloads return 400 to prevent infinite retry loops.
+
+---
+
 ## Safelist
 
 ### List Safelist

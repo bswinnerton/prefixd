@@ -3056,3 +3056,686 @@ async fn test_correlation_incident_report_includes_correlation() {
         "incident report should include source count"
     );
 }
+
+// ==========================================================================
+// Alertmanager webhook adapter tests
+// ==========================================================================
+
+fn make_alertmanager_payload(alerts: &[serde_json::Value]) -> String {
+    serde_json::json!({
+        "version": "4",
+        "status": "firing",
+        "alerts": alerts,
+        "groupLabels": {"alertname": "udp_flood"},
+        "commonLabels": {},
+        "commonAnnotations": {},
+        "externalURL": "http://alertmanager.example.com"
+    })
+    .to_string()
+}
+
+fn make_alert(
+    status: &str,
+    victim_ip: &str,
+    vector: &str,
+    severity: &str,
+    fingerprint: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "status": status,
+        "labels": {
+            "victim_ip": victim_ip,
+            "vector": vector,
+            "severity": severity,
+            "alertname": "DDoS_Alert"
+        },
+        "annotations": {
+            "bps": "100000000",
+            "pps": "50000"
+        },
+        "startsAt": "2026-01-16T14:00:00Z",
+        "endsAt": "0001-01-01T00:00:00Z",
+        "generatorURL": "http://prometheus:9090/graph",
+        "fingerprint": fingerprint
+    })
+}
+
+async fn post_alertmanager(app: &axum::Router, payload: &str) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/alertmanager")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    (status, json)
+}
+
+/// VAL-ADAPT-001: Valid Alertmanager v4 webhook accepted (returns 200, creates events)
+#[tokio::test]
+async fn test_alertmanager_valid_payload() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    let alert = make_alert("firing", "203.0.113.10", "udp_flood", "critical", "abc123");
+    let payload = make_alertmanager_payload(&[alert]);
+
+    let (status, json) = post_alertmanager(&app, &payload).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["processed"], 1);
+    assert_eq!(json["failed"], 0);
+    assert_eq!(json["results"].as_array().unwrap().len(), 1);
+
+    let result = &json["results"][0];
+    assert_eq!(result["index"], 0);
+    assert!(result["event_id"].is_string(), "should have event_id");
+    // With min_sources=1, corroboration met → mitigation created
+    assert!(
+        result["status"].as_str().unwrap() != "error",
+        "should not be error: {:?}",
+        result
+    );
+}
+
+/// VAL-ADAPT-002: Batched alerts processed individually (each creates a separate event)
+#[tokio::test]
+async fn test_alertmanager_batched_alerts() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    let alert1 = make_alert("firing", "203.0.113.10", "udp_flood", "critical", "fp1");
+    let alert2 = make_alert("firing", "203.0.113.10", "udp_flood", "warning", "fp2");
+    let alert3 = make_alert("firing", "203.0.113.10", "udp_flood", "info", "fp3");
+    let payload = make_alertmanager_payload(&[alert1, alert2, alert3]);
+
+    let (status, json) = post_alertmanager(&app, &payload).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["processed"], 3);
+    assert_eq!(json["failed"], 0);
+    let results = json["results"].as_array().unwrap();
+    assert_eq!(results.len(), 3);
+
+    // Each result should have an event_id
+    for (i, r) in results.iter().enumerate() {
+        assert_eq!(r["index"], i);
+        assert!(
+            r["event_id"].is_string(),
+            "alert {} should have event_id",
+            i
+        );
+    }
+}
+
+/// VAL-ADAPT-003: Vector from labels mapping (labels.vector takes priority over alertname)
+#[tokio::test]
+async fn test_alertmanager_vector_from_labels() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    // Test with labels.vector present
+    let alert_with_vector = serde_json::json!({
+        "status": "firing",
+        "labels": {
+            "victim_ip": "203.0.113.10",
+            "vector": "udp_flood",
+            "alertname": "should_not_use_this"
+        },
+        "annotations": {},
+        "startsAt": "2026-01-16T14:00:00Z",
+        "fingerprint": "vec_test_1"
+    });
+    let payload = make_alertmanager_payload(&[alert_with_vector]);
+    let (status, json) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["processed"], 1);
+
+    // Test with only alertname (fallback)
+    let alert_with_alertname = serde_json::json!({
+        "status": "firing",
+        "labels": {
+            "victim_ip": "203.0.113.10",
+            "alertname": "syn_flood"
+        },
+        "annotations": {},
+        "startsAt": "2026-01-16T14:00:00Z",
+        "fingerprint": "vec_test_2"
+    });
+    let payload = make_alertmanager_payload(&[alert_with_alertname]);
+    let (status, json) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["processed"], 1);
+
+    // Test with neither → per-alert error
+    let alert_no_vector = serde_json::json!({
+        "status": "firing",
+        "labels": {
+            "victim_ip": "203.0.113.10"
+        },
+        "annotations": {},
+        "startsAt": "2026-01-16T14:00:00Z",
+        "fingerprint": "vec_test_3"
+    });
+    let payload = make_alertmanager_payload(&[alert_no_vector]);
+    let (status, json) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    // The alert with missing vector should be reported as failed
+    assert_eq!(json["failed"], 1);
+    assert!(
+        json["results"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("missing vector")
+    );
+}
+
+/// VAL-ADAPT-004: Victim IP extraction with port stripping
+#[tokio::test]
+async fn test_alertmanager_victim_ip_port_stripping() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    // labels.victim_ip takes priority
+    let alert_victim_ip = serde_json::json!({
+        "status": "firing",
+        "labels": {
+            "victim_ip": "203.0.113.10",
+            "instance": "10.0.0.1:9090",
+            "vector": "udp_flood"
+        },
+        "annotations": {},
+        "startsAt": "2026-01-16T14:00:00Z",
+        "fingerprint": "ip_test_1"
+    });
+    let payload = make_alertmanager_payload(&[alert_victim_ip]);
+    let (status, json) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["processed"], 1);
+
+    // Fallback to instance with port stripping
+    let alert_instance = serde_json::json!({
+        "status": "firing",
+        "labels": {
+            "instance": "203.0.113.10:9090",
+            "vector": "udp_flood"
+        },
+        "annotations": {},
+        "startsAt": "2026-01-16T14:00:00Z",
+        "fingerprint": "ip_test_2"
+    });
+    let payload = make_alertmanager_payload(&[alert_instance]);
+    let (status, json) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["processed"], 1);
+
+    // Missing both → per-alert error
+    let alert_no_ip = serde_json::json!({
+        "status": "firing",
+        "labels": {
+            "vector": "udp_flood"
+        },
+        "annotations": {},
+        "startsAt": "2026-01-16T14:00:00Z",
+        "fingerprint": "ip_test_3"
+    });
+    let payload = make_alertmanager_payload(&[alert_no_ip]);
+    let (status, json) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["failed"], 1);
+    assert!(
+        json["results"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("missing victim_ip")
+    );
+}
+
+/// VAL-ADAPT-005: BPS/PPS from annotations parsed as optional i64
+#[tokio::test]
+async fn test_alertmanager_bps_pps_annotations() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    // With valid bps and pps
+    let alert_with_metrics = serde_json::json!({
+        "status": "firing",
+        "labels": {
+            "victim_ip": "203.0.113.10",
+            "vector": "udp_flood"
+        },
+        "annotations": {
+            "bps": "500000000",
+            "pps": "1000000"
+        },
+        "startsAt": "2026-01-16T14:00:00Z",
+        "fingerprint": "metrics_test_1"
+    });
+    let payload = make_alertmanager_payload(&[alert_with_metrics]);
+    let (status, json) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["processed"], 1);
+
+    // With non-numeric values (should be treated as None, not error)
+    let alert_bad_metrics = serde_json::json!({
+        "status": "firing",
+        "labels": {
+            "victim_ip": "203.0.113.10",
+            "vector": "udp_flood"
+        },
+        "annotations": {
+            "bps": "not_a_number",
+            "pps": "also_bad"
+        },
+        "startsAt": "2026-01-16T14:00:00Z",
+        "fingerprint": "metrics_test_2"
+    });
+    let payload = make_alertmanager_payload(&[alert_bad_metrics]);
+    let (status, json) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["processed"], 1); // Should still succeed
+
+    // With missing annotations
+    let alert_no_metrics = serde_json::json!({
+        "status": "firing",
+        "labels": {
+            "victim_ip": "203.0.113.10",
+            "vector": "udp_flood"
+        },
+        "annotations": {},
+        "startsAt": "2026-01-16T14:00:00Z",
+        "fingerprint": "metrics_test_3"
+    });
+    let payload = make_alertmanager_payload(&[alert_no_metrics]);
+    let (status, json) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["processed"], 1);
+}
+
+/// VAL-ADAPT-006: Severity to confidence mapping
+#[tokio::test]
+async fn test_alertmanager_severity_confidence_mapping() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    // Test each severity level
+    for (severity, _expected_confidence, fp) in [
+        ("critical", 0.9, "sev_1"),
+        ("warning", 0.7, "sev_2"),
+        ("info", 0.5, "sev_3"),
+    ] {
+        let alert = serde_json::json!({
+            "status": "firing",
+            "labels": {
+                "victim_ip": "203.0.113.10",
+                "vector": "udp_flood",
+                "severity": severity
+            },
+            "annotations": {},
+            "startsAt": "2026-01-16T14:00:00Z",
+            "fingerprint": fp
+        });
+        let payload = make_alertmanager_payload(&[alert]);
+        let (status, json) = post_alertmanager(&app, &payload).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "severity={} should succeed",
+            severity
+        );
+        assert_eq!(
+            json["processed"], 1,
+            "severity={} should be processed",
+            severity
+        );
+    }
+
+    // Missing severity → defaults to 0.5 (same as "info")
+    let alert_no_severity = serde_json::json!({
+        "status": "firing",
+        "labels": {
+            "victim_ip": "203.0.113.10",
+            "vector": "udp_flood"
+        },
+        "annotations": {},
+        "startsAt": "2026-01-16T14:00:00Z",
+        "fingerprint": "sev_4"
+    });
+    let payload = make_alertmanager_payload(&[alert_no_severity]);
+    let (status, json) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["processed"], 1);
+}
+
+/// VAL-ADAPT-007: Resolved alerts trigger withdraw (action="unban")
+#[tokio::test]
+async fn test_alertmanager_resolved_alerts_trigger_withdraw() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    // First fire an alert to create a mitigation
+    let fire_alert = make_alert(
+        "firing",
+        "203.0.113.10",
+        "udp_flood",
+        "critical",
+        "resolve_fp",
+    );
+    let payload = make_alertmanager_payload(&[fire_alert]);
+    let (status, json) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["processed"], 1);
+
+    // Now send resolved alert with same fingerprint
+    let resolve_alert = make_alert(
+        "resolved",
+        "203.0.113.10",
+        "udp_flood",
+        "critical",
+        "resolve_fp",
+    );
+    let payload = make_alertmanager_payload(&[resolve_alert]);
+    let (status, json) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["processed"], 1);
+    // The result should be withdrawal-related
+    let result = &json["results"][0];
+    assert!(
+        result["status"].as_str().unwrap().starts_with("withdrawn"),
+        "resolved alert should trigger withdraw: {:?}",
+        result
+    );
+}
+
+/// VAL-ADAPT-008: Fingerprint deduplication (same source + fingerprint = duplicate)
+#[tokio::test]
+async fn test_alertmanager_fingerprint_dedup() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    let alert = make_alert(
+        "firing",
+        "203.0.113.10",
+        "udp_flood",
+        "critical",
+        "dedup_fp",
+    );
+    let payload = make_alertmanager_payload(&[alert.clone()]);
+
+    // First request
+    let (status1, json1) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status1, StatusCode::OK);
+    assert_eq!(json1["processed"], 1);
+
+    // Second request with same fingerprint → duplicate
+    let payload2 = make_alertmanager_payload(&[alert]);
+    let (status2, json2) = post_alertmanager(&app, &payload2).await;
+    assert_eq!(status2, StatusCode::OK);
+    // Duplicate should be detected
+    let result = &json2["results"][0];
+    assert_eq!(
+        result["status"].as_str().unwrap(),
+        "duplicate",
+        "second submission of same fingerprint should be duplicate"
+    );
+}
+
+/// VAL-ADAPT-009: Malformed payloads return 400 (not 500)
+#[tokio::test]
+async fn test_alertmanager_malformed_payload_returns_400() {
+    let app = setup_app().await;
+
+    // Invalid JSON
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/alertmanager")
+                .header("content-type", "application/json")
+                .body(Body::from("not valid json"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Wrong version
+    let wrong_version = serde_json::json!({
+        "version": "3",
+        "status": "firing",
+        "alerts": [{"status": "firing", "labels": {}, "annotations": {}}],
+        "groupLabels": {},
+        "commonLabels": {},
+        "commonAnnotations": {},
+        "externalURL": ""
+    })
+    .to_string();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/alertmanager")
+                .header("content-type", "application/json")
+                .body(Body::from(wrong_version))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Missing required fields (alerts array)
+    let missing_alerts = serde_json::json!({
+        "version": "4",
+        "status": "firing"
+    })
+    .to_string();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/alertmanager")
+                .header("content-type", "application/json")
+                .body(Body::from(missing_alerts))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Empty alerts array
+    let empty_alerts = serde_json::json!({
+        "version": "4",
+        "status": "firing",
+        "alerts": [],
+        "groupLabels": {},
+        "commonLabels": {},
+        "commonAnnotations": {},
+        "externalURL": ""
+    })
+    .to_string();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/alertmanager")
+                .header("content-type", "application/json")
+                .body(Body::from(empty_alerts))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// VAL-ADAPT-010: Authentication required (401 without auth)
+#[tokio::test]
+async fn test_alertmanager_auth_required() {
+    let repo: Arc<dyn RepositoryTrait> = Arc::new(MockRepository::new());
+    let announcer = Arc::new(MockAnnouncer::new());
+    let mut settings = test_settings_with_correlation(true, 1, 0.5);
+    settings.http.auth = prefixd::config::AuthConfig {
+        mode: prefixd::config::AuthMode::Bearer,
+        bearer_token_env: Some("TEST_PREFIXD_TOKEN".to_string()),
+        ldap: None,
+        radius: None,
+    };
+    unsafe {
+        std::env::set_var("TEST_PREFIXD_TOKEN", "test-secret-token-123");
+    }
+
+    let state = AppState::new(
+        settings,
+        test_inventory(),
+        test_playbooks(),
+        repo,
+        announcer,
+        std::path::PathBuf::from("."),
+    )
+    .expect("failed to create app state");
+
+    let app = create_test_router(state);
+
+    let alert = make_alert("firing", "203.0.113.10", "udp_flood", "critical", "auth_fp");
+    let payload = make_alertmanager_payload(&[alert]);
+
+    // Without auth → 401
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/alertmanager")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    // With auth → 200
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/signals/alertmanager")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer test-secret-token-123")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// VAL-ADAPT-018: Partial batch failure — mixed valid/invalid alerts
+#[tokio::test]
+async fn test_alertmanager_partial_batch_failure() {
+    let app = setup_app_correlation(true, 1, 0.5).await;
+
+    let valid_alert = make_alert(
+        "firing",
+        "203.0.113.10",
+        "udp_flood",
+        "critical",
+        "partial_1",
+    );
+    // Invalid: missing both victim_ip and instance
+    let invalid_alert = serde_json::json!({
+        "status": "firing",
+        "labels": {
+            "vector": "udp_flood"
+        },
+        "annotations": {},
+        "startsAt": "2026-01-16T14:00:00Z",
+        "fingerprint": "partial_2"
+    });
+    let valid_alert2 = make_alert(
+        "firing",
+        "203.0.113.10",
+        "udp_flood",
+        "warning",
+        "partial_3",
+    );
+    let payload = make_alertmanager_payload(&[valid_alert, invalid_alert, valid_alert2]);
+
+    let (status, json) = post_alertmanager(&app, &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["processed"], 2);
+    assert_eq!(json["failed"], 1);
+
+    let results = json["results"].as_array().unwrap();
+    assert_eq!(results.len(), 3);
+    // First and third should succeed
+    assert!(
+        results[0]["error"].is_null(),
+        "first alert should succeed: {:?}",
+        results[0]
+    );
+    // Second should have error
+    assert!(
+        results[1]["error"].is_string(),
+        "second alert should fail: {:?}",
+        results[1]
+    );
+    // Third should succeed
+    assert!(
+        results[2]["error"].is_null(),
+        "third alert should succeed: {:?}",
+        results[2]
+    );
+}
+
+/// VAL-ENGINE-034: OpenAPI spec includes alertmanager signal endpoint
+#[tokio::test]
+async fn test_openapi_includes_alertmanager() {
+    let app = setup_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/openapi.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let spec: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let paths = spec["paths"].as_object().unwrap();
+    assert!(
+        paths.contains_key("/v1/signals/alertmanager"),
+        "OpenAPI spec should include /v1/signals/alertmanager"
+    );
+
+    let schemas = spec["components"]["schemas"].as_object().unwrap();
+    assert!(
+        schemas.contains_key("AlertmanagerWebhookPayload"),
+        "OpenAPI spec should include AlertmanagerWebhookPayload schema"
+    );
+    assert!(
+        schemas.contains_key("AlertmanagerWebhookResponse"),
+        "OpenAPI spec should include AlertmanagerWebhookResponse schema"
+    );
+    assert!(
+        schemas.contains_key("AlertmanagerAlert"),
+        "OpenAPI spec should include AlertmanagerAlert schema"
+    );
+    assert!(
+        schemas.contains_key("AlertmanagerAlertResult"),
+        "OpenAPI spec should include AlertmanagerAlertResult schema"
+    );
+}

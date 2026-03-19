@@ -16,11 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Signal group expiry** — Reconciliation loop expires open signal groups whose time window has elapsed, transitioning them to `expired` status.
 - **Database migration 007** — `signal_groups` and `signal_group_events` tables, `mitigations.signal_group_id` nullable FK column with indexes.
 - **Correlation configuration** — New `correlation` section in `prefixd.yaml` with `enabled`, `window_seconds`, `min_sources`, `confidence_threshold`, `sources` (per-source weight/type), and `default_weight`. Per-playbook `correlation` overrides in `playbooks.yaml`. Hot-reloadable via `POST /v1/config/reload`.
+- **Alertmanager webhook adapter** — `POST /v1/signals/alertmanager` accepts Alertmanager v4 webhook payloads. Maps labels/annotations to attack event fields (vector, victim_ip, bps/pps, severity→confidence). Handles batched alerts with per-alert results, resolved alerts (→ withdraw), fingerprint dedup. Returns 400 for malformed payloads (Alertmanager won't retry 4xx). See [ADR 019](docs/adr/019-signal-adapter-architecture.md).
 
 ### Changed
 
 - Backend unit tests increased from 126 to 173 (correlation engine, config parsing, corroboration, explainability)
-- Integration tests increased from 44 to 68 (signal group CRUD, correlation flow, concurrent event handling)
+- Integration tests increased from 44 to 80 (signal group CRUD, correlation flow, concurrent event handling, Alertmanager adapter)
 - Postgres integration tests increased from 9 to 15 (signal group operations)
 
 ## [0.13.0] - 2026-03-19
