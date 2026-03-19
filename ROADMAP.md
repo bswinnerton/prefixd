@@ -167,7 +167,7 @@ Target: Validated with real routers, stable API, production-proven. Operators tr
 - [ ] Monthly GoBGP baseline bump policy (track upstream releases, especially parser hardening like v3.35.0)
 - [x] CVE gate in CI (cargo audit + bun audit gate Docker publishing; fail build on known vulnerabilities)
 - [x] SBOM generation (CycloneDX JSON, published as release artifact on version tags)
-- [ ] FlowSpec NLRI parser fuzz/regression tests (protect against malformed BGP update edge cases)
+- [x] FlowSpec NLRI parser fuzz/regression tests (proptest in CI + cargo-fuzz for offline coverage)
 
 ### Stability (Done)
 

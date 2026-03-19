@@ -1,0 +1,29 @@
+[package]
+name = "prefixd-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.prefixd]
+path = ".."
+
+[[bin]]
+name = "fuzz_prefix_parse"
+path = "fuzz_targets/fuzz_prefix_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_nlri_decode"
+path = "fuzz_targets/fuzz_nlri_decode.rs"
+test = false
+doc = false
+bench = false

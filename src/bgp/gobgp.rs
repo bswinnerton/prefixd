@@ -343,7 +343,7 @@ impl GoBgpAnnouncer {
         Ok(pattrs)
     }
 
-    fn parse_prefix_v4(&self, prefix: &str) -> Result<(u32, u8)> {
+    pub fn parse_prefix_v4(&self, prefix: &str) -> Result<(u32, u8)> {
         let parts: Vec<&str> = prefix.split('/').collect();
         let ip = Ipv4Addr::from_str(parts[0]).map_err(|_| {
             PrefixdError::InvalidPrefix(format!("invalid IPv4 in prefix: {}", prefix))
@@ -354,7 +354,7 @@ impl GoBgpAnnouncer {
         Ok((u32::from(ip), len))
     }
 
-    fn parse_prefix_v6(&self, prefix: &str) -> Result<(Ipv6Addr, u8)> {
+    pub fn parse_prefix_v6(&self, prefix: &str) -> Result<(Ipv6Addr, u8)> {
         let parts: Vec<&str> = prefix.split('/').collect();
         let ip = Ipv6Addr::from_str(parts[0]).map_err(|_| {
             PrefixdError::InvalidPrefix(format!("invalid IPv6 in prefix: {}", prefix))
@@ -587,7 +587,7 @@ impl GoBgpAnnouncer {
 
     /// Decode FlowSpecNLRI from typed Nlri and extract match criteria
     /// GoBGP v4 uses oneof instead of Any for type safety
-    fn decode_flowspec_nlri(&self, nlri_wrapper: &Nlri) -> Result<FlowSpecNlri> {
+    pub fn decode_flowspec_nlri(&self, nlri_wrapper: &Nlri) -> Result<FlowSpecNlri> {
         // Extract FlowSpec from the oneof
         let proto_nlri = match &nlri_wrapper.nlri {
             Some(nlri::Nlri::FlowSpec(fs)) => fs,
@@ -1134,5 +1134,171 @@ mod tests {
         let result = announcer.parse_flowspec_path(&path);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("no NLRI"));
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn make_announcer() -> GoBgpAnnouncer {
+        GoBgpAnnouncer::new("127.0.0.1:50051".to_string())
+    }
+
+    // Strategy: valid IPv4 prefix string
+    fn valid_ipv4_prefix() -> impl Strategy<Value = String> {
+        (0u8..=255, 0u8..=255, 0u8..=255, 0u8..=255, 0u8..=32)
+            .prop_map(|(a, b, c, d, len)| format!("{}.{}.{}.{}/{}", a, b, c, d, len))
+    }
+
+    // Strategy: valid IPv6 prefix string
+    fn valid_ipv6_prefix() -> impl Strategy<Value = String> {
+        (proptest::collection::vec(any::<u16>(), 8), 0u8..=128).prop_map(|(segs, len)| {
+            let addr = format!(
+                "{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}",
+                segs[0], segs[1], segs[2], segs[3], segs[4], segs[5], segs[6], segs[7]
+            );
+            format!("{}/{}", addr, len)
+        })
+    }
+
+    // Strategy: valid FlowSpecNlri with IPv4
+    fn valid_flowspec_nlri_v4() -> impl Strategy<Value = FlowSpecNlri> {
+        (
+            valid_ipv4_prefix(),
+            proptest::option::of(any::<u8>()),
+            proptest::collection::vec(1u16..=65535, 0..=8),
+        )
+            .prop_map(|(dst_prefix, protocol, dst_ports)| FlowSpecNlri {
+                dst_prefix,
+                protocol,
+                dst_ports,
+            })
+    }
+
+    // Strategy: valid FlowSpecNlri with IPv6
+    fn valid_flowspec_nlri_v6() -> impl Strategy<Value = FlowSpecNlri> {
+        (
+            valid_ipv6_prefix(),
+            proptest::option::of(any::<u8>()),
+            proptest::collection::vec(1u16..=65535, 0..=8),
+        )
+            .prop_map(|(dst_prefix, protocol, dst_ports)| FlowSpecNlri {
+                dst_prefix,
+                protocol,
+                dst_ports,
+            })
+    }
+
+    // Strategy: FlowSpecAction
+    fn flowspec_action() -> impl Strategy<Value = FlowSpecAction> {
+        prop_oneof![
+            Just(FlowSpecAction {
+                action_type: ActionType::Discard,
+                rate_bps: None,
+            }),
+            (1u64..=100_000_000_000).prop_map(|rate| FlowSpecAction {
+                action_type: ActionType::Police,
+                rate_bps: Some(rate),
+            }),
+        ]
+    }
+
+    // ---- Prefix parsing: arbitrary strings must not panic ----
+
+    proptest! {
+        #[test]
+        fn parse_prefix_v4_never_panics(s in "\\PC{0,100}") {
+            let announcer = make_announcer();
+            let _ = announcer.parse_prefix_v4(&s);
+        }
+
+        #[test]
+        fn parse_prefix_v6_never_panics(s in "\\PC{0,200}") {
+            let announcer = make_announcer();
+            let _ = announcer.parse_prefix_v6(&s);
+        }
+
+        // ---- Valid prefixes roundtrip ----
+
+        #[test]
+        fn valid_ipv4_prefix_parses(prefix in valid_ipv4_prefix()) {
+            let announcer = make_announcer();
+            let result = announcer.parse_prefix_v4(&prefix);
+            prop_assert!(result.is_ok(), "valid IPv4 prefix should parse: {}", prefix);
+        }
+
+        #[test]
+        fn valid_ipv6_prefix_parses(prefix in valid_ipv6_prefix()) {
+            let announcer = make_announcer();
+            let result = announcer.parse_prefix_v6(&prefix);
+            prop_assert!(result.is_ok(), "valid IPv6 prefix should parse: {}", prefix);
+        }
+
+        // ---- NLRI construction + decode roundtrip ----
+
+        #[test]
+        fn nlri_v4_roundtrip(nlri in valid_flowspec_nlri_v4()) {
+            let announcer = make_announcer();
+            let proto = announcer.build_flowspec_nlri_v4(&nlri).unwrap();
+
+            let wrapper = Nlri {
+                nlri: Some(nlri::Nlri::FlowSpec(proto)),
+            };
+            let parsed = announcer.decode_flowspec_nlri(&wrapper).unwrap();
+
+            prop_assert_eq!(&parsed.dst_prefix, &nlri.dst_prefix);
+            prop_assert_eq!(parsed.protocol, nlri.protocol);
+            prop_assert_eq!(&parsed.dst_ports, &nlri.dst_ports);
+        }
+
+        #[test]
+        fn nlri_v6_roundtrip(nlri in valid_flowspec_nlri_v6()) {
+            let announcer = make_announcer();
+            let proto = announcer.build_flowspec_nlri_v6(&nlri).unwrap();
+
+            let wrapper = Nlri {
+                nlri: Some(nlri::Nlri::FlowSpec(proto)),
+            };
+            let parsed = announcer.decode_flowspec_nlri(&wrapper).unwrap();
+
+            prop_assert_eq!(&parsed.dst_prefix, &nlri.dst_prefix);
+            prop_assert_eq!(parsed.protocol, nlri.protocol);
+            prop_assert_eq!(&parsed.dst_ports, &nlri.dst_ports);
+        }
+
+        // ---- Full path roundtrip preserves nlri_hash ----
+
+        #[test]
+        fn flowspec_path_v4_roundtrip_preserves_hash(
+            nlri in valid_flowspec_nlri_v4(),
+            action in flowspec_action(),
+        ) {
+            let announcer = make_announcer();
+            let rule = FlowSpecRule::new(nlri, action);
+            let path = announcer.build_flowspec_path(&rule).unwrap();
+            let parsed = announcer.parse_flowspec_path(&path).unwrap();
+
+            prop_assert_eq!(parsed.nlri_hash(), rule.nlri_hash());
+            prop_assert_eq!(&parsed.nlri.dst_prefix, &rule.nlri.dst_prefix);
+            prop_assert_eq!(parsed.nlri.protocol, rule.nlri.protocol);
+            prop_assert_eq!(&parsed.nlri.dst_ports, &rule.nlri.dst_ports);
+        }
+
+        // ---- Action roundtrip ----
+
+        #[test]
+        fn action_roundtrip_preserves_type(action in flowspec_action()) {
+            let announcer = make_announcer();
+            let pattrs = announcer.build_path_attributes(&[action.clone()]).unwrap();
+            let parsed = announcer.parse_flowspec_action(&pattrs).unwrap();
+
+            prop_assert_eq!(parsed.action_type, action.action_type);
+            match action.action_type {
+                ActionType::Discard => prop_assert_eq!(parsed.rate_bps, None),
+                ActionType::Police => prop_assert!(parsed.rate_bps.is_some()),
+            }
+        }
     }
 }
