@@ -87,6 +87,10 @@ export function useKeyboardShortcuts({ onCommandPalette, onToggleSidebar, onTogg
             e.preventDefault()
             router.push("/events")
             break
+          case "r":
+            e.preventDefault()
+            router.push("/correlation")
+            break
           case "a":
             e.preventDefault()
             router.push("/audit-log")

@@ -1,6 +1,7 @@
 "use client"
 
 import useSWR from "swr"
+import useSWRInfinite from "swr/infinite"
 import * as api from "@/lib/api"
 import * as mockData from "@/lib/mock-api-data"
 
@@ -247,4 +248,118 @@ export function useNotificationPreferences() {
       : api.getNotificationPreferences,
     { refreshInterval: 0, revalidateOnFocus: !MOCK_MODE }
   )
+}
+
+// Signal Groups (Correlation Engine)
+
+export function useSignalGroups(params?: {
+  status?: string
+  vector?: string
+  limit?: number
+  start?: string
+  end?: string
+}) {
+  const key = params ? ["signal-groups", JSON.stringify(params)] : "signal-groups"
+
+  const fetcher = MOCK_MODE
+    ? async (): Promise<api.SignalGroupsResponse> => {
+        let result = mockData.mockSignalGroups
+        if (params?.status) {
+          result = result.filter(g => g.status === params.status)
+        }
+        if (params?.vector) {
+          result = result.filter(g => g.vector === params.vector)
+        }
+        return { groups: result, count: result.length, next_cursor: null, has_more: false }
+      }
+    : () => api.getSignalGroups(params)
+
+  return useSWR(key, fetcher, {
+    refreshInterval: MOCK_MODE ? 0 : REFRESH_INTERVAL,
+    revalidateOnFocus: !MOCK_MODE,
+  })
+}
+
+export function useSignalGroupsPaginated(params?: {
+  status?: string
+  vector?: string
+  limit?: number
+  start?: string
+  end?: string
+}) {
+  const limit = params?.limit ?? 25
+
+  const getKey = (pageIndex: number, previousPageData: api.SignalGroupsResponse | null) => {
+    if (previousPageData && !previousPageData.has_more) return null
+    const cursor = previousPageData?.next_cursor ?? undefined
+    return ["signal-groups-page", JSON.stringify({ ...params, limit, cursor })]
+  }
+
+  const fetcher = MOCK_MODE
+    ? async (): Promise<api.SignalGroupsResponse> => {
+        let result = mockData.mockSignalGroups
+        if (params?.status) {
+          result = result.filter(g => g.status === params.status)
+        }
+        if (params?.vector) {
+          result = result.filter(g => g.vector === params.vector)
+        }
+        return { groups: result, count: result.length, next_cursor: null, has_more: false }
+      }
+    : async (_key: string[]): Promise<api.SignalGroupsResponse> => {
+        const parsedParams = JSON.parse(_key[1])
+        return api.getSignalGroups(parsedParams)
+      }
+
+  return useSWRInfinite(getKey, fetcher, {
+    revalidateOnFocus: !MOCK_MODE,
+  })
+}
+
+export function useSignalGroupDetail(id: string | null) {
+  const fetcher = MOCK_MODE
+    ? async () => {
+        const group = mockData.mockSignalGroups.find(g => g.group_id === id)
+        if (!group) throw new Error("Not found")
+        return {
+          ...group,
+          events: mockData.mockSignalGroupEvents.filter(e => e.group_id === id),
+        } as api.SignalGroupDetailResponse
+      }
+    : () => api.getSignalGroupDetail(id!)
+
+  return useSWR(
+    id ? ["signal-group", id] : null,
+    fetcher,
+    {
+      refreshInterval: MOCK_MODE ? 0 : REFRESH_INTERVAL,
+    }
+  )
+}
+
+export function useSignalSources() {
+  return useSWR(
+    "signal-sources",
+    MOCK_MODE ? async () => mockData.mockSignalSources : api.getSignalSources,
+    {
+      refreshInterval: MOCK_MODE ? 0 : 30000,
+      revalidateOnFocus: !MOCK_MODE,
+    }
+  )
+}
+
+export function useCorrelationConfig() {
+  return useSWR(
+    "correlation-config",
+    MOCK_MODE ? async () => mockData.mockCorrelationConfig : api.getCorrelationConfig,
+    {
+      refreshInterval: 0,
+      revalidateOnFocus: !MOCK_MODE,
+    }
+  )
+}
+
+export function useOpenSignalGroupCount() {
+  const { data } = useSignalGroups({ status: "open", limit: 1 })
+  return data?.count ?? 0
 }
