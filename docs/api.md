@@ -687,6 +687,154 @@ Accepts an [Alertmanager v4 webhook payload](https://prometheus.io/docs/alerting
 
 > **Note:** Alertmanager will not retry 4xx errors, so malformed payloads return 400 to prevent infinite retry loops.
 
+**Alertmanager Configuration Snippet:**
+
+To point Alertmanager at prefixd, add a webhook receiver to your `alertmanager.yml`:
+
+```yaml
+receivers:
+  - name: 'prefixd'
+    webhook_configs:
+      - url: 'http://prefixd.example.com/v1/signals/alertmanager'
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: '<your-api-token>'
+        send_resolved: true
+```
+
+### FastNetMon Webhook
+
+```http
+POST /v1/signals/fastnetmon
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+Accepts FastNetMon's native JSON notify payload. Extracts attack vector from traffic breakdown, maps the `action` field to confidence via configurable mapping, and feeds the event into the standard ingestion pipeline (including correlation, guardrails, and policy evaluation).
+
+**Request:**
+
+```json
+{
+  "action": "ban",
+  "ip": "203.0.113.10",
+  "alert_scope": "host",
+  "attack_details": {
+    "attack_uuid": "550e8400-e29b-41d4-a716-446655440000",
+    "attack_severity": "high",
+    "attack_detection_source": "automatic",
+    "incoming_udp_pps": 500000,
+    "incoming_udp_traffic_bits": 4000000000,
+    "incoming_tcp_pps": 100,
+    "incoming_tcp_traffic_bits": 800000,
+    "incoming_syn_tcp_pps": 0,
+    "incoming_icmp_pps": 0,
+    "total_incoming_pps": 500100,
+    "total_incoming_traffic_bits": 4000800000,
+    "total_incoming_flows": 12000
+  }
+}
+```
+
+**Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `action` | string | yes | `"ban"`, `"unban"`, `"partial_block"`, or `"alert"` |
+| `ip` | string | yes | Victim IPv4 address under attack |
+| `alert_scope` | string | no | Scope: `"host"` or `"total"` |
+| `attack_details` | object | no | Traffic metrics and classification (see below) |
+
+**Attack Details Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `attack_uuid` | string | Unique attack ID (used as `external_event_id` for dedup) |
+| `attack_severity` | string | Severity: `"low"`, `"middle"`, `"high"` |
+| `attack_detection_source` | string | How detected: `"automatic"`, `"manual"` |
+| `incoming_udp_pps` | integer | UDP packets per second |
+| `incoming_udp_traffic_bits` | integer | UDP bits per second |
+| `incoming_tcp_pps` | integer | TCP packets per second |
+| `incoming_syn_tcp_pps` | integer | SYN TCP packets per second |
+| `incoming_icmp_pps` | integer | ICMP packets per second |
+| `total_incoming_pps` | integer | Total incoming packets per second |
+| `total_incoming_traffic_bits` | integer | Total incoming bits per second |
+| `total_incoming_flows` | integer | Total incoming flow count |
+
+**Confidence Mapping:**
+
+The `action` field maps to a confidence score (configurable in correlation config):
+
+| Action | Default Confidence |
+|--------|--------------------|
+| `ban` | 0.9 |
+| `partial_block` | 0.7 |
+| `alert` | 0.5 |
+| Other | 0.5 |
+
+Override per-source confidence in `prefixd.yaml`:
+
+```yaml
+correlation:
+  sources:
+    fastnetmon:
+      weight: 1.0
+      type: detector
+      confidence_mapping:
+        ban: 0.95
+        partial_block: 0.8
+        alert: 0.4
+```
+
+**Vector Classification:**
+
+The attack vector is automatically classified from the traffic breakdown in `attack_details`:
+
+- **UDP dominant** → `udp_flood`
+- **SYN TCP dominant** (>60% of TCP PPS) → `syn_flood`
+- **ICMP dominant** → `icmp_flood`
+- **Other TCP** → `ack_flood`
+- **No details** → `unknown`
+
+**Response (202 Accepted):**
+
+```json
+{
+  "event_id": "550e8400-e29b-41d4-a716-446655440000",
+  "external_event_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "accepted",
+  "mitigation_id": "7f72a903-63d1-4a4a-a5db-0517e0a7df1d"
+}
+```
+
+The response uses the same `EventResponse` shape as `POST /v1/events` for compatibility with existing scripts.
+
+**Error Responses:**
+
+| Status | Reason |
+|--------|--------|
+| 400 | Malformed payload (invalid JSON, missing `ip` or `action`, invalid IP) |
+| 401 | Authentication required |
+| 422 | Guardrail rejection (safelist, quotas, prefix length) |
+
+**FastNetMon Configuration Snippet:**
+
+To configure FastNetMon Community to use prefixd, set the notify script in `/etc/fastnetmon.conf`:
+
+```
+notify_script_path = /opt/prefixd/scripts/prefixd-fastnetmon.sh
+```
+
+Or configure FastNetMon Advanced to use the webhook endpoint directly:
+
+```
+notify_script_format = json
+notify_script_path = /usr/bin/curl -s -X POST http://prefixd.example.com/v1/signals/fastnetmon -H 'Content-Type: application/json' -H 'Authorization: Bearer <token>' -d @-
+```
+
+See `docs/detectors/fastnetmon.md` for a complete integration guide.
+
 ---
 
 ## Safelist
