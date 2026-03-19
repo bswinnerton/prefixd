@@ -45,6 +45,7 @@ src/
 ├── auth/              # AuthBackend (axum-login), mode-aware auth (none/bearer/credentials/mtls)
 ├── bgp/               # FlowSpecAnnouncer trait, GoBGP gRPC client, mock
 ├── config/            # Settings, Inventory, Playbooks (YAML parsing)
+├── correlation/       # Multi-signal correlation engine (config, engine, signal groups)
 ├── db/                # PostgreSQL repository with sqlx + MockRepository for testing
 ├── domain/            # Core types: AttackEvent, Mitigation, FlowSpecRule
 ├── guardrails/        # Validation, quotas, safelist protection
@@ -99,10 +100,10 @@ docs/
 └── adr/                       # 17 Architecture Decision Records (001-017)
 grafana/                       # Prometheus config, Grafana provisioning, dashboard JSON
 tests/
-├── integration.rs             # 44 integration tests (health, config, mitigations, events, filters, bulk withdraw, cursor pagination, bulk acknowledge, per-dest routing, preferences, event batch, incident reports)
+├── integration.rs             # 68 integration tests (health, config, mitigations, events, filters, bulk withdraw, cursor pagination, bulk acknowledge, per-dest routing, preferences, event batch, incident reports, signal groups, correlation)
 ├── integration_e2e.rs         # 6 end-to-end tests (ignored without Docker)
 ├── integration_gobgp.rs       # 8 tests (GoBGP integration, ignored without GoBGP)
-└── integration_postgres.rs    # 9 integration tests (Postgres-backed flows)
+└── integration_postgres.rs    # 15 integration tests (Postgres-backed flows, signal groups)
 ```
 
 ## Key Design Decisions
@@ -157,12 +158,15 @@ See `docs/adr/` for all 17 Architecture Decision Records.
 - `GET/POST /v1/operators` - User management (admin only)
 - `DELETE /v1/operators/{id}` - Delete user (admin only)
 - `PUT /v1/operators/{id}/password` - Change password (admin only)
+- `GET /v1/signal-groups` - List signal groups (with pagination, status/vector/date filters)
+- `GET /v1/signal-groups/{id}` - Signal group detail with contributing events
 
 ## Data Flow
 
 1. **Event Ingestion** (`POST /v1/events`)
    - Validate input, check duplicates
    - Lookup IP context from inventory
+   - Correlate signals (if `correlation.enabled`): find/create signal group, check corroboration
    - Evaluate playbook for vector
    - Check guardrails (TTL, /32, quotas, safelist)
    - Create or extend mitigation
@@ -184,10 +188,10 @@ See `docs/adr/` for all 17 Architecture Decision Records.
 ## Testing
 
 ```bash
-# Backend unit tests (126 tests)
+# Backend unit tests (173 tests)
 cargo test
 
-# All backend tests including integration (179 runnable: 126 unit + 44 integration + 9 postgres; 14 ignored requiring GoBGP/Docker)
+# All backend tests including integration (256 runnable: 173 unit + 68 integration + 15 postgres; 14 ignored requiring GoBGP/Docker)
 cargo test --features test-utils
 
 # Lint
@@ -246,7 +250,7 @@ Completed:
 - 17 Architecture Decision Records
 - CLI tool (prefixdctl) for all API operations
 - OpenAPI spec with utoipa annotations
-- 126 backend unit tests + 53 integration tests (+ 14 ignored requiring GoBGP/Docker)
+- 173 backend unit tests + 68 integration + 15 postgres tests (+ 14 ignored requiring GoBGP/Docker)
 - Vitest + Testing Library frontend test infrastructure (34 tests)
 
 ## Code Conventions

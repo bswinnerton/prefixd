@@ -262,6 +262,98 @@ safelist:
     - "192.168.0.0/16"   # RFC1918
 ```
 
+### Correlation
+
+The multi-signal correlation engine groups related attack events from multiple detection sources and uses corroboration to make high-confidence mitigation decisions.
+
+When `enabled` is false (the default), the correlation engine is bypassed and events follow the direct path to policy evaluation — identical to pre-correlation behavior.
+
+```yaml
+correlation:
+  # Enable the correlation engine
+  enabled: true
+  
+  # Time window (seconds) for grouping signals by (victim_ip, vector).
+  # Events arriving within this window are added to the same signal group.
+  window_seconds: 300
+  
+  # Global minimum number of distinct sources required before a signal group
+  # can trigger a mitigation. Set to 1 for backward-compatible single-source behavior.
+  min_sources: 1
+  
+  # Global minimum derived confidence threshold (0.0-1.0).
+  # A signal group must reach this threshold (in addition to min_sources) before triggering.
+  confidence_threshold: 0.5
+  
+  # Default weight for sources not listed below
+  default_weight: 1.0
+  
+  # Per-source configuration: weight and type for known detection sources.
+  sources:
+    fastnetmon:
+      weight: 1.0
+      type: detector
+    alertmanager:
+      weight: 0.8
+      type: telemetry
+    dashboard:
+      weight: 1.0
+      type: manual
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `false` | Whether the correlation engine is active |
+| `window_seconds` | integer | `300` | Time window for grouping signals (seconds) |
+| `min_sources` | integer | `1` | Minimum distinct sources to trigger mitigation |
+| `confidence_threshold` | float | `0.5` | Minimum derived confidence to trigger |
+| `default_weight` | float | `1.0` | Weight for unknown/unconfigured sources |
+| `sources` | map | `{}` | Per-source weight and type configuration |
+
+**Source Configuration:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `weight` | float | `1.0` | Weight in derived confidence computation (higher = more influence) |
+| `type` | string | `""` | Descriptive type (`detector`, `telemetry`, `manual`) |
+
+**Derived confidence** is computed as a weighted average:
+
+```
+derived_confidence = sum(event_confidence_i × source_weight_i) / sum(source_weight_i)
+```
+
+Events with null or missing confidence are treated as 0.0.
+
+#### Per-Playbook Correlation Overrides
+
+Playbooks can override global `min_sources` and `confidence_threshold` for specific attack vectors. Add a `correlation` section to any playbook in `playbooks.yaml`:
+
+```yaml
+playbooks:
+  - name: udp_flood_corroborated
+    match:
+      vector: udp_flood
+    correlation:
+      min_sources: 2           # Require corroboration for UDP floods
+      confidence_threshold: 0.7
+    steps:
+      - action: police
+        rate_bps: 5000000
+        ttl_seconds: 120
+```
+
+When a playbook has no `correlation` override, the global defaults from `prefixd.yaml` are used.
+
+| Override Field | Type | Description |
+|----------------|------|-------------|
+| `min_sources` | integer | Override global min_sources for this playbook |
+| `confidence_threshold` | float | Override global confidence_threshold for this playbook |
+
+#### Hot Reload
+
+Correlation config changes take effect on `POST /v1/config/reload` without restart (same as inventory and playbooks).
+
 ### Shutdown
 
 ```yaml

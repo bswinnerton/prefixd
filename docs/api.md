@@ -281,7 +281,8 @@ Authorization: Bearer <token>
       "last_event_id": "550e8400-e29b-41d4-a716-446655440000",
       "reason": "Vector policy: udp_flood",
       "acknowledged_at": null,
-      "acknowledged_by": null
+      "acknowledged_by": null,
+      "correlation": null
     }
   ],
   "count": 1,
@@ -289,6 +290,23 @@ Authorization: Bearer <token>
   "has_more": false
 }
 ```
+
+When a mitigation was created via multi-source corroboration (correlation engine enabled), the `correlation` field contains context about the decision:
+
+```json
+{
+  "correlation": {
+    "signal_group_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "derived_confidence": 0.75,
+    "source_count": 2,
+    "corroboration_met": true,
+    "contributing_sources": ["fastnetmon", "alertmanager"],
+    "explanation": "Corroboration met: 2 distinct source(s) (min=2) with derived confidence 0.75 (threshold=0.50). Sources: fastnetmon(conf=0.90, w=1.0), alertmanager(conf=0.60, w=0.8)"
+  }
+}
+```
+
+When correlation is disabled or the mitigation was created by a single source without corroboration, the `correlation` field is `null` or absent.
 
 ### Create Mitigation
 
@@ -346,7 +364,16 @@ Returns the full mitigation object (same shape as [Get Mitigation](#get-mitigati
 GET /v1/mitigations/{id}
 ```
 
-**Response:** Same as list item.
+**Response:** Same as list item, including the `correlation` field when present. For correlated mitigations, the correlation object includes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `signal_group_id` | UUID | Signal group that triggered this mitigation |
+| `derived_confidence` | float | Weighted average confidence from contributing events |
+| `source_count` | integer | Number of distinct detection sources |
+| `corroboration_met` | boolean | Whether corroboration threshold was met |
+| `contributing_sources` | array | List of source names that contributed |
+| `explanation` | string | Human-readable explanation of the correlation decision |
 
 ### Withdraw Mitigation
 
@@ -456,6 +483,111 @@ Content-Type: application/json
 ```
 
 Acknowledging marks a mitigation as reviewed by a human without changing its status. Re-acknowledging an already-acknowledged mitigation returns an error. Rejected mitigations cannot be acknowledged.
+
+---
+
+## Signal Groups
+
+Signal groups are created by the correlation engine when `correlation.enabled` is true. They group related attack events by (victim_ip, vector) within a configurable time window, enabling multi-source corroboration.
+
+### List Signal Groups
+
+```http
+GET /v1/signal-groups
+Authorization: Bearer <token>
+```
+
+**Query Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `status` | string | Filter by status: `open`, `resolved`, `expired` |
+| `vector` | string | Filter by attack vector |
+| `limit` | integer | Max results (default 100, max 1000) |
+| `cursor` | string | Cursor for pagination (from previous response `next_cursor`) |
+| `start` | string | Start of date range (ISO 8601, inclusive) |
+| `end` | string | End of date range (ISO 8601, exclusive) |
+
+**Response:**
+
+```json
+{
+  "groups": [
+    {
+      "group_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "victim_ip": "203.0.113.10",
+      "vector": "udp_flood",
+      "created_at": "2026-03-19T10:30:00Z",
+      "window_expires_at": "2026-03-19T10:35:00Z",
+      "derived_confidence": 0.75,
+      "source_count": 2,
+      "status": "resolved",
+      "corroboration_met": true
+    }
+  ],
+  "count": 1,
+  "next_cursor": null,
+  "has_more": false
+}
+```
+
+**Signal Group Status:**
+
+| Status | Description |
+|--------|-------------|
+| `open` | Accepting new events within the time window |
+| `resolved` | Corroboration met and mitigation created |
+| `expired` | Time window elapsed without sufficient corroboration |
+
+### Get Signal Group Detail
+
+```http
+GET /v1/signal-groups/{id}
+Authorization: Bearer <token>
+```
+
+Returns group metadata and all contributing events with source, confidence, and source weight.
+
+**Response:**
+
+```json
+{
+  "group_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "victim_ip": "203.0.113.10",
+  "vector": "udp_flood",
+  "created_at": "2026-03-19T10:30:00Z",
+  "window_expires_at": "2026-03-19T10:35:00Z",
+  "derived_confidence": 0.75,
+  "source_count": 2,
+  "status": "resolved",
+  "corroboration_met": true,
+  "events": [
+    {
+      "group_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "event_id": "550e8400-e29b-41d4-a716-446655440000",
+      "source_weight": 1.0,
+      "source": "fastnetmon",
+      "confidence": 0.9,
+      "ingested_at": "2026-03-19T10:30:01Z"
+    },
+    {
+      "group_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "event_id": "660e8400-e29b-41d4-a716-446655440001",
+      "source_weight": 0.8,
+      "source": "alertmanager",
+      "confidence": 0.6,
+      "ingested_at": "2026-03-19T10:31:15Z"
+    }
+  ]
+}
+```
+
+**Error Responses:**
+
+| Status | Reason |
+|--------|--------|
+| 401 | Authentication required |
+| 404 | Signal group not found |
 
 ---
 

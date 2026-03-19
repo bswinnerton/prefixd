@@ -5,6 +5,24 @@ All notable changes to prefixd will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Multi-signal correlation engine** — Time-windowed grouping of related attack events by (victim_ip, vector) from multiple detection sources. Configurable source weights, corroboration thresholds, and per-playbook overrides. When `correlation.enabled` is true, events are grouped into signal groups and mitigation only triggers when corroboration requirements are met (configurable `min_sources` and `confidence_threshold`). Single-source behavior is preserved with `min_sources=1` (backward compatible). See [ADR 018](docs/adr/018-multi-signal-correlation-engine.md).
+- **Signal groups API** — `GET /v1/signal-groups` (list with cursor pagination, status/vector/date filters) and `GET /v1/signal-groups/{id}` (detail with contributing events, source weights, and confidence). Both endpoints require authentication.
+- **Correlation context on mitigations** — `GET /v1/mitigations` and `GET /v1/mitigations/{id}` responses include a `correlation` field for correlated mitigations, containing signal_group_id, derived_confidence, source_count, corroboration_met, contributing_sources, and a human-readable explanation.
+- **Correlation engine metrics** — `prefixd_signal_groups_total`, `prefixd_signal_group_sources`, `prefixd_correlation_confidence`, `prefixd_corroboration_met_total`, `prefixd_corroboration_timeout_total` Prometheus counters and histograms.
+- **Signal group expiry** — Reconciliation loop expires open signal groups whose time window has elapsed, transitioning them to `expired` status.
+- **Database migration 007** — `signal_groups` and `signal_group_events` tables, `mitigations.signal_group_id` nullable FK column with indexes.
+- **Correlation configuration** — New `correlation` section in `prefixd.yaml` with `enabled`, `window_seconds`, `min_sources`, `confidence_threshold`, `sources` (per-source weight/type), and `default_weight`. Per-playbook `correlation` overrides in `playbooks.yaml`. Hot-reloadable via `POST /v1/config/reload`.
+
+### Changed
+
+- Backend unit tests increased from 126 to 173 (correlation engine, config parsing, corroboration, explainability)
+- Integration tests increased from 44 to 68 (signal group CRUD, correlation flow, concurrent event handling)
+- Postgres integration tests increased from 9 to 15 (signal group operations)
+
 ## [0.13.0] - 2026-03-19
 
 ### Added

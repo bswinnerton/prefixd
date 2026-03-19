@@ -282,17 +282,17 @@ Example: FastNetMon says UDP flood at 0.6 confidence + router CPU spiking + host
 
 ### Correlation Engine
 
-- [ ] Time-windowed event grouping
-- [ ] Source weighting and reliability scoring
-- [ ] Corroboration requirements ("require 2+ sources")
-- [ ] Correlation explainability (`why` details in API/UI for each mitigation decision)
+- [x] Time-windowed event grouping
+- [x] Source weighting and reliability scoring
+- [x] Corroboration requirements ("require 2+ sources")
+- [x] Correlation explainability (`why` details in API/UI for each mitigation decision)
 - [ ] Replay mode for tuning (simulate historical incidents without announcing FlowSpec rules)
 
 ### Confidence Model
 
-- [ ] Derived confidence from traffic patterns
+- [x] Derived confidence from traffic patterns
 - [ ] Confidence decay over time
-- [ ] Per-playbook thresholds
+- [x] Per-playbook thresholds
 
 ---
 
