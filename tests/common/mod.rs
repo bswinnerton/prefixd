@@ -213,6 +213,7 @@ pub fn test_settings() -> Settings {
         safelist: SafelistConfig { prefixes: vec![] },
         shutdown: ShutdownConfig::default(),
         alerting: Default::default(),
+        correlation: Default::default(),
     }
 }
 
@@ -252,6 +253,7 @@ pub fn test_playbooks() -> Playbooks {
                     vector: AttackVector::UdpFlood,
                     require_top_ports: false,
                 },
+                correlation: None,
                 steps: vec![PlaybookStep {
                     action: PlaybookAction::Police,
                     rate_bps: Some(10_000_000),
@@ -266,6 +268,7 @@ pub fn test_playbooks() -> Playbooks {
                     vector: AttackVector::SynFlood,
                     require_top_ports: false,
                 },
+                correlation: None,
                 steps: vec![PlaybookStep {
                     action: PlaybookAction::Discard,
                     rate_bps: None,

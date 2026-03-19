@@ -85,6 +85,7 @@ fn test_settings() -> Settings {
         safelist: SafelistConfig { prefixes: vec![] },
         shutdown: ShutdownConfig::default(),
         alerting: Default::default(),
+        correlation: Default::default(),
     }
 }
 
@@ -117,6 +118,7 @@ fn test_playbooks() -> Playbooks {
                 vector: AttackVector::UdpFlood,
                 require_top_ports: false,
             },
+            correlation: None,
             steps: vec![PlaybookStep {
                 action: PlaybookAction::Police,
                 rate_bps: Some(5_000_000),

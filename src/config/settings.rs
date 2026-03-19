@@ -21,6 +21,8 @@ pub struct Settings {
     pub shutdown: ShutdownConfig,
     #[serde(default)]
     pub alerting: crate::alerting::AlertingConfig,
+    #[serde(default)]
+    pub correlation: crate::correlation::CorrelationConfig,
 }
 
 fn default_mode() -> OperationMode {
@@ -379,5 +381,114 @@ impl Settings {
         let content = std::fs::read_to_string(path)?;
         let settings: Settings = serde_yaml::from_str(&content)?;
         Ok(settings)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal valid YAML for a Settings struct (no correlation section).
+    const MINIMAL_SETTINGS_YAML: &str = r#"
+pop: iad1
+mode: dry-run
+http:
+  listen: "0.0.0.0:8080"
+  auth:
+    mode: none
+bgp:
+  mode: mock
+  gobgp_grpc: "localhost:50051"
+  local_asn: 65010
+  router_id: "10.10.0.10"
+guardrails:
+  require_ttl: true
+  dst_prefix_minlen: 32
+  dst_prefix_maxlen: 32
+  max_ports: 8
+  allow_src_prefix_match: false
+quotas:
+  max_active_per_customer: 5
+  max_active_per_pop: 200
+  max_active_global: 500
+  max_new_per_minute: 30
+timers:
+  default_ttl_seconds: 120
+  min_ttl_seconds: 30
+  max_ttl_seconds: 1800
+  correlation_window_seconds: 300
+  reconciliation_interval_seconds: 30
+escalation:
+  enabled: true
+  min_persistence_seconds: 120
+  min_confidence: 0.7
+storage:
+  connection_string: "postgres://user:pass@localhost/prefixd"
+observability:
+  log_format: pretty
+  log_level: info
+  audit_log_path: "./data/audit.jsonl"
+  metrics_listen: "0.0.0.0:9090"
+"#;
+
+    #[test]
+    fn test_settings_without_correlation_defaults_to_disabled() {
+        let settings: Settings = serde_yaml::from_str(MINIMAL_SETTINGS_YAML).unwrap();
+        assert!(!settings.correlation.enabled);
+        assert_eq!(settings.correlation.window_seconds, 300);
+        assert_eq!(settings.correlation.min_sources, 1);
+        assert_eq!(settings.correlation.confidence_threshold, 0.5);
+        assert!(settings.correlation.sources.is_empty());
+        assert_eq!(settings.correlation.default_weight, 1.0);
+    }
+
+    #[test]
+    fn test_settings_with_correlation_section() {
+        let yaml = format!(
+            "{}{}",
+            MINIMAL_SETTINGS_YAML,
+            r#"
+correlation:
+  enabled: true
+  window_seconds: 600
+  min_sources: 2
+  confidence_threshold: 0.7
+  default_weight: 0.5
+  sources:
+    fastnetmon:
+      weight: 2.0
+      type: detector
+    alertmanager:
+      weight: 0.8
+      type: telemetry
+"#
+        );
+        let settings: Settings = serde_yaml::from_str(&yaml).unwrap();
+        assert!(settings.correlation.enabled);
+        assert_eq!(settings.correlation.window_seconds, 600);
+        assert_eq!(settings.correlation.min_sources, 2);
+        assert_eq!(settings.correlation.confidence_threshold, 0.7);
+        assert_eq!(settings.correlation.default_weight, 0.5);
+        assert_eq!(settings.correlation.sources.len(), 2);
+        assert_eq!(settings.correlation.sources["fastnetmon"].weight, 2.0);
+        assert_eq!(
+            settings.correlation.sources["fastnetmon"].r#type,
+            "detector"
+        );
+    }
+
+    #[test]
+    fn test_settings_with_empty_correlation_section() {
+        let yaml = format!(
+            "{}{}",
+            MINIMAL_SETTINGS_YAML,
+            r#"
+correlation: {}
+"#
+        );
+        let settings: Settings = serde_yaml::from_str(&yaml).unwrap();
+        // Empty section should still use defaults
+        assert!(!settings.correlation.enabled);
+        assert_eq!(settings.correlation.window_seconds, 300);
     }
 }
