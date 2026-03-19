@@ -256,57 +256,132 @@ Features:
 ### PostgreSQL Schema
 
 ```sql
--- Mitigations
-CREATE TABLE mitigations (
-    id UUID PRIMARY KEY,
-    status VARCHAR(20),        -- pending, active, expired, withdrawn
-    customer_id VARCHAR(255),
-    service_id VARCHAR(255),
-    dst_prefix INET,
-    protocol VARCHAR(10),
-    dst_ports INTEGER[],
-    action VARCHAR(20),        -- police, discard
-    rate_bps BIGINT,
-    ttl_seconds INTEGER,
-    expires_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ,
-    pop VARCHAR(50)
-);
-
--- Events
+-- Events (001 + 003)
 CREATE TABLE events (
-    id UUID PRIMARY KEY,
-    source VARCHAR(255),
-    victim_ip INET,
-    vector VARCHAR(50),
+    event_id UUID PRIMARY KEY,
+    external_event_id TEXT,
+    source TEXT NOT NULL,
+    event_timestamp TIMESTAMPTZ NOT NULL,
+    ingested_at TIMESTAMPTZ NOT NULL,
+    victim_ip TEXT NOT NULL,
+    vector TEXT NOT NULL,
+    protocol INTEGER,
     bps BIGINT,
     pps BIGINT,
+    top_dst_ports_json TEXT NOT NULL DEFAULT '[]',
     confidence REAL,
-    created_at TIMESTAMPTZ
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    raw_details JSONB,                          -- 003
+    action TEXT NOT NULL DEFAULT 'ban',          -- 003
+    UNIQUE(source, external_event_id)
 );
 
--- Safelist
-CREATE TABLE safelist (
-    prefix INET PRIMARY KEY,
+-- Mitigations (001 + 005)
+CREATE TABLE mitigations (
+    mitigation_id UUID PRIMARY KEY,
+    scope_hash TEXT NOT NULL,
+    pop TEXT NOT NULL,
+    customer_id TEXT,
+    service_id TEXT,
+    victim_ip TEXT NOT NULL,
+    vector TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    match_json TEXT NOT NULL,
+    action_type TEXT NOT NULL,
+    action_params_json TEXT,
+    status TEXT NOT NULL,                        -- pending, active, escalated, expired, withdrawn
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    withdrawn_at TIMESTAMPTZ,
+    triggering_event_id UUID NOT NULL,
+    last_event_id UUID NOT NULL,
+    escalated_from_id UUID,
     reason TEXT,
-    created_by VARCHAR(255),
-    created_at TIMESTAMPTZ
+    rejection_reason TEXT,
+    acknowledged_at TIMESTAMPTZ,                 -- 005
+    acknowledged_by TEXT                          -- 005
 );
 
--- Operators (auth)
+-- FlowSpec announcements (001)
+CREATE TABLE flowspec_announcements (
+    announcement_id UUID PRIMARY KEY,
+    mitigation_id UUID NOT NULL REFERENCES mitigations(mitigation_id),
+    pop TEXT NOT NULL,
+    peer_name TEXT NOT NULL,
+    peer_address TEXT NOT NULL,
+    nlri_hash TEXT NOT NULL,
+    nlri_json TEXT NOT NULL,
+    action_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    announced_at TIMESTAMPTZ,
+    withdrawn_at TIMESTAMPTZ,
+    last_error TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0
+);
+
+-- Audit log (001)
+CREATE TABLE audit_log (
+    audit_id UUID PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    actor_type TEXT NOT NULL,
+    actor_id TEXT,
+    action TEXT NOT NULL,
+    target_type TEXT,
+    target_id TEXT,
+    details_json TEXT NOT NULL
+);
+
+-- Safelist (001)
+CREATE TABLE safelist (
+    prefix TEXT PRIMARY KEY,
+    added_at TIMESTAMPTZ NOT NULL,
+    added_by TEXT NOT NULL,
+    reason TEXT,
+    expires_at TIMESTAMPTZ
+);
+
+-- Config snapshots (001)
+CREATE TABLE config_snapshots (
+    snapshot_id UUID PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL,
+    config_hash TEXT NOT NULL,
+    config_json TEXT NOT NULL
+);
+
+-- Operators (002)
 CREATE TABLE operators (
-    id UUID PRIMARY KEY,
-    username VARCHAR(255) UNIQUE,
-    password_hash VARCHAR(255),
-    role VARCHAR(20),
-    created_at TIMESTAMPTZ
+    operator_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'operator',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by TEXT,
+    last_login_at TIMESTAMPTZ
 );
 
--- Sessions (auth)
-CREATE TABLE sessions (
-    id VARCHAR(255) PRIMARY KEY,
-    data BYTEA,
-    expiry_date TIMESTAMPTZ
+-- Sessions (002) — tower-sessions-sqlx-store
+CREATE TABLE tower_sessions.session (
+    id TEXT PRIMARY KEY NOT NULL,
+    data BYTEA NOT NULL,
+    expiry_date TIMESTAMPTZ NOT NULL
+);
+
+-- Schema migrations (004)
+CREATE TABLE schema_migrations (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Notification preferences (006)
+CREATE TABLE notification_preferences (
+    operator_id UUID PRIMARY KEY REFERENCES operators(operator_id) ON DELETE CASCADE,
+    muted_events TEXT[] NOT NULL DEFAULT '{}',
+    quiet_hours_start SMALLINT,
+    quiet_hours_end SMALLINT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ```
 
@@ -383,7 +458,7 @@ Each instance:
 
 | Operation | Sustained | Burst |
 |-----------|-----------|-------|
-| Event ingestion | 6,000/s | 10,000/s |
+| Event ingestion | ~4,700/s | 10,000/s |
 | DB writes | 2,000/s | 5,000/s |
 | GoBGP announces | 100/s | 200/s |
 
