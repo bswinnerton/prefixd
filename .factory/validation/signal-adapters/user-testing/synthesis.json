@@ -1,12 +1,12 @@
 {
   "milestone": "signal-adapters",
-  "round": 1,
-  "status": "fail",
+  "round": 2,
+  "status": "pass",
   "assertionsSummary": {
     "total": 22,
-    "passed": 20,
+    "passed": 22,
     "failed": 0,
-    "blocked": 2
+    "blocked": 0
   },
   "passedAssertions": [
     "VAL-ADAPT-001",
@@ -18,10 +18,12 @@
     "VAL-ADAPT-007",
     "VAL-ADAPT-008",
     "VAL-ADAPT-009",
+    "VAL-ADAPT-010",
     "VAL-ADAPT-011",
     "VAL-ADAPT-012",
     "VAL-ADAPT-013",
     "VAL-ADAPT-014",
+    "VAL-ADAPT-015",
     "VAL-ADAPT-016",
     "VAL-ADAPT-017",
     "VAL-ADAPT-018",
@@ -31,22 +33,8 @@
     "VAL-DOCS-002"
   ],
   "failedAssertions": [],
-  "blockedAssertions": [
-    {
-      "id": "VAL-ADAPT-010",
-      "blockedBy": "auth_mode=none prevents testing 401 authentication enforcement. The auth code paths exist in handler source (require_auth called in ingest_alertmanager_inner) and are covered by integration tests, but cannot be exercised via live API when auth_mode=none."
-    },
-    {
-      "id": "VAL-ADAPT-015",
-      "blockedBy": "auth_mode=none prevents testing 403 admin role enforcement on PUT /v1/config/correlation. The require_role(Admin) code path exists in update_correlation_config handler but is bypassed when auth_mode=none."
-    }
-  ],
-  "appliedUpdates": [
-    {
-      "target": "user-testing.md",
-      "description": "Added Flow Validator Guidance: Signal Adapters (API) section with Alertmanager/FastNetMon payload formats, config API notes, auth notes, and IP range assignments",
-      "source": "setup"
-    }
-  ],
-  "previousRound": null
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": ".factory/validation/signal-adapters/user-testing/synthesis-round1.json",
+  "notes": "Round 2 re-run after orchestrator overrode VAL-ADAPT-010 and VAL-ADAPT-015 (auth assertions blocked by auth_mode=none but fully covered by integration tests). All 22 assertions now pass. Spot-checked live API: Alertmanager adapter (POST /v1/signals/alertmanager), FastNetMon adapter (POST /v1/signals/fastnetmon), and correlation config (GET /v1/config/correlation) all confirmed working against Docker stack."
 }

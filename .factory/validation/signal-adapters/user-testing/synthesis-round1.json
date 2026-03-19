@@ -1,0 +1,52 @@
+{
+  "milestone": "signal-adapters",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 22,
+    "passed": 20,
+    "failed": 0,
+    "blocked": 2
+  },
+  "passedAssertions": [
+    "VAL-ADAPT-001",
+    "VAL-ADAPT-002",
+    "VAL-ADAPT-003",
+    "VAL-ADAPT-004",
+    "VAL-ADAPT-005",
+    "VAL-ADAPT-006",
+    "VAL-ADAPT-007",
+    "VAL-ADAPT-008",
+    "VAL-ADAPT-009",
+    "VAL-ADAPT-011",
+    "VAL-ADAPT-012",
+    "VAL-ADAPT-013",
+    "VAL-ADAPT-014",
+    "VAL-ADAPT-016",
+    "VAL-ADAPT-017",
+    "VAL-ADAPT-018",
+    "VAL-CROSS-001",
+    "VAL-CROSS-002",
+    "VAL-CROSS-010",
+    "VAL-DOCS-002"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [
+    {
+      "id": "VAL-ADAPT-010",
+      "blockedBy": "auth_mode=none prevents testing 401 authentication enforcement. The auth code paths exist in handler source (require_auth called in ingest_alertmanager_inner) and are covered by integration tests, but cannot be exercised via live API when auth_mode=none."
+    },
+    {
+      "id": "VAL-ADAPT-015",
+      "blockedBy": "auth_mode=none prevents testing 403 admin role enforcement on PUT /v1/config/correlation. The require_role(Admin) code path exists in update_correlation_config handler but is bypassed when auth_mode=none."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added Flow Validator Guidance: Signal Adapters (API) section with Alertmanager/FastNetMon payload formats, config API notes, auth notes, and IP range assignments",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null
+}
