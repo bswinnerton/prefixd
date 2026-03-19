@@ -189,6 +189,60 @@ pub static HTTP_IN_FLIGHT: Lazy<GaugeVec> = Lazy::new(|| {
     .unwrap()
 });
 
+// ── Correlation engine metrics ─────────────────────────────────────────
+
+/// Total signal groups created, by status and vector.
+pub static SIGNAL_GROUPS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "prefixd_signal_groups_total",
+        "Total number of signal groups created",
+        &["status", "vector"]
+    )
+    .unwrap()
+});
+
+/// Histogram of source count per signal group (observed when group resolves/expires).
+pub static SIGNAL_GROUP_SOURCES: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "prefixd_signal_group_sources",
+        "Number of distinct sources per signal group",
+        &["vector"],
+        vec![1.0, 2.0, 3.0, 4.0, 5.0, 8.0, 10.0]
+    )
+    .unwrap()
+});
+
+/// Histogram of derived confidence values per signal group.
+pub static CORRELATION_CONFIDENCE: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "prefixd_correlation_confidence",
+        "Derived confidence of signal groups",
+        &["vector"],
+        vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    )
+    .unwrap()
+});
+
+/// Counter for signal groups that met corroboration requirements.
+pub static CORROBORATION_MET_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "prefixd_corroboration_met_total",
+        "Total signal groups that met corroboration requirements",
+        &["vector"]
+    )
+    .unwrap()
+});
+
+/// Counter for signal groups that expired without meeting corroboration.
+pub static CORROBORATION_TIMEOUT_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "prefixd_corroboration_timeout_total",
+        "Total signal groups that expired without meeting corroboration",
+        &["vector"]
+    )
+    .unwrap()
+});
+
 /// Generate Prometheus metrics output
 pub fn gather_metrics() -> String {
     let encoder = TextEncoder::new();
@@ -221,6 +275,12 @@ pub fn init_metrics() {
     Lazy::force(&HTTP_REQUESTS_TOTAL);
     Lazy::force(&HTTP_REQUEST_DURATION);
     Lazy::force(&HTTP_IN_FLIGHT);
+    // Correlation engine metrics
+    Lazy::force(&SIGNAL_GROUPS_TOTAL);
+    Lazy::force(&SIGNAL_GROUP_SOURCES);
+    Lazy::force(&CORRELATION_CONFIDENCE);
+    Lazy::force(&CORROBORATION_MET_TOTAL);
+    Lazy::force(&CORROBORATION_TIMEOUT_TOTAL);
 }
 
 /// Update database pool metrics from sqlx pool stats

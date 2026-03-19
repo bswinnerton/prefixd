@@ -757,3 +757,291 @@ playbooks:
         assert!(pb.playbooks.iter().any(|p| p.name == "syn_flood"));
     }
 }
+
+// =============================================================================
+// Signal Group Tests (Postgres-backed)
+// =============================================================================
+
+#[tokio::test]
+async fn test_signal_group_insert_and_find() {
+    use prefixd::correlation::engine::{CorrelationEngine, SignalGroupStatus};
+
+    let ctx = TestContext::new().await;
+
+    // Create a signal group
+    let group = CorrelationEngine::create_group("203.0.113.10", "udp_flood", 300);
+    let inserted = ctx
+        .repo
+        .insert_signal_group(&group)
+        .await
+        .expect("Failed to insert signal group");
+
+    assert_eq!(inserted.group_id, group.group_id);
+    assert_eq!(inserted.victim_ip, "203.0.113.10");
+    assert_eq!(inserted.vector, "udp_flood");
+    assert_eq!(inserted.status, SignalGroupStatus::Open);
+
+    // Find the open group
+    let found = ctx
+        .repo
+        .find_open_group("203.0.113.10", "udp_flood")
+        .await
+        .expect("Failed to find open group");
+    assert!(found.is_some());
+    assert_eq!(found.unwrap().group_id, group.group_id);
+
+    // Different vector should not find anything
+    let not_found = ctx
+        .repo
+        .find_open_group("203.0.113.10", "syn_flood")
+        .await
+        .expect("Failed to find open group");
+    assert!(not_found.is_none());
+}
+
+#[tokio::test]
+async fn test_signal_group_concurrent_insert_returns_existing() {
+    use prefixd::correlation::engine::CorrelationEngine;
+
+    let ctx = TestContext::new().await;
+
+    // Create two groups for the same (victim_ip, vector)
+    let group1 = CorrelationEngine::create_group("203.0.113.10", "udp_flood", 300);
+    let group2 = CorrelationEngine::create_group("203.0.113.10", "udp_flood", 300);
+
+    let inserted1 = ctx
+        .repo
+        .insert_signal_group(&group1)
+        .await
+        .expect("Failed to insert group 1");
+
+    let inserted2 = ctx
+        .repo
+        .insert_signal_group(&group2)
+        .await
+        .expect("Failed to insert group 2");
+
+    // Both should return the same group ID (the first one)
+    assert_eq!(inserted1.group_id, inserted2.group_id);
+
+    // Count should be 1
+    let count = ctx
+        .repo
+        .count_open_groups()
+        .await
+        .expect("Failed to count open groups");
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn test_signal_group_add_events_and_list() {
+    use prefixd::correlation::engine::CorrelationEngine;
+    use prefixd::domain::AttackEvent;
+
+    let ctx = TestContext::new().await;
+
+    // Create events first
+    let event1 = AttackEvent {
+        event_id: uuid::Uuid::new_v4(),
+        external_event_id: None,
+        source: "fastnetmon".to_string(),
+        event_timestamp: chrono::Utc::now(),
+        ingested_at: chrono::Utc::now(),
+        victim_ip: "203.0.113.10".to_string(),
+        vector: "udp_flood".to_string(),
+        protocol: Some(17),
+        bps: Some(500_000_000),
+        pps: Some(100_000),
+        top_dst_ports_json: "[53]".to_string(),
+        confidence: Some(0.9),
+        action: "ban".to_string(),
+        raw_details: None,
+    };
+    let event2 = AttackEvent {
+        event_id: uuid::Uuid::new_v4(),
+        external_event_id: None,
+        source: "alertmanager".to_string(),
+        event_timestamp: chrono::Utc::now(),
+        ingested_at: chrono::Utc::now(),
+        victim_ip: "203.0.113.10".to_string(),
+        vector: "udp_flood".to_string(),
+        protocol: Some(17),
+        bps: None,
+        pps: None,
+        top_dst_ports_json: "[]".to_string(),
+        confidence: Some(0.7),
+        action: "ban".to_string(),
+        raw_details: None,
+    };
+
+    ctx.repo.insert_event(&event1).await.unwrap();
+    ctx.repo.insert_event(&event2).await.unwrap();
+
+    // Create signal group
+    let group = CorrelationEngine::create_group("203.0.113.10", "udp_flood", 300);
+    let group = ctx.repo.insert_signal_group(&group).await.unwrap();
+
+    // Add events to group
+    let added1 = ctx
+        .repo
+        .add_event_to_group(group.group_id, event1.event_id, 1.0)
+        .await
+        .unwrap();
+    assert!(added1);
+
+    let added2 = ctx
+        .repo
+        .add_event_to_group(group.group_id, event2.event_id, 0.8)
+        .await
+        .unwrap();
+    assert!(added2);
+
+    // Duplicate add should return false
+    let dup = ctx
+        .repo
+        .add_event_to_group(group.group_id, event1.event_id, 1.0)
+        .await
+        .unwrap();
+    assert!(!dup);
+
+    // List events in group
+    let events = ctx
+        .repo
+        .list_signal_group_events(group.group_id)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 2);
+    // Verify denormalized fields
+    assert!(
+        events
+            .iter()
+            .any(|e| e.source.as_deref() == Some("fastnetmon"))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| e.source.as_deref() == Some("alertmanager"))
+    );
+}
+
+#[tokio::test]
+async fn test_signal_group_update_and_get() {
+    use prefixd::correlation::engine::{CorrelationEngine, SignalGroupStatus};
+
+    let ctx = TestContext::new().await;
+
+    let group = CorrelationEngine::create_group("203.0.113.10", "udp_flood", 300);
+    let group = ctx.repo.insert_signal_group(&group).await.unwrap();
+
+    // Update the group
+    let mut updated = group.clone();
+    updated.derived_confidence = 0.85;
+    updated.source_count = 3;
+    updated.corroboration_met = true;
+    updated.status = SignalGroupStatus::Resolved;
+
+    ctx.repo.update_signal_group(&updated).await.unwrap();
+
+    // Verify via get
+    let fetched = ctx
+        .repo
+        .get_signal_group(group.group_id)
+        .await
+        .unwrap()
+        .expect("Group should exist");
+
+    assert!((fetched.derived_confidence - 0.85).abs() < 0.001);
+    assert_eq!(fetched.source_count, 3);
+    assert!(fetched.corroboration_met);
+    assert_eq!(fetched.status, SignalGroupStatus::Resolved);
+}
+
+#[tokio::test]
+async fn test_signal_group_list_with_filters() {
+    use prefixd::correlation::engine::{CorrelationEngine, SignalGroupFilter, SignalGroupStatus};
+    use prefixd::db::ListParams;
+
+    let ctx = TestContext::new().await;
+
+    // Create groups with different vectors
+    let g1 = CorrelationEngine::create_group("203.0.113.10", "udp_flood", 300);
+    ctx.repo.insert_signal_group(&g1).await.unwrap();
+
+    let g2 = CorrelationEngine::create_group("203.0.113.10", "syn_flood", 300);
+    ctx.repo.insert_signal_group(&g2).await.unwrap();
+
+    let g3 = CorrelationEngine::create_group("203.0.113.11", "udp_flood", 300);
+    ctx.repo.insert_signal_group(&g3).await.unwrap();
+
+    // List all open groups
+    let all = ctx
+        .repo
+        .list_signal_groups(
+            &SignalGroupFilter {
+                status: Some(SignalGroupStatus::Open),
+                ..Default::default()
+            },
+            &ListParams {
+                limit: 100,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 3);
+
+    // Filter by vector
+    let udp = ctx
+        .repo
+        .list_signal_groups(
+            &SignalGroupFilter {
+                vector: Some("udp_flood".to_string()),
+                ..Default::default()
+            },
+            &ListParams {
+                limit: 100,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(udp.len(), 2);
+
+    // Pagination: limit 2
+    let page1 = ctx
+        .repo
+        .list_signal_groups(
+            &SignalGroupFilter::default(),
+            &ListParams {
+                limit: 2,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(page1.len(), 2);
+
+    // Count
+    let count = ctx.repo.count_open_groups().await.unwrap();
+    assert_eq!(count, 3);
+}
+
+#[tokio::test]
+async fn test_signal_group_different_vectors_separate() {
+    use prefixd::correlation::engine::CorrelationEngine;
+
+    let ctx = TestContext::new().await;
+
+    // Same IP, different vectors → separate groups
+    let g1 = CorrelationEngine::create_group("203.0.113.10", "udp_flood", 300);
+    let g2 = CorrelationEngine::create_group("203.0.113.10", "syn_flood", 300);
+
+    let inserted1 = ctx.repo.insert_signal_group(&g1).await.unwrap();
+    let inserted2 = ctx.repo.insert_signal_group(&g2).await.unwrap();
+
+    // Should be different groups
+    assert_ne!(inserted1.group_id, inserted2.group_id);
+
+    let count = ctx.repo.count_open_groups().await.unwrap();
+    assert_eq!(count, 2);
+}

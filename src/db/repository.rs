@@ -5,6 +5,9 @@ use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use super::{ListParams, NotificationPreferences, RepositoryTrait};
+use crate::correlation::engine::{
+    SignalGroup, SignalGroupEvent, SignalGroupFilter, SignalGroupStatus,
+};
 use crate::domain::{
     AttackEvent, Mitigation, MitigationRow, MitigationStatus, Operator, OperatorRole,
 };
@@ -886,6 +889,235 @@ impl RepositoryTrait for Repository {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    // ── Signal groups ──────────────────────────────────────────────────
+
+    async fn insert_signal_group(&self, group: &SignalGroup) -> Result<SignalGroup> {
+        // Use INSERT ... ON CONFLICT to handle concurrent races.
+        // If another request already created a group for (victim_ip, vector, status='open'),
+        // we return the existing one. The unique constraint is checked via a CTE that
+        // tries to find an existing open group first.
+        let row = sqlx::query_as::<_, SignalGroupRow>(
+            r#"
+            WITH existing AS (
+                SELECT group_id, victim_ip, vector, created_at, window_expires_at,
+                       derived_confidence, source_count, status, corroboration_met
+                FROM signal_groups
+                WHERE victim_ip = $2 AND vector = $3 AND status = 'open'
+                  AND window_expires_at > NOW()
+                LIMIT 1
+            ), inserted AS (
+                INSERT INTO signal_groups (group_id, victim_ip, vector, created_at, window_expires_at,
+                    derived_confidence, source_count, status, corroboration_met)
+                SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
+                WHERE NOT EXISTS (SELECT 1 FROM existing)
+                RETURNING group_id, victim_ip, vector, created_at, window_expires_at,
+                    derived_confidence, source_count, status, corroboration_met
+            )
+            SELECT * FROM existing
+            UNION ALL
+            SELECT * FROM inserted
+            LIMIT 1
+            "#,
+        )
+        .bind(group.group_id)
+        .bind(&group.victim_ip)
+        .bind(&group.vector)
+        .bind(group.created_at)
+        .bind(group.window_expires_at)
+        .bind(group.derived_confidence)
+        .bind(group.source_count)
+        .bind(group.status.as_str())
+        .bind(group.corroboration_met)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.into())
+    }
+
+    async fn update_signal_group(&self, group: &SignalGroup) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE signal_groups SET
+                derived_confidence = $2,
+                source_count = $3,
+                status = $4,
+                corroboration_met = $5
+            WHERE group_id = $1
+            "#,
+        )
+        .bind(group.group_id)
+        .bind(group.derived_confidence)
+        .bind(group.source_count)
+        .bind(group.status.as_str())
+        .bind(group.corroboration_met)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn get_signal_group(&self, group_id: Uuid) -> Result<Option<SignalGroup>> {
+        let row = sqlx::query_as::<_, SignalGroupRow>(
+            r#"
+            SELECT group_id, victim_ip, vector, created_at, window_expires_at,
+                   derived_confidence, source_count, status, corroboration_met
+            FROM signal_groups WHERE group_id = $1
+            "#,
+        )
+        .bind(group_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(Into::into))
+    }
+
+    async fn find_open_group(&self, victim_ip: &str, vector: &str) -> Result<Option<SignalGroup>> {
+        let row = sqlx::query_as::<_, SignalGroupRow>(
+            r#"
+            SELECT group_id, victim_ip, vector, created_at, window_expires_at,
+                   derived_confidence, source_count, status, corroboration_met
+            FROM signal_groups
+            WHERE victim_ip = $1 AND vector = $2 AND status = 'open'
+              AND window_expires_at > NOW()
+            LIMIT 1
+            "#,
+        )
+        .bind(victim_ip)
+        .bind(vector)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(Into::into))
+    }
+
+    async fn add_event_to_group(
+        &self,
+        group_id: Uuid,
+        event_id: Uuid,
+        source_weight: f32,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO signal_group_events (group_id, event_id, source_weight)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (group_id, event_id) DO NOTHING
+            "#,
+        )
+        .bind(group_id)
+        .bind(event_id)
+        .bind(source_weight)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn list_signal_group_events(&self, group_id: Uuid) -> Result<Vec<SignalGroupEvent>> {
+        let rows = sqlx::query_as::<_, SignalGroupEventRow>(
+            r#"
+            SELECT sge.group_id, sge.event_id, sge.source_weight,
+                   e.source, e.confidence, e.ingested_at
+            FROM signal_group_events sge
+            LEFT JOIN events e ON e.event_id = sge.event_id
+            WHERE sge.group_id = $1
+            ORDER BY e.ingested_at ASC
+            "#,
+        )
+        .bind(group_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn list_signal_groups(
+        &self,
+        filter: &SignalGroupFilter,
+        params: &ListParams,
+    ) -> Result<Vec<SignalGroup>> {
+        let status_str = filter.status.map(|s| s.as_str().to_string());
+        let rows = sqlx::query_as::<_, SignalGroupRow>(
+            r#"
+            SELECT group_id, victim_ip, vector, created_at, window_expires_at,
+                   derived_confidence, source_count, status, corroboration_met
+            FROM signal_groups
+            WHERE ($1::text IS NULL OR status = $1)
+              AND ($2::text IS NULL OR vector = $2)
+              AND ($3::timestamptz IS NULL OR created_at >= $3)
+              AND ($4::timestamptz IS NULL OR created_at < $4)
+              AND ($5::timestamptz IS NULL OR created_at < $5)
+            ORDER BY created_at DESC
+            LIMIT $6
+            "#,
+        )
+        .bind(status_str.as_deref()) // $1
+        .bind(filter.vector.as_deref()) // $2
+        .bind(filter.start) // $3
+        .bind(filter.end) // $4
+        .bind(params.cursor) // $5
+        .bind(params.limit as i64) // $6
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn count_open_groups(&self) -> Result<u32> {
+        let row: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM signal_groups WHERE status = 'open'")
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(row.0 as u32)
+    }
+}
+
+// ── Signal group row types ─────────────────────────────────────────────
+
+#[derive(Debug, FromRow)]
+struct SignalGroupRow {
+    group_id: Uuid,
+    victim_ip: String,
+    vector: String,
+    created_at: DateTime<Utc>,
+    window_expires_at: DateTime<Utc>,
+    derived_confidence: f32,
+    source_count: i32,
+    status: String,
+    corroboration_met: bool,
+}
+
+impl From<SignalGroupRow> for SignalGroup {
+    fn from(row: SignalGroupRow) -> Self {
+        Self {
+            group_id: row.group_id,
+            victim_ip: row.victim_ip,
+            vector: row.vector,
+            created_at: row.created_at,
+            window_expires_at: row.window_expires_at,
+            derived_confidence: row.derived_confidence,
+            source_count: row.source_count,
+            status: row.status.parse().unwrap_or(SignalGroupStatus::Open),
+            corroboration_met: row.corroboration_met,
+        }
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct SignalGroupEventRow {
+    group_id: Uuid,
+    event_id: Uuid,
+    source_weight: f32,
+    source: Option<String>,
+    confidence: Option<f32>,
+    ingested_at: Option<DateTime<Utc>>,
+}
+
+impl From<SignalGroupEventRow> for SignalGroupEvent {
+    fn from(row: SignalGroupEventRow) -> Self {
+        Self {
+            group_id: row.group_id,
+            event_id: row.event_id,
+            source_weight: row.source_weight,
+            source: row.source,
+            confidence: row.confidence,
+            ingested_at: row.ingested_at,
+        }
     }
 }
 

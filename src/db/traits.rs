@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::correlation::engine::{SignalGroup, SignalGroupEvent, SignalGroupFilter};
 use crate::domain::{AttackEvent, Mitigation, MitigationStatus, Operator, OperatorRole};
 use crate::error::Result;
 use crate::observability::AuditEntry;
@@ -133,4 +134,32 @@ pub trait RepositoryTrait: Send + Sync {
         operator_id: Uuid,
         prefs: &NotificationPreferences,
     ) -> Result<()>;
+
+    // Signal groups (correlation engine)
+    /// Insert a new signal group. Uses ON CONFLICT for concurrent safety:
+    /// if a matching open group already exists, returns the existing group.
+    async fn insert_signal_group(&self, group: &SignalGroup) -> Result<SignalGroup>;
+    /// Update a signal group (derived_confidence, source_count, status, corroboration_met).
+    async fn update_signal_group(&self, group: &SignalGroup) -> Result<()>;
+    /// Get a signal group by ID.
+    async fn get_signal_group(&self, group_id: Uuid) -> Result<Option<SignalGroup>>;
+    /// Find an open signal group matching (victim_ip, vector) whose window hasn't expired.
+    async fn find_open_group(&self, victim_ip: &str, vector: &str) -> Result<Option<SignalGroup>>;
+    /// Add an event to a signal group (junction table). Returns false if already linked.
+    async fn add_event_to_group(
+        &self,
+        group_id: Uuid,
+        event_id: Uuid,
+        source_weight: f32,
+    ) -> Result<bool>;
+    /// List events belonging to a signal group, with denormalized source/confidence/ingested_at.
+    async fn list_signal_group_events(&self, group_id: Uuid) -> Result<Vec<SignalGroupEvent>>;
+    /// List signal groups with optional filters and cursor pagination.
+    async fn list_signal_groups(
+        &self,
+        filter: &SignalGroupFilter,
+        params: &ListParams,
+    ) -> Result<Vec<SignalGroup>>;
+    /// Count currently open signal groups.
+    async fn count_open_groups(&self) -> Result<u32>;
 }
