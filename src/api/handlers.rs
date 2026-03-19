@@ -3887,6 +3887,8 @@ pub struct SignalGroupDetailResponse {
     group: crate::correlation::SignalGroup,
     /// Contributing events with source, confidence, source_weight, ingested_at
     events: Vec<crate::correlation::SignalGroupEvent>,
+    /// Linked mitigation ID (present when a mitigation was created from this signal group)
+    mitigation_id: Option<Uuid>,
 }
 
 #[derive(Deserialize)]
@@ -4012,7 +4014,17 @@ pub async fn get_signal_group(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(SignalGroupDetailResponse { group, events }))
+    let mitigation_id = state
+        .repo
+        .find_mitigation_id_by_signal_group(id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(SignalGroupDetailResponse {
+        group,
+        events,
+        mitigation_id,
+    }))
 }
 
 // ==========================================================================

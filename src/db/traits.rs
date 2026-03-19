@@ -164,4 +164,9 @@ pub trait RepositoryTrait: Send + Sync {
     async fn count_open_groups(&self) -> Result<u32>;
     /// Find open signal groups whose window has expired (for expiry sweep).
     async fn find_expired_signal_groups(&self) -> Result<Vec<SignalGroup>>;
+    /// Find the mitigation ID linked to a specific signal group (if any).
+    async fn find_mitigation_id_by_signal_group(
+        &self,
+        signal_group_id: Uuid,
+    ) -> Result<Option<Uuid>>;
 }

@@ -10,6 +10,7 @@ import { ActionBadge } from "@/components/dashboard/action-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { ArrowLeft, Check, Clock, Copy, FileText, ShieldAlert, Activity, GitBranch, RefreshCw, AlertTriangle, User, Terminal, Layers, CheckCircle2, Info } from "lucide-react"
 import { FlowSpecPreview, formatFlowSpecRule } from "@/components/dashboard/flowspec-preview"
 import { IncidentReportDialog } from "@/components/dashboard/incident-report-dialog"
@@ -68,7 +69,7 @@ export default function MitigationDetailPage({ params }: { params: Promise<{ id:
 
   const { data: mitigation, isLoading, mutate } = useMitigation(id)
   const { data: inventory } = useConfigInventory()
-  const { data: signalGroupDetail } = useSignalGroupDetail(
+  const { data: signalGroupDetail, isLoading: isSignalGroupLoading } = useSignalGroupDetail(
     mitigation?.correlation?.signal_group_id ?? null
   )
 
@@ -403,7 +404,16 @@ export default function MitigationDetailPage({ params }: { params: Promise<{ id:
                   </div>
 
                   {/* Contributing Sources Table (from signal group detail) */}
-                  {signalGroupDetail?.events && signalGroupDetail.events.length > 0 && (
+                  {isSignalGroupLoading ? (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-2">Contributing Sources</p>
+                      <div className="space-y-2">
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-3/4" />
+                      </div>
+                    </div>
+                  ) : signalGroupDetail?.events && signalGroupDetail.events.length > 0 ? (
                     <div>
                       <p className="text-xs text-muted-foreground mb-2">Contributing Sources</p>
                       <div className="overflow-x-auto">
@@ -429,7 +439,7 @@ export default function MitigationDetailPage({ params }: { params: Promise<{ id:
                         </table>
                       </div>
                     </div>
-                  )}
+                  ) : null}
 
                   {/* Why Explanation */}
                   {mitigation.correlation.explanation && (

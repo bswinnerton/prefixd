@@ -665,4 +665,15 @@ impl RepositoryTrait for MockRepository {
             .cloned()
             .collect())
     }
+
+    async fn find_mitigation_id_by_signal_group(
+        &self,
+        signal_group_id: Uuid,
+    ) -> Result<Option<Uuid>> {
+        let mitigations = self.mitigations.lock().unwrap();
+        Ok(mitigations
+            .iter()
+            .find(|m| m.signal_group_id == Some(signal_group_id))
+            .map(|m| m.mitigation_id))
+    }
 }

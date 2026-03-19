@@ -2867,6 +2867,12 @@ async fn test_signal_group_detail_with_events() {
     assert!(detail["status"].is_string());
     assert!(detail["corroboration_met"].is_boolean());
 
+    // Verify mitigation_id is present (min_sources=1, so mitigation was created)
+    assert!(
+        detail["mitigation_id"].is_string(),
+        "Signal group detail should include mitigation_id when mitigation was created"
+    );
+
     // Verify events list
     assert!(detail["events"].is_array());
     let events = detail["events"].as_array().unwrap();
@@ -2877,6 +2883,57 @@ async fn test_signal_group_detail_with_events() {
     assert!(ev["source"].is_string());
     assert!(ev["confidence"].is_number());
     assert!(ev["ingested_at"].is_string());
+}
+
+/// Signal group detail has null mitigation_id when no mitigation was created
+#[tokio::test]
+async fn test_signal_group_detail_no_mitigation_id() {
+    // Use min_sources=2 so first event alone does not trigger mitigation
+    let (app, _repo) = setup_app_correlation_with_repo(2, 0.5).await;
+
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    post_event(&app, &event).await;
+
+    // Get the group ID
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/signal-groups")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let group_id = json["groups"][0]["group_id"].as_str().unwrap().to_string();
+
+    // GET /v1/signal-groups/{id}
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&format!("/v1/signal-groups/{}", group_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let detail: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // mitigation_id should be null since only one source submitted (need 2)
+    assert!(
+        detail["mitigation_id"].is_null(),
+        "Signal group detail should have null mitigation_id when no mitigation exists"
+    );
 }
 
 /// VAL-ENGINE-017: GET /v1/signal-groups/{id} returns 404 for unknown group

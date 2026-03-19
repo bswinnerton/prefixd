@@ -1113,6 +1113,19 @@ impl RepositoryTrait for Repository {
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
+
+    async fn find_mitigation_id_by_signal_group(
+        &self,
+        signal_group_id: Uuid,
+    ) -> Result<Option<Uuid>> {
+        let row: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT mitigation_id FROM mitigations WHERE signal_group_id = $1 LIMIT 1",
+        )
+        .bind(signal_group_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| r.0))
+    }
 }
 
 // ── Signal group row types ─────────────────────────────────────────────

@@ -1,7 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
-import { useSWRConfig } from "swr"
+import { useState, useCallback, useEffect } from "react"
 import { toast } from "sonner"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -16,6 +15,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useCorrelationConfig, useConfigPlaybooks } from "@/hooks/use-api"
 import { usePermissions } from "@/hooks/use-permissions"
@@ -209,6 +218,8 @@ function SignalSourceCards() {
   const { isAdmin } = usePermissions()
   const [editingSource, setEditingSource] = useState<{ name: string; config: SourceConfig } | null>(null)
   const [addingSource, setAddingSource] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   if (!config) return null
 
@@ -216,6 +227,7 @@ function SignalSourceCards() {
 
   const handleDeleteSource = async (name: string) => {
     if (!config) return
+    setDeleting(true)
     const updated = { ...config, sources: { ...config.sources } }
     delete updated.sources[name]
     try {
@@ -224,6 +236,9 @@ function SignalSourceCards() {
       toast.success(`Removed source "${name}"`)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to remove source")
+    } finally {
+      setDeleting(false)
+      setDeleteConfirm(null)
     }
   }
 
@@ -307,7 +322,7 @@ function SignalSourceCards() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => handleDeleteSource(name)}
+                      onClick={() => setDeleteConfirm(name)}
                       className="h-6 text-[10px] font-mono px-2 text-destructive hover:text-destructive"
                     >
                       <Trash2 className="h-2.5 w-2.5 mr-1" />
@@ -330,6 +345,31 @@ function SignalSourceCards() {
         initialConfig={editingSource?.config}
         isNew={addingSource}
       />
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteConfirm != null} onOpenChange={(open) => { if (!open) setDeleteConfirm(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Signal Source</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove the signal source{" "}
+              <span className="font-mono font-semibold">{deleteConfirm}</span>{" "}
+              and its weight configuration. Events from this source will still be accepted
+              using the default weight.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteConfirm && handleDeleteSource(deleteConfirm)}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? "Removing..." : "Remove"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   )
 }
@@ -366,11 +406,11 @@ function SourceDialog({
   }
 
   // Sync form when initialName/initialConfig change
-  useState(() => {
+  useEffect(() => {
     setName(initialName || "")
     setWeight(initialConfig?.weight?.toString() || "1.0")
     setType(initialConfig?.type || "detector")
-  })
+  }, [initialName, initialConfig])
 
   const handleSave = async () => {
     if (!name.trim()) return
