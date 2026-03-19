@@ -274,10 +274,10 @@ Replace the GoBGP container dependency with [rustbgpd](https://github.com/lance0
 
 Example: FastNetMon says UDP flood at 0.6 confidence + router CPU spiking + host conntrack exhaustion = **high-confidence mitigation**.
 
-### Signal Adapters (start with one)
+### Signal Adapters
 
-- [ ] Prometheus/Alertmanager adapter (metric queries, webhook receiver) — most universal, many operators already have this
-- [ ] Enhanced FastNetMon adapter (configurable confidence mapping) — common pairing for self-hosted
+- [x] Prometheus/Alertmanager adapter (`POST /v1/signals/alertmanager` webhook receiver) — maps labels/annotations to attack events, handles batched alerts
+- [x] FastNetMon webhook adapter (`POST /v1/signals/fastnetmon`) — classifies vectors from traffic breakdown, configurable confidence mapping
 - [ ] Router telemetry adapter (JTI, gNMI)
 
 ### Correlation Engine

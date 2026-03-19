@@ -23,9 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Backend unit tests increased from 126 to 173 (correlation engine, config parsing, corroboration, explainability)
-- Integration tests increased from 44 to 80 (signal group CRUD, correlation flow, concurrent event handling, Alertmanager adapter)
-- Postgres integration tests increased from 9 to 15 (signal group operations)
+- Backend unit tests increased from 126 to 179 (correlation engine, config parsing, corroboration, explainability, signal adapters)
+- Integration tests increased from 44 to 99 (signal group CRUD, correlation flow, concurrent event handling, Alertmanager adapter, FastNetMon adapter, correlation config API)
+- Postgres integration tests increased from 9 to 16 (signal group operations)
+- Frontend tests increased from 34 to 67 (correlation dashboard, signal group detail, mitigation detail correlation)
 
 ## [0.13.0] - 2026-03-19
 
