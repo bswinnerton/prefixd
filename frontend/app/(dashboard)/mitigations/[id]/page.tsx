@@ -9,9 +9,10 @@ import { ActionBadge } from "@/components/dashboard/action-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Check, Clock, Copy, ShieldAlert, Activity, GitBranch, RefreshCw, AlertTriangle, User, Terminal } from "lucide-react"
+import { ArrowLeft, Check, Clock, Copy, FileText, ShieldAlert, Activity, GitBranch, RefreshCw, AlertTriangle, User, Terminal } from "lucide-react"
 import { FlowSpecPreview, formatFlowSpecRule } from "@/components/dashboard/flowspec-preview"
-import { withdrawMitigation } from "@/lib/api"
+import { IncidentReportDialog } from "@/components/dashboard/incident-report-dialog"
+import { withdrawMitigation, getIncidentReport } from "@/lib/api"
 import { useState } from "react"
 import {
   AlertDialog,
@@ -72,6 +73,9 @@ export default function MitigationDetailPage({ params }: { params: { id: string 
   const [withdrawReason, setWithdrawReason] = useState("")
   const [isWithdrawing, setIsWithdrawing] = useState(false)
   const [withdrawError, setWithdrawError] = useState<string | null>(null)
+  const [reportMarkdown, setReportMarkdown] = useState<string | null>(null)
+  const [showReportDialog, setShowReportDialog] = useState(false)
+  const [reportLoading, setReportLoading] = useState(false)
 
   const copyToClipboard = (text: string, field: string) => {
     navigator.clipboard.writeText(text)
@@ -91,6 +95,20 @@ export default function MitigationDetailPage({ params }: { params: { id: string 
       setWithdrawError(e instanceof Error ? e.message : "Failed to withdraw")
     } finally {
       setIsWithdrawing(false)
+    }
+  }
+
+  const handleGenerateReport = async () => {
+    if (!mitigation) return
+    setShowReportDialog(true)
+    setReportLoading(true)
+    try {
+      const md = await getIncidentReport({ mitigation_id: mitigation.mitigation_id })
+      setReportMarkdown(md)
+    } catch {
+      setReportMarkdown(null)
+    } finally {
+      setReportLoading(false)
     }
   }
 
@@ -156,16 +174,20 @@ export default function MitigationDetailPage({ params }: { params: { id: string 
               <div className="text-sm text-muted-foreground mb-1">Current Action</div>
               <ActionBadge actionType={mitigation.action_type} rateBps={mitigation.rate_bps} />
             </div>
-            {permissions.canWithdraw && canWithdraw && (
+            <Button variant="outline" size="sm" onClick={handleGenerateReport}>
+              <FileText className="h-4 w-4 mr-2" />
+              Report
+            </Button>
+            {permissions.canWithdraw && canWithdraw ? (
               <Button
                 variant="destructive"
                 onClick={() => setShowWithdrawDialog(true)}
-                className="ml-4"
+                className="ml-2"
               >
                 <AlertTriangle className="h-4 w-4 mr-2" />
                 Withdraw
               </Button>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -439,6 +461,14 @@ export default function MitigationDetailPage({ params }: { params: { id: string 
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <IncidentReportDialog
+        markdown={reportMarkdown}
+        filename={`incident-${mitigation.victim_ip}-${mitigation.mitigation_id.slice(0, 8)}.md`}
+        open={showReportDialog}
+        onOpenChange={setShowReportDialog}
+        loading={reportLoading}
+      />
     </DashboardLayout>
   )
 }

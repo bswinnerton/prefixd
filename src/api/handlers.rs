@@ -1,7 +1,7 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    http::{HeaderMap, StatusCode, header, header::AUTHORIZATION},
     response::IntoResponse,
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -3072,4 +3072,369 @@ pub async fn update_notification_preferences(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(StatusCode::OK)
+}
+
+// --- Incident Report ---
+
+#[derive(Deserialize)]
+pub struct IncidentReportQuery {
+    mitigation_id: Option<Uuid>,
+    ip: Option<String>,
+}
+
+/// Generate a markdown incident report for a given IP or mitigation
+#[utoipa::path(
+    get,
+    path = "/v1/reports/incident",
+    tag = "reports",
+    params(
+        ("mitigation_id" = Option<String>, Query, description = "Mitigation ID to generate report for"),
+        ("ip" = Option<String>, Query, description = "IP address to generate report for"),
+    ),
+    responses(
+        (status = 200, description = "Markdown incident report", content_type = "text/markdown"),
+        (status = 400, description = "Bad request — must provide exactly one of mitigation_id or ip"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Mitigation not found")
+    )
+)]
+pub async fn generate_incident_report(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    Query(query): Query<IncidentReportQuery>,
+) -> impl IntoResponse {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    if let Err(status) = require_auth(&state, &auth_session, auth_header) {
+        return (status, HeaderMap::new(), String::new()).into_response();
+    }
+
+    // Require exactly one of mitigation_id or ip
+    let ip = match (query.mitigation_id, &query.ip) {
+        (Some(mid), None) => {
+            let mitigation = match state.repo.get_mitigation(mid).await {
+                Ok(Some(m)) => m,
+                Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            };
+            mitigation.victim_ip
+        }
+        (None, Some(ip_str)) => ip_str.clone(),
+        _ => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    if validate_ip(&ip).is_err() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
+    // Fetch events and mitigations in parallel
+    let (events, mitigations) = match tokio::try_join!(
+        state.repo.list_events_by_ip(&ip, 1000),
+        state.repo.list_mitigations_by_ip(&ip, 100),
+    ) {
+        Ok(data) => data,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    // Determine earliest timestamp across all events/mitigations for audit range
+    let earliest: Option<DateTime<Utc>> = {
+        let event_min = events.iter().map(|e| e.event_timestamp).min();
+        let mit_min = mitigations.iter().map(|m| m.created_at).min();
+        match (event_min, mit_min) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    };
+
+    // Fetch audit entries
+    let audit_params = crate::db::ListParams {
+        limit: 1000,
+        cursor: None,
+        start: earliest,
+        end: None,
+    };
+    let all_audit = match state.repo.list_audit(&audit_params).await {
+        Ok(entries) => entries,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    // Build set of relevant IDs (mitigation IDs + event IDs) for filtering audit
+    let relevant_ids: std::collections::HashSet<String> = {
+        let mut ids = std::collections::HashSet::new();
+        for m in &mitigations {
+            ids.insert(m.mitigation_id.to_string());
+        }
+        for e in &events {
+            ids.insert(e.event_id.to_string());
+        }
+        ids
+    };
+
+    let audit_entries: Vec<&crate::observability::AuditEntry> = all_audit
+        .iter()
+        .filter(|a| {
+            a.target_id
+                .as_ref()
+                .is_some_and(|tid| relevant_ids.contains(tid))
+        })
+        .collect();
+
+    // Inventory lookup for customer/service context
+    let inventory = state.inventory.read().await;
+    let mut customer_name: Option<String> = None;
+    let mut customer_id: Option<String> = None;
+    let mut service_name: Option<String> = None;
+    let mut service_id: Option<String> = None;
+    'customer_search: for customer in &inventory.customers {
+        for service in &customer.services {
+            if service
+                .assets
+                .iter()
+                .any(|asset| asset.ip.as_str() == ip.as_str())
+            {
+                customer_name = Some(customer.name.clone());
+                customer_id = Some(customer.customer_id.clone());
+                service_name = Some(service.name.clone());
+                service_id = Some(service.service_id.clone());
+                break 'customer_search;
+            }
+        }
+    }
+    drop(inventory);
+
+    // Compute derived fields
+    let peak_bps: Option<i64> = events.iter().filter_map(|e| e.bps).max();
+    let peak_pps: Option<i64> = events.iter().filter_map(|e| e.pps).max();
+
+    let now = Utc::now();
+
+    // Build timeline entries
+    struct TimelineEntry {
+        timestamp: DateTime<Utc>,
+        kind: String,
+        description: String,
+    }
+
+    let mut timeline: Vec<TimelineEntry> = Vec::new();
+
+    for e in &events {
+        timeline.push(TimelineEntry {
+            timestamp: e.event_timestamp,
+            kind: "Event".to_string(),
+            description: format!(
+                "Attack event `{}` — {} from source `{}`{}{}",
+                e.event_id,
+                e.vector,
+                e.source,
+                e.bps
+                    .map(|b| format!(", {}", format_bps(b)))
+                    .unwrap_or_default(),
+                e.pps
+                    .map(|p| format!(", {}", format_pps(p)))
+                    .unwrap_or_default(),
+            ),
+        });
+    }
+
+    for m in &mitigations {
+        timeline.push(TimelineEntry {
+            timestamp: m.created_at,
+            kind: "Mitigation".to_string(),
+            description: format!(
+                "Mitigation `{}` created — {} {} on `{}`",
+                m.mitigation_id, m.action_type, m.vector, m.match_criteria.dst_prefix,
+            ),
+        });
+        if let Some(withdrawn_at) = m.withdrawn_at {
+            timeline.push(TimelineEntry {
+                timestamp: withdrawn_at,
+                kind: "Mitigation".to_string(),
+                description: format!(
+                    "Mitigation `{}` {} — {}",
+                    m.mitigation_id, m.status, m.reason,
+                ),
+            });
+        }
+    }
+
+    for a in &audit_entries {
+        timeline.push(TimelineEntry {
+            timestamp: a.timestamp,
+            kind: "Audit".to_string(),
+            description: format!(
+                "`{}` by {}{}",
+                a.action,
+                a.actor_id.as_deref().unwrap_or("system"),
+                a.target_id
+                    .as_ref()
+                    .map(|tid| format!(" on `{}`", tid))
+                    .unwrap_or_default(),
+            ),
+        });
+    }
+
+    timeline.sort_by_key(|t| t.timestamp);
+
+    // Build markdown
+    let mut md = String::with_capacity(4096);
+
+    md.push_str(&format!("# Incident Report — {}\n\n", ip));
+
+    md.push_str(&format!("- **Generated**: {}\n", now.to_rfc3339()));
+    if let Some(ref cid) = customer_id {
+        md.push_str(&format!(
+            "- **Customer**: {} (`{}`)\n",
+            customer_name.as_deref().unwrap_or(cid),
+            cid
+        ));
+    }
+    if let Some(ref sid) = service_id {
+        md.push_str(&format!(
+            "- **Service**: {} (`{}`)\n",
+            service_name.as_deref().unwrap_or(sid),
+            sid
+        ));
+    }
+    md.push('\n');
+
+    // Summary table
+    md.push_str("## Summary\n\n");
+    md.push_str("| Metric | Value |\n");
+    md.push_str("|--------|-------|\n");
+    md.push_str(&format!("| Total Events | {} |\n", events.len()));
+    md.push_str(&format!("| Total Mitigations | {} |\n", mitigations.len()));
+    md.push_str(&format!(
+        "| Active Mitigations | {} |\n",
+        mitigations.iter().filter(|m| m.is_active()).count()
+    ));
+    if let Some(bps) = peak_bps {
+        md.push_str(&format!("| Peak Traffic | {} |\n", format_bps(bps)));
+    }
+    if let Some(pps) = peak_pps {
+        md.push_str(&format!("| Peak PPS | {} |\n", format_pps(pps)));
+    }
+    md.push('\n');
+
+    // Timeline
+    if !timeline.is_empty() {
+        md.push_str("## Timeline\n\n");
+        md.push_str("| Timestamp | Type | Description |\n");
+        md.push_str("|-----------|------|-------------|\n");
+        for entry in &timeline {
+            md.push_str(&format!(
+                "| {} | {} | {} |\n",
+                entry.timestamp.to_rfc3339(),
+                entry.kind,
+                entry.description,
+            ));
+        }
+        md.push('\n');
+    }
+
+    // Events table
+    if !events.is_empty() {
+        md.push_str("## Events\n\n");
+        md.push_str("| Event ID | Timestamp | Source | Vector | BPS | PPS |\n");
+        md.push_str("|----------|-----------|--------|--------|-----|-----|\n");
+        for e in &events {
+            md.push_str(&format!(
+                "| `{}` | {} | {} | {} | {} | {} |\n",
+                e.event_id,
+                e.event_timestamp.to_rfc3339(),
+                e.source,
+                e.vector,
+                e.bps.map(format_bps).unwrap_or_else(|| "—".to_string()),
+                e.pps.map(format_pps).unwrap_or_else(|| "—".to_string()),
+            ));
+        }
+        md.push('\n');
+    }
+
+    // Mitigations table
+    if !mitigations.is_empty() {
+        md.push_str("## Mitigations\n\n");
+        md.push_str("| Mitigation ID | Status | Action | Vector | Prefix | Duration |\n");
+        md.push_str("|---------------|--------|--------|--------|--------|----------|\n");
+        for m in &mitigations {
+            let end_time = m.withdrawn_at.unwrap_or(m.expires_at).min(now);
+            let duration_secs = (end_time - m.created_at).num_seconds().max(0);
+            md.push_str(&format!(
+                "| `{}` | {} | {} | {} | `{}` | {} |\n",
+                m.mitigation_id,
+                m.status,
+                m.action_type,
+                m.vector,
+                m.match_criteria.dst_prefix,
+                format_duration(duration_secs),
+            ));
+        }
+        md.push('\n');
+    }
+
+    // Audit trail
+    if !audit_entries.is_empty() {
+        md.push_str("## Audit Trail\n\n");
+        md.push_str("| Timestamp | Action | Actor | Target |\n");
+        md.push_str("|-----------|--------|-------|--------|\n");
+        for a in &audit_entries {
+            md.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                a.timestamp.to_rfc3339(),
+                a.action,
+                a.actor_id.as_deref().unwrap_or("system"),
+                a.target_id.as_deref().unwrap_or("—"),
+            ));
+        }
+        md.push('\n');
+    }
+
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(header::CONTENT_TYPE, "text/markdown".parse().unwrap());
+    response_headers.insert(
+        header::CONTENT_DISPOSITION,
+        "attachment; filename=\"incident-report.md\""
+            .parse()
+            .unwrap(),
+    );
+
+    (StatusCode::OK, response_headers, md).into_response()
+}
+
+fn format_bps(bps: i64) -> String {
+    let abs = bps.unsigned_abs();
+    if abs >= 1_000_000_000 {
+        format!("{:.1} Gbps", bps as f64 / 1_000_000_000.0)
+    } else if abs >= 1_000_000 {
+        format!("{:.1} Mbps", bps as f64 / 1_000_000.0)
+    } else {
+        format!("{} Kbps", bps / 1_000)
+    }
+}
+
+fn format_pps(pps: i64) -> String {
+    let abs = pps.unsigned_abs();
+    if abs >= 1_000_000 {
+        format!("{:.1}M pps", pps as f64 / 1_000_000.0)
+    } else if abs >= 1_000 {
+        format!("{}K pps", pps / 1_000)
+    } else {
+        format!("{} pps", pps)
+    }
+}
+
+fn format_duration(seconds: i64) -> String {
+    if seconds <= 0 {
+        return "0m".to_string();
+    }
+    let days = seconds / 86400;
+    let hours = (seconds % 86400) / 3600;
+    let minutes = (seconds % 3600) / 60;
+
+    if days > 0 {
+        format!("{}d {}h", days, hours)
+    } else if hours > 0 {
+        format!("{}h {}m", hours, minutes)
+    } else {
+        format!("{}m", minutes)
+    }
 }

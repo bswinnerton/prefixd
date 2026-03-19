@@ -102,6 +102,10 @@ fn api_routes() -> Router<Arc<AppState>> {
             get(handlers::get_notification_preferences)
                 .put(handlers::update_notification_preferences),
         )
+        .route(
+            "/v1/reports/incident",
+            get(handlers::generate_incident_report),
+        )
 }
 
 /// Common layers applied to both production and test routers

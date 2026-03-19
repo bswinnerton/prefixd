@@ -8,7 +8,9 @@ import { useIpHistory } from "@/hooks/use-api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Search, AlertTriangle, Shield, ArrowRight, User, Server } from "lucide-react"
+import { Search, AlertTriangle, Shield, ArrowRight, User, Server, FileText } from "lucide-react"
+import { IncidentReportDialog } from "@/components/dashboard/incident-report-dialog"
+import { getIncidentReport } from "@/lib/api"
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleString()
@@ -31,8 +33,25 @@ export default function IpHistoryPage() {
   const initialIp = searchParams.get("ip") || ""
   const [searchInput, setSearchInput] = useState(initialIp)
   const [activeIp, setActiveIp] = useState(initialIp)
+  const [reportMarkdown, setReportMarkdown] = useState<string | null>(null)
+  const [showReportDialog, setShowReportDialog] = useState(false)
+  const [reportLoading, setReportLoading] = useState(false)
 
   const { data, isLoading, error } = useIpHistory(activeIp || null)
+
+  const handleGenerateReport = async () => {
+    if (!activeIp) return
+    setShowReportDialog(true)
+    setReportLoading(true)
+    try {
+      const md = await getIncidentReport({ ip: activeIp })
+      setReportMarkdown(md)
+    } catch {
+      setReportMarkdown(null)
+    } finally {
+      setReportLoading(false)
+    }
+  }
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault()
@@ -107,6 +126,12 @@ export default function IpHistoryPage() {
           <Button type="submit" size="default">
             Lookup
           </Button>
+          {activeIp ? (
+            <Button variant="outline" size="default" onClick={handleGenerateReport}>
+              <FileText className="h-4 w-4 mr-2" />
+              Report
+            </Button>
+          ) : null}
         </form>
 
         {!activeIp && (
@@ -234,6 +259,14 @@ export default function IpHistoryPage() {
           </>
         )}
       </div>
+
+      <IncidentReportDialog
+        markdown={reportMarkdown}
+        filename={`incident-${activeIp}.md`}
+        open={showReportDialog}
+        onOpenChange={setShowReportDialog}
+        loading={reportLoading}
+      />
     </DashboardLayout>
   )
 }

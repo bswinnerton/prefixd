@@ -1183,6 +1183,33 @@ See [FEATURES.md](../FEATURES.md#prometheus-metrics) for full metric list.
 
 ---
 
+## Incident Reports
+
+### Generate Incident Report
+
+```http
+GET /v1/reports/incident?mitigation_id=<uuid>
+GET /v1/reports/incident?ip=<ip>
+Authorization: Bearer <token>
+```
+
+Generates a markdown incident report for a specific mitigation or all activity for an IP address. Exactly one of `mitigation_id` or `ip` must be provided.
+
+The report includes: summary table, chronological timeline, events table with peak traffic, mitigations table with durations, and audit trail. Customer and service context is included from inventory when available.
+
+**Response:** `200 OK` with `Content-Type: text/markdown`
+
+The response body is a markdown document suitable for pasting into Slack, email, or Jira.
+
+| Status | Meaning |
+|--------|---------|
+| 200 | Report generated |
+| 400 | Missing or invalid parameters (must provide exactly one of mitigation_id or ip) |
+| 401 | Authentication required |
+| 404 | Mitigation not found (when using mitigation_id) |
+
+---
+
 ## Error Responses
 
 Structured errors follow this format:

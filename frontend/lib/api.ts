@@ -630,6 +630,22 @@ export interface NotificationPreferences {
   quiet_hours_end: number | null
 }
 
+// Incident reports
+
+export async function getIncidentReport(params: { mitigation_id?: string; ip?: string }): Promise<string> {
+  const searchParams = new URLSearchParams()
+  if (params.mitigation_id) searchParams.set("mitigation_id", params.mitigation_id)
+  if (params.ip) searchParams.set("ip", params.ip)
+  const res = await fetch(`${API_BASE}/v1/reports/incident?${searchParams}`, {
+    credentials: "include",
+  })
+  if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined") dispatchAuthExpired()
+    throw new Error(`API error ${res.status}: ${await res.text()}`)
+  }
+  return res.text()
+}
+
 export async function getNotificationPreferences(): Promise<NotificationPreferences> {
   return fetchApi<NotificationPreferences>("/v1/preferences")
 }

@@ -218,7 +218,7 @@ Target: Quality-of-life for operators during active incidents. These are the fea
 ### Investigation UX
 
 - [x] **Date range filtering** — `?start=&end=` query params on events, mitigations, and audit log endpoints
-- [ ] **Post-attack incident reports** — Formatted PDF/markdown summary (timeline, peak traffic, actions taken)
+- [x] **Post-attack incident reports** — `GET /v1/reports/incident` generates markdown summary (timeline, peak traffic, actions taken). PDF export tracked as follow-up. `prefixdctl report` command tracked as follow-up.
 - [x] **FlowSpec rule preview** — Human-readable display of announced NLRI on mitigation detail page
 
 ### Notification Tuning

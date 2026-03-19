@@ -1578,6 +1578,137 @@ async fn test_batch_event_ingestion_exceeds_limit() {
 }
 
 // ---------------------------------------------------------------------------
+// Incident reports
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_incident_report_by_mitigation_id() {
+    let app = setup_app().await;
+
+    // Ingest event to create a mitigation
+    let body = serde_json::json!({
+        "timestamp": "2026-01-16T14:00:00Z",
+        "source": "fastnetmon",
+        "victim_ip": "203.0.113.230",
+        "vector": "udp_flood",
+        "bps": 5000000000i64,
+        "pps": 500000
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/events")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let event_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let mitigation_id = event_json["mitigation_id"].as_str().unwrap_or_default();
+
+    // Generate report by mitigation_id
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&format!(
+                    "/v1/reports/incident?mitigation_id={}",
+                    mitigation_id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let ct = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(ct.contains("text/markdown"));
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let markdown = String::from_utf8(body.to_vec()).unwrap();
+    assert!(markdown.contains("# Incident Report"));
+    assert!(markdown.contains("203.0.113.230"));
+    assert!(markdown.contains("## Summary"));
+    assert!(markdown.contains("## Timeline"));
+    assert!(markdown.contains("## Events"));
+    assert!(markdown.contains("## Mitigations"));
+}
+
+#[tokio::test]
+async fn test_incident_report_by_ip() {
+    let app = setup_app().await;
+
+    // Ingest event
+    let body = serde_json::json!({
+        "timestamp": "2026-01-16T15:00:00Z",
+        "source": "fastnetmon",
+        "victim_ip": "203.0.113.231",
+        "vector": "syn_flood",
+        "bps": 2000000000i64
+    });
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/events")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Generate report by IP
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/reports/incident?ip=203.0.113.231")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let markdown = String::from_utf8(body.to_vec()).unwrap();
+    assert!(markdown.contains("# Incident Report"));
+    assert!(markdown.contains("203.0.113.231"));
+}
+
+#[tokio::test]
+async fn test_incident_report_missing_params() {
+    let app = setup_app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/reports/incident")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+// ---------------------------------------------------------------------------
 // Per-destination event routing
 // ---------------------------------------------------------------------------
 

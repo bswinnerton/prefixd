@@ -45,6 +45,7 @@ use crate::db::{GlobalStats, NotificationPreferences, PopInfo, PopStats, Safelis
         super::handlers::get_ip_history,
         super::handlers::get_notification_preferences,
         super::handlers::update_notification_preferences,
+        super::handlers::generate_incident_report,
     ),
     components(
         schemas(
@@ -86,6 +87,7 @@ use crate::db::{GlobalStats, NotificationPreferences, PopInfo, PopStats, Safelis
         (name = "stats", description = "Statistics and timeseries"),
         (name = "ip-history", description = "IP history and context"),
         (name = "preferences", description = "Notification preferences"),
+        (name = "reports", description = "Incident reports"),
     )
 )]
 pub struct ApiDoc;

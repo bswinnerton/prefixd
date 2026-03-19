@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Event batching** — `POST /v1/events/batch` accepts up to 100 events in a single request. Sequential processing through the full pipeline (validation, guardrails, policy, announce) with partial success semantics. Returns per-event results with `202 Accepted` (all succeeded) or `207 Multi-Status` (mixed).
 - **FlowSpec NLRI fuzz/property tests** — 8 proptest property-based tests for prefix parsing, NLRI roundtrip, and action roundtrip. Two cargo-fuzz targets (`fuzz_prefix_parse`, `fuzz_nlri_decode`) for offline fuzzing with libFuzzer.
+- **Post-attack incident reports** — `GET /v1/reports/incident?mitigation_id=X` or `?ip=X` generates a markdown incident report with summary, timeline, events, mitigations, and audit trail. "Generate Report" buttons on mitigation detail and IP history pages with copy/download dialog.
 
 ## [0.12.0] - 2026-03-18
 
