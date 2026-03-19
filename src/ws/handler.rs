@@ -13,16 +13,18 @@ use tokio::sync::broadcast;
 use super::WsMessage;
 use crate::AppState;
 use crate::auth::AuthSession;
+use crate::config::AuthMode;
 
 /// WebSocket endpoint handler
-/// Requires authenticated session (cookie-based)
+/// Requires authenticated session (cookie-based) unless auth_mode is none
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     auth_session: AuthSession,
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    // Require authenticated session for WebSocket
-    if auth_session.user.is_none() {
+    let auth_disabled = matches!(state.settings.http.auth.mode, AuthMode::None);
+
+    if !auth_disabled && auth_session.user.is_none() {
         tracing::debug!("WebSocket connection rejected: no authenticated session");
         return Err(StatusCode::UNAUTHORIZED);
     }
@@ -31,7 +33,7 @@ pub async fn ws_handler(
         .user
         .as_ref()
         .map(|u| u.username.clone())
-        .unwrap_or_default();
+        .unwrap_or_else(|| "anonymous".to_string());
 
     tracing::info!(username = %username, "WebSocket connection established");
 
