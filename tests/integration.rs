@@ -2353,6 +2353,80 @@ async fn test_correlation_guardrails_still_apply() {
     assert!(json["error"].as_str().unwrap().contains("safelist"));
 }
 
+/// Fix: If guardrails reject a corroborated mitigation, the signal group must stay 'open'
+/// (not incorrectly resolved). This verifies that group status is only set to 'resolved'
+/// AFTER insert_mitigation() succeeds.
+#[tokio::test]
+async fn test_correlation_guardrails_reject_keeps_group_open() {
+    let repo = Arc::new(MockRepository::new());
+    let announcer = Arc::new(MockAnnouncer::new());
+    let settings = test_settings_with_correlation(true, 1, 0.5);
+
+    // Add IP to safelist so guardrails will reject
+    repo.insert_safelist("203.0.113.10", "admin", Some("core router"))
+        .await
+        .unwrap();
+
+    let state = AppState::new(
+        settings,
+        test_inventory(),
+        test_playbooks(),
+        repo.clone(),
+        announcer,
+        std::path::PathBuf::from("."),
+    )
+    .expect("failed to create app state");
+
+    let app = create_test_router(state);
+
+    // Submit event — corroboration will be met (min_sources=1) but guardrails will reject
+    let event = make_event_json("detector_a", "203.0.113.10", 0.9);
+    let (status, _json) = post_event(&app, &event).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Verify: signal group was created and is still 'open' (not 'resolved')
+    let open_groups = repo
+        .list_signal_groups(
+            &prefixd::correlation::SignalGroupFilter {
+                status: Some(prefixd::correlation::SignalGroupStatus::Open),
+                ..Default::default()
+            },
+            &prefixd::db::ListParams {
+                limit: 100,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(open_groups.len(), 1, "should have one open group");
+
+    // Also verify no resolved groups exist
+    let resolved_groups = repo
+        .list_signal_groups(
+            &prefixd::correlation::SignalGroupFilter {
+                status: Some(prefixd::correlation::SignalGroupStatus::Resolved),
+                ..Default::default()
+            },
+            &prefixd::db::ListParams {
+                limit: 100,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resolved_groups.len(),
+        0,
+        "no groups should be resolved when guardrails reject"
+    );
+
+    // Verify the open group has corroboration_met = true (corroboration passed, but mitigation was rejected)
+    assert!(
+        open_groups[0].corroboration_met,
+        "corroboration should be met even though guardrails rejected"
+    );
+}
+
 // ── Signal Groups API Tests ────────────────────────────────────────────
 
 /// Helper: create an app with correlation enabled and a shared repo reference

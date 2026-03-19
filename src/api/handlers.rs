@@ -644,7 +644,7 @@ async fn handle_ban(
     let mut correlation_context: Option<CorrelationContext> = None;
 
     if correlation_config.enabled {
-        use crate::correlation::{CorrelationEngine, SignalGroupStatus};
+        use crate::correlation::CorrelationEngine;
 
         let vector_str = event.vector.clone();
 
@@ -785,15 +785,6 @@ async fn handle_ban(
             explanation: explanation.explanation,
         });
 
-        // Resolve signal group to 'resolved' since we are creating a mitigation
-        let mut resolved_group = updated_group;
-        resolved_group.status = SignalGroupStatus::Resolved;
-        state
-            .repo
-            .update_signal_group(&resolved_group)
-            .await
-            .map_err(AppError)?;
-
         tracing::info!(
             group_id = %group.group_id,
             source_count = source_count,
@@ -908,6 +899,14 @@ async fn handle_ban(
         .insert_mitigation(&mitigation)
         .await
         .map_err(AppError)?;
+
+    // Resolve signal group to 'resolved' now that mitigation is confirmed
+    if let Some(group_id) = signal_group_id {
+        if let Ok(Some(mut group)) = state.repo.get_signal_group(group_id).await {
+            group.status = crate::correlation::SignalGroupStatus::Resolved;
+            let _ = state.repo.update_signal_group(&group).await;
+        }
+    }
 
     // Build response with optional correlation context
     let mut mit_response = MitigationResponse::from(&mitigation);
