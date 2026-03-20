@@ -99,7 +99,7 @@ docs/
 ├── api.md                     # Full API reference with examples
 ├── deployment.md              # Docker + nginx deployment guide
 ├── configuration.md           # Full configuration reference
-└── adr/                       # 20 Architecture Decision Records (001-020)
+└── adr/                       # 19 Architecture Decision Records (001-019)
 grafana/                       # Prometheus config, Grafana provisioning, dashboard JSON
 tests/
 ├── integration.rs             # 99 integration tests (health, config, mitigations, events, filters, bulk withdraw, cursor pagination, bulk acknowledge, per-dest routing, preferences, event batch, incident reports, signal groups, correlation, signal adapters)
@@ -122,7 +122,7 @@ tests/
 10. **Route-group auth guard** - Next.js `(dashboard)/layout.tsx` wraps all protected pages
 11. **Mode-aware auth** - `none`/`bearer`/`credentials`/`mtls` with role checks on protected endpoints
 
-See `docs/adr/` for all 20 Architecture Decision Records.
+See `docs/adr/` for all 19 Architecture Decision Records.
 
 ## API Endpoints
 
@@ -255,7 +255,7 @@ Completed:
 - ErrorBoundary wrapping all dashboard pages
 - Cross-entity navigation (command palette → detail pages, event↔mitigation linking, audit log → mitigations, clickable stat cards)
 - Multi-signal correlation engine with signal groups, Alertmanager and FastNetMon adapters
-- 20 Architecture Decision Records
+- 19 Architecture Decision Records
 - CLI tool (prefixdctl) for all API operations
 - OpenAPI spec with utoipa annotations
 - 179 backend unit tests + 99 integration + 16 postgres tests (+ 17 ignored requiring GoBGP/Docker)
