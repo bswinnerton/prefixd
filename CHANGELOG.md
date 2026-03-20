@@ -5,7 +5,7 @@ All notable changes to prefixd will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.14.0] - 2026-03-20
 
 ### Added
 
@@ -826,7 +826,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Safelist prevents mitigation of protected infrastructure
 - Guardrails block overly broad mitigations
 
-[Unreleased]: https://github.com/lance0/prefixd/compare/v0.13.0...HEAD
+[0.14.0]: https://github.com/lance0/prefixd/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/lance0/prefixd/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/lance0/prefixd/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/lance0/prefixd/compare/v0.10.1...v0.11.0

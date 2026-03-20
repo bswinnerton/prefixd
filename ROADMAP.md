@@ -4,7 +4,7 @@ What's next for prefixd.
 
 ---
 
-## Current Status: v0.13.0
+## Current Status: v0.14.0
 
 Core functionality is stable:
 
@@ -22,7 +22,7 @@ See [CHANGELOG](CHANGELOG.md) for version history.
 
 ## Ship Blockers (Before v1.0)
 
-These blockers map directly to the `v1.0` release gates below. Keep both sections in sync when statuses change.
+These blockers map directly to the "Production Ready" release gates below. Keep both sections in sync when statuses change.
 
 ### Real Router Testing
 
@@ -141,7 +141,7 @@ These blockers map directly to the `v1.0` release gates below. Keep both section
 
 ---
 
-## v1.0: Production Ready (Interop + Stability)
+## Production Ready (Interop + Stability)
 
 Target: Validated with real routers, stable API, production-proven. Operators trust prefixd before we build new features.
 
@@ -206,7 +206,7 @@ Target: Validated with real routers, stable API, production-proven. Operators tr
 
 ---
 
-## v1.1: Operator Ergonomics
+## Operator Ergonomics (shipped in v0.12.0)
 
 Target: Quality-of-life for operators during active incidents. These are the features that reduce time-to-action during attack waves.
 
@@ -233,7 +233,7 @@ Target: Quality-of-life for operators during active incidents. These are the fea
 
 ---
 
-## v1.2: Native BGP Speaker (rustbgpd)
+## Native BGP Speaker (rustbgpd)
 
 Replace the GoBGP container dependency with [rustbgpd](https://github.com/lance0/rustbgpd) crates embedded directly into the prefixd binary. Eliminates the separate process, gRPC client overhead, proto compilation, and container orchestration. prefixd becomes a single binary that speaks BGP natively.
 
@@ -268,7 +268,7 @@ Replace the GoBGP container dependency with [rustbgpd](https://github.com/lance0
 
 ---
 
-## v1.3: Multi-Signal Correlation
+## Multi-Signal Correlation (shipped in v0.14.0)
 
 **The killer feature.** Combine weak signals from multiple detectors into high-confidence decisions. Start with one high-value adapter.
 
@@ -296,7 +296,7 @@ Example: FastNetMon says UDP flood at 0.6 confidence + router CPU spiking + host
 
 ---
 
-## v1.5+: Integrations + Advanced FlowSpec
+## Integrations + Advanced FlowSpec
 
 Broader ecosystem integration and advanced capabilities for large-scale deployments.
 
@@ -308,7 +308,7 @@ Broader ecosystem integration and advanced capabilities for large-scale deployme
 - [ ] LDAP/AD auth backend (group-to-role mapping)
 - [ ] RADIUS/ISE auth backend (attribute mapping to roles)
 - [ ] Customer self-service portal (per-customer dashboards for MSSPs)
-- ~~Native BGP speaker~~ — moved to v1.2 (rustbgpd integration)
+- ~~Native BGP speaker~~ — moved to its own milestone (rustbgpd integration)
 
 ### Advanced FlowSpec
 

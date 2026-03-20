@@ -131,7 +131,7 @@ prefixdctl migrations
 
 ## Version-Specific Notes
 
-### v0.13.0 -> v0.14.0 (Unreleased)
+### v0.13.0 -> v0.14.0
 
 #### New: Multi-Signal Correlation Engine
 
