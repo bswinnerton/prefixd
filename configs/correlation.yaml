@@ -1,0 +1,18 @@
+enabled: true
+window_seconds: 300
+min_sources: 1
+confidence_threshold: 0.5
+sources:
+  dashboard:
+    weight: 1.0
+    type: manual
+    confidence_mapping: {}
+  fastnetmon:
+    weight: 1.0
+    type: detector
+    confidence_mapping: {}
+  alertmanager:
+    weight: 0.8
+    type: telemetry
+    confidence_mapping: {}
+default_weight: 1.0

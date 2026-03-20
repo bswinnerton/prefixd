@@ -5,3 +5,4 @@
 lab/clab-*/
 .claude/
 .factory/
+*.yaml.bak
