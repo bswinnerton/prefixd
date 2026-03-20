@@ -45,6 +45,7 @@ src/
 ├── auth/              # AuthBackend (axum-login), mode-aware auth (none/bearer/credentials/mtls)
 ├── bgp/               # FlowSpecAnnouncer trait, GoBGP gRPC client, mock
 ├── config/            # Settings, Inventory, Playbooks (YAML parsing)
+├── correlation/       # Multi-signal correlation engine (config, engine, signal groups)
 ├── db/                # PostgreSQL repository with sqlx + MockRepository for testing
 ├── domain/            # Core types: AttackEvent, Mitigation, FlowSpecRule
 ├── guardrails/        # Validation, quotas, safelist protection
@@ -70,7 +71,8 @@ frontend/
 │   │   ├── audit-log/         # Audit trail
 │   │   ├── config/            # Settings (JSON) + Playbooks (cards) + hot-reload
 │   │   ├── admin/             # Tabbed: System Status, Safelist CRUD, User management
-│   │   └── ip-history/        # IP history timeline with search
+│   │   ├── ip-history/        # IP history timeline with search
+│   │   └── correlation/       # Correlation dashboard (Signals, Groups, Config tabs) + group detail
 │   ├── login/                 # Login page (outside auth guard)
 │   ├── globals.css            # Light + dark theme variables
 │   └── layout.tsx             # Root layout with ThemeProvider + Toaster
@@ -92,17 +94,18 @@ frontend/
 ├── vitest.config.ts           # Vitest config (jsdom, react plugin, @ alias)
 └── vitest.setup.ts            # jest-dom matchers
 
-configs/                       # prefixd.yaml, inventory.yaml, playbooks.yaml, nginx.conf, gobgp.conf
+configs/                       # prefixd.yaml, inventory.yaml, playbooks.yaml, correlation.yaml, nginx.conf, gobgp.conf
 docs/
 ├── api.md                     # Full API reference with examples
 ├── deployment.md              # Docker + nginx deployment guide
-└── adr/                       # 17 Architecture Decision Records (001-017)
+├── configuration.md           # Full configuration reference
+└── adr/                       # 19 Architecture Decision Records (001-019)
 grafana/                       # Prometheus config, Grafana provisioning, dashboard JSON
 tests/
-├── integration.rs             # 44 integration tests (health, config, mitigations, events, filters, bulk withdraw, cursor pagination, bulk acknowledge, per-dest routing, preferences, event batch, incident reports)
-├── integration_e2e.rs         # 6 end-to-end tests (ignored without Docker)
+├── integration.rs             # 99 integration tests (health, config, mitigations, events, filters, bulk withdraw, cursor pagination, bulk acknowledge, per-dest routing, preferences, event batch, incident reports, signal groups, correlation, signal adapters)
+├── integration_e2e.rs         # 9 end-to-end tests (ignored without Docker)
 ├── integration_gobgp.rs       # 8 tests (GoBGP integration, ignored without GoBGP)
-└── integration_postgres.rs    # 9 integration tests (Postgres-backed flows)
+└── integration_postgres.rs    # 16 integration tests (Postgres-backed flows, signal groups)
 ```
 
 ## Key Design Decisions
@@ -119,7 +122,7 @@ tests/
 10. **Route-group auth guard** - Next.js `(dashboard)/layout.tsx` wraps all protected pages
 11. **Mode-aware auth** - `none`/`bearer`/`credentials`/`mtls` with role checks on protected endpoints
 
-See `docs/adr/` for all 17 Architecture Decision Records.
+See `docs/adr/` for all 19 Architecture Decision Records.
 
 ## API Endpoints
 
@@ -157,12 +160,19 @@ See `docs/adr/` for all 17 Architecture Decision Records.
 - `GET/POST /v1/operators` - User management (admin only)
 - `DELETE /v1/operators/{id}` - Delete user (admin only)
 - `PUT /v1/operators/{id}/password` - Change password (admin only)
+- `GET /v1/signal-groups` - List signal groups (with pagination, status/vector/date filters)
+- `GET /v1/signal-groups/{id}` - Signal group detail with contributing events
+- `POST /v1/signals/alertmanager` - Alertmanager webhook adapter (v4 payload)
+- `POST /v1/signals/fastnetmon` - FastNetMon webhook adapter (native JSON)
+- `GET /v1/config/correlation` - Correlation config (admin, secrets redacted)
+- `PUT /v1/config/correlation` - Update correlation config (admin only, writes YAML + hot-reload)
 
 ## Data Flow
 
 1. **Event Ingestion** (`POST /v1/events`)
    - Validate input, check duplicates
    - Lookup IP context from inventory
+   - Correlate signals (if `correlation.enabled`): find/create signal group, check corroboration
    - Evaluate playbook for vector
    - Check guardrails (TTL, /32, quotas, safelist)
    - Create or extend mitigation
@@ -184,10 +194,10 @@ See `docs/adr/` for all 17 Architecture Decision Records.
 ## Testing
 
 ```bash
-# Backend unit tests (126 tests)
+# Backend unit tests (179 tests)
 cargo test
 
-# All backend tests including integration (179 runnable: 126 unit + 44 integration + 9 postgres; 14 ignored requiring GoBGP/Docker)
+# All backend tests including integration (294 runnable: 179 unit + 99 integration + 16 postgres; 17 ignored requiring GoBGP/Docker)
 cargo test --features test-utils
 
 # Lint
@@ -210,6 +220,7 @@ cargo run -- --config ./configs
 - `configs/prefixd.yaml` - Main daemon config
 - `configs/inventory.yaml` - Customer/service/IP mapping
 - `configs/playbooks.yaml` - Vector → action policies
+- `configs/correlation.yaml` - Correlation engine config (sources, weights, thresholds)
 - `configs/nginx.conf` - Reverse proxy config
 - `configs/gobgp.conf` - GoBGP BGP config
 
@@ -243,11 +254,12 @@ Completed:
 - Nginx reverse proxy (single-origin deployment)
 - ErrorBoundary wrapping all dashboard pages
 - Cross-entity navigation (command palette → detail pages, event↔mitigation linking, audit log → mitigations, clickable stat cards)
-- 17 Architecture Decision Records
+- Multi-signal correlation engine with signal groups, Alertmanager and FastNetMon adapters
+- 19 Architecture Decision Records
 - CLI tool (prefixdctl) for all API operations
 - OpenAPI spec with utoipa annotations
-- 126 backend unit tests + 53 integration tests (+ 14 ignored requiring GoBGP/Docker)
-- Vitest + Testing Library frontend test infrastructure (34 tests)
+- 179 backend unit tests + 99 integration + 16 postgres tests (+ 17 ignored requiring GoBGP/Docker)
+- Vitest + Testing Library frontend test infrastructure (64 tests)
 
 ## Code Conventions
 

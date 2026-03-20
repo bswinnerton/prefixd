@@ -150,8 +150,9 @@ playbooks:
 
 ### 3. Connect a detector
 
-Point your detector at prefixd's API:
+Point your detector at prefixd's API. Three integration paths:
 
+**Generic events API** (any detector):
 ```bash
 curl -X POST http://localhost/v1/events \
   -H "Content-Type: application/json" \
@@ -165,6 +166,12 @@ curl -X POST http://localhost/v1/events \
   }'
 ```
 
+**Native adapters** (zero-config signal translation):
+- **Alertmanager** → `POST /v1/signals/alertmanager` — maps labels/annotations to events
+- **FastNetMon** → `POST /v1/signals/fastnetmon` — accepts native JSON payload
+
+With [multi-signal correlation](docs/configuration.md#correlation) enabled, events from multiple detectors targeting the same IP are grouped and corroborated before triggering mitigation.
+
 See [FastNetMon Integration](docs/detectors/fastnetmon.md) for a complete setup guide.
 
 ### 4. Peer with your routers
@@ -177,7 +184,8 @@ Configure GoBGP neighbors in `configs/gobgp.conf` and set up FlowSpec import pol
 
 | Category | What it does |
 |----------|--------------|
-| **Signal Ingestion** | HTTP API accepts attack events from any detector |
+| **Signal Ingestion** | HTTP API + native Alertmanager and FastNetMon webhook adapters |
+| **Multi-Signal Correlation** | Time-windowed grouping of events from multiple detectors with source weighting and corroboration |
 | **Policy Engine** | YAML playbooks define per-vector responses with escalation |
 | **Guardrails** | Quotas, safelist, /32-only enforcement, mandatory TTLs |
 | **BGP FlowSpec** | Announces via GoBGP (traffic-rate, discard actions) |
@@ -192,13 +200,14 @@ Configure GoBGP neighbors in `configs/gobgp.conf` and set up FlowSpec import pol
 
 ## How It Works
 
-1. **Detector sends event** → `POST /v1/events` with victim IP, vector, confidence
+1. **Detector sends event** → `POST /v1/events`, `/v1/signals/alertmanager`, or `/v1/signals/fastnetmon`
 2. **Inventory lookup** → Find customer/service owning the IP
-3. **Playbook match** → Determine action (police/discard) based on vector
-4. **Guardrails check** → Validate quotas, safelist, prefix length
-5. **FlowSpec announce** → Send rule to GoBGP via gRPC
-6. **Router enforcement** → Traffic filtered at line rate
-7. **Auto-expiry** → Rule withdrawn when TTL expires
+3. **Signal correlation** → Group related signals by (victim_ip, vector), check corroboration
+4. **Playbook match** → Determine action (police/discard) based on vector
+5. **Guardrails check** → Validate quotas, safelist, prefix length
+6. **FlowSpec announce** → Send rule to GoBGP via gRPC
+7. **Router enforcement** → Traffic filtered at line rate
+8. **Auto-expiry** → Rule withdrawn when TTL expires
 
 **Fail-open design:** If prefixd dies, mitigations auto-expire. No permanent rules, no stuck state.
 
@@ -263,7 +272,7 @@ Current version: **v0.13.0**
 
 - **Issues:** [GitHub Issues](https://github.com/lance0/prefixd/issues)
 - **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
-- **Architecture Decision Records:** [docs/adr/](docs/adr/)
+- **Architecture Decision Records:** [docs/adr/](docs/adr/) (19 ADRs)
 
 ---
 

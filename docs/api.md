@@ -281,7 +281,8 @@ Authorization: Bearer <token>
       "last_event_id": "550e8400-e29b-41d4-a716-446655440000",
       "reason": "Vector policy: udp_flood",
       "acknowledged_at": null,
-      "acknowledged_by": null
+      "acknowledged_by": null,
+      "correlation": null
     }
   ],
   "count": 1,
@@ -289,6 +290,23 @@ Authorization: Bearer <token>
   "has_more": false
 }
 ```
+
+When a mitigation was created via multi-source corroboration (correlation engine enabled), the `correlation` field contains context about the decision:
+
+```json
+{
+  "correlation": {
+    "signal_group_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "derived_confidence": 0.75,
+    "source_count": 2,
+    "corroboration_met": true,
+    "contributing_sources": ["fastnetmon", "alertmanager"],
+    "explanation": "Corroboration met: 2 distinct source(s) (min=2) with derived confidence 0.75 (threshold=0.50). Sources: fastnetmon(conf=0.90, w=1.0), alertmanager(conf=0.60, w=0.8)"
+  }
+}
+```
+
+When correlation is disabled or the mitigation was created by a single source without corroboration, the `correlation` field is `null` or absent.
 
 ### Create Mitigation
 
@@ -346,7 +364,16 @@ Returns the full mitigation object (same shape as [Get Mitigation](#get-mitigati
 GET /v1/mitigations/{id}
 ```
 
-**Response:** Same as list item.
+**Response:** Same as list item, including the `correlation` field when present. For correlated mitigations, the correlation object includes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `signal_group_id` | UUID | Signal group that triggered this mitigation |
+| `derived_confidence` | float | Weighted average confidence from contributing events |
+| `source_count` | integer | Number of distinct detection sources |
+| `corroboration_met` | boolean | Whether corroboration threshold was met |
+| `contributing_sources` | array | List of source names that contributed |
+| `explanation` | string | Human-readable explanation of the correlation decision |
 
 ### Withdraw Mitigation
 
@@ -456,6 +483,357 @@ Content-Type: application/json
 ```
 
 Acknowledging marks a mitigation as reviewed by a human without changing its status. Re-acknowledging an already-acknowledged mitigation returns an error. Rejected mitigations cannot be acknowledged.
+
+---
+
+## Signal Groups
+
+Signal groups are created by the correlation engine when `correlation.enabled` is true. They group related attack events by (victim_ip, vector) within a configurable time window, enabling multi-source corroboration.
+
+### List Signal Groups
+
+```http
+GET /v1/signal-groups
+Authorization: Bearer <token>
+```
+
+**Query Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `status` | string | Filter by status: `open`, `resolved`, `expired` |
+| `vector` | string | Filter by attack vector |
+| `limit` | integer | Max results (default 100, max 1000) |
+| `cursor` | string | Cursor for pagination (from previous response `next_cursor`) |
+| `start` | string | Start of date range (ISO 8601, inclusive) |
+| `end` | string | End of date range (ISO 8601, exclusive) |
+
+**Response:**
+
+```json
+{
+  "groups": [
+    {
+      "group_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "victim_ip": "203.0.113.10",
+      "vector": "udp_flood",
+      "created_at": "2026-03-19T10:30:00Z",
+      "window_expires_at": "2026-03-19T10:35:00Z",
+      "derived_confidence": 0.75,
+      "source_count": 2,
+      "status": "resolved",
+      "corroboration_met": true
+    }
+  ],
+  "count": 1,
+  "next_cursor": null,
+  "has_more": false
+}
+```
+
+**Signal Group Status:**
+
+| Status | Description |
+|--------|-------------|
+| `open` | Accepting new events within the time window |
+| `resolved` | Corroboration met and mitigation created |
+| `expired` | Time window elapsed without sufficient corroboration |
+
+### Get Signal Group Detail
+
+```http
+GET /v1/signal-groups/{id}
+Authorization: Bearer <token>
+```
+
+Returns group metadata and all contributing events with source, confidence, and source weight.
+
+**Response:**
+
+```json
+{
+  "group_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "victim_ip": "203.0.113.10",
+  "vector": "udp_flood",
+  "created_at": "2026-03-19T10:30:00Z",
+  "window_expires_at": "2026-03-19T10:35:00Z",
+  "derived_confidence": 0.75,
+  "source_count": 2,
+  "status": "resolved",
+  "corroboration_met": true,
+  "events": [
+    {
+      "group_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "event_id": "550e8400-e29b-41d4-a716-446655440000",
+      "source_weight": 1.0,
+      "source": "fastnetmon",
+      "confidence": 0.9,
+      "ingested_at": "2026-03-19T10:30:01Z"
+    },
+    {
+      "group_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "event_id": "660e8400-e29b-41d4-a716-446655440001",
+      "source_weight": 0.8,
+      "source": "alertmanager",
+      "confidence": 0.6,
+      "ingested_at": "2026-03-19T10:31:15Z"
+    }
+  ]
+}
+```
+
+**Error Responses:**
+
+| Status | Reason |
+|--------|--------|
+| 401 | Authentication required |
+| 404 | Signal group not found |
+
+---
+
+## Signal Adapters
+
+Signal adapter endpoints accept webhooks from external detection and telemetry systems, translate their payloads into `AttackEventInput`, and feed them into the standard event ingestion pipeline (including correlation, guardrails, and policy evaluation). See [ADR 019](adr/019-signal-adapter-architecture.md).
+
+### Alertmanager Webhook
+
+```http
+POST /v1/signals/alertmanager
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+Accepts an [Alertmanager v4 webhook payload](https://prometheus.io/docs/alerting/latest/configuration/#webhook_config). Each alert in the `alerts[]` array is processed independently.
+
+**Request:**
+
+```json
+{
+  "version": "4",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "victim_ip": "203.0.113.10",
+        "vector": "udp_flood",
+        "severity": "critical",
+        "alertname": "DDoS_Alert"
+      },
+      "annotations": {
+        "bps": "500000000",
+        "pps": "1000000"
+      },
+      "startsAt": "2026-03-19T10:30:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph",
+      "fingerprint": "abc123def456"
+    }
+  ],
+  "groupLabels": { "alertname": "DDoS_Alert" },
+  "commonLabels": {},
+  "commonAnnotations": {},
+  "externalURL": "http://alertmanager.example.com"
+}
+```
+
+**Label Mapping:**
+
+| AttackEventInput field | Alertmanager source | Fallback |
+|---|---|---|
+| `vector` | `labels.vector` | `labels.alertname` |
+| `victim_ip` | `labels.victim_ip` | `labels.instance` (port stripped) |
+| `bps` | `annotations.bps` (parsed as i64) | None |
+| `pps` | `annotations.pps` (parsed as i64) | None |
+| `confidence` | `labels.severity` → `critical`=0.9, `warning`=0.7, `info`=0.5 | 0.5 |
+| `action` | `alerts[].status` ("resolved" → "unban", else "ban") | "ban" |
+| `event_id` (dedup) | `alerts[].fingerprint` | None |
+| `source` | hardcoded `"alertmanager"` | — |
+
+**Response (200):**
+
+```json
+{
+  "processed": 1,
+  "failed": 0,
+  "results": [
+    {
+      "index": 0,
+      "status": "accepted",
+      "event_id": "550e8400-e29b-41d4-a716-446655440000",
+      "mitigation_id": "660e8400-e29b-41d4-a716-446655440001"
+    }
+  ]
+}
+```
+
+**Per-alert status values:**
+
+| Status | Description |
+|--------|-------------|
+| `accepted` | Event created, mitigation may or may not be created |
+| `extended` | Existing mitigation TTL extended |
+| `duplicate` | Fingerprint already seen (dedup) |
+| `withdrawn` | Resolved alert triggered mitigation withdrawal |
+| `withdrawn_noop` | Resolved alert with no matching active mitigation |
+| `error` | Processing failed for this alert (see `error` field) |
+
+**Error Responses:**
+
+| Status | Reason |
+|--------|--------|
+| 400 | Malformed payload (invalid JSON, wrong version, empty alerts) |
+| 401 | Authentication required |
+
+> **Note:** Alertmanager will not retry 4xx errors, so malformed payloads return 400 to prevent infinite retry loops.
+
+**Alertmanager Configuration Snippet:**
+
+To point Alertmanager at prefixd, add a webhook receiver to your `alertmanager.yml`:
+
+```yaml
+receivers:
+  - name: 'prefixd'
+    webhook_configs:
+      - url: 'http://prefixd.example.com/v1/signals/alertmanager'
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: '<your-api-token>'
+        send_resolved: true
+```
+
+### FastNetMon Webhook
+
+```http
+POST /v1/signals/fastnetmon
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+Accepts FastNetMon's native JSON notify payload. Extracts attack vector from traffic breakdown, maps the `action` field to confidence via configurable mapping, and feeds the event into the standard ingestion pipeline (including correlation, guardrails, and policy evaluation).
+
+**Request:**
+
+```json
+{
+  "action": "ban",
+  "ip": "203.0.113.10",
+  "alert_scope": "host",
+  "attack_details": {
+    "attack_uuid": "550e8400-e29b-41d4-a716-446655440000",
+    "attack_severity": "high",
+    "attack_detection_source": "automatic",
+    "incoming_udp_pps": 500000,
+    "incoming_udp_traffic_bits": 4000000000,
+    "incoming_tcp_pps": 100,
+    "incoming_tcp_traffic_bits": 800000,
+    "incoming_syn_tcp_pps": 0,
+    "incoming_icmp_pps": 0,
+    "total_incoming_pps": 500100,
+    "total_incoming_traffic_bits": 4000800000,
+    "total_incoming_flows": 12000
+  }
+}
+```
+
+**Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `action` | string | yes | `"ban"`, `"unban"`, `"partial_block"`, or `"alert"` |
+| `ip` | string | yes | Victim IPv4 address under attack |
+| `alert_scope` | string | no | Scope: `"host"` or `"total"` |
+| `attack_details` | object | no | Traffic metrics and classification (see below) |
+
+**Attack Details Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `attack_uuid` | string | Unique attack ID (used as `external_event_id` for dedup) |
+| `attack_severity` | string | Severity: `"low"`, `"middle"`, `"high"` |
+| `attack_detection_source` | string | How detected: `"automatic"`, `"manual"` |
+| `incoming_udp_pps` | integer | UDP packets per second |
+| `incoming_udp_traffic_bits` | integer | UDP bits per second |
+| `incoming_tcp_pps` | integer | TCP packets per second |
+| `incoming_syn_tcp_pps` | integer | SYN TCP packets per second |
+| `incoming_icmp_pps` | integer | ICMP packets per second |
+| `total_incoming_pps` | integer | Total incoming packets per second |
+| `total_incoming_traffic_bits` | integer | Total incoming bits per second |
+| `total_incoming_flows` | integer | Total incoming flow count |
+
+**Confidence Mapping:**
+
+The `action` field maps to a confidence score (configurable in correlation config):
+
+| Action | Default Confidence |
+|--------|--------------------|
+| `ban` | 0.9 |
+| `partial_block` | 0.7 |
+| `alert` | 0.5 |
+| Other | 0.5 |
+
+Override per-source confidence in `prefixd.yaml`:
+
+```yaml
+correlation:
+  sources:
+    fastnetmon:
+      weight: 1.0
+      type: detector
+      confidence_mapping:
+        ban: 0.95
+        partial_block: 0.8
+        alert: 0.4
+```
+
+**Vector Classification:**
+
+The attack vector is automatically classified from the traffic breakdown in `attack_details`:
+
+- **UDP dominant** → `udp_flood`
+- **SYN TCP dominant** (>60% of TCP PPS) → `syn_flood`
+- **ICMP dominant** → `icmp_flood`
+- **Other TCP** → `ack_flood`
+- **No details** → `unknown`
+
+**Response (202 Accepted):**
+
+```json
+{
+  "event_id": "550e8400-e29b-41d4-a716-446655440000",
+  "external_event_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "accepted",
+  "mitigation_id": "7f72a903-63d1-4a4a-a5db-0517e0a7df1d"
+}
+```
+
+The response uses the same `EventResponse` shape as `POST /v1/events` for compatibility with existing scripts.
+
+**Error Responses:**
+
+| Status | Reason |
+|--------|--------|
+| 400 | Malformed payload (invalid JSON, missing `ip` or `action`, invalid IP) |
+| 401 | Authentication required |
+| 422 | Guardrail rejection (safelist, quotas, prefix length) |
+
+**FastNetMon Configuration Snippet:**
+
+To configure FastNetMon Community to use prefixd, set the notify script in `/etc/fastnetmon.conf`:
+
+```
+notify_script_path = /opt/prefixd/scripts/prefixd-fastnetmon.sh
+```
+
+Or configure FastNetMon Advanced to use the webhook endpoint directly:
+
+```
+notify_script_format = json
+notify_script_path = /usr/bin/curl -s -X POST http://prefixd.example.com/v1/signals/fastnetmon -H 'Content-Type: application/json' -H 'Authorization: Bearer <token>' -d @-
+```
+
+See `docs/detectors/fastnetmon.md` for a complete integration guide.
 
 ---
 

@@ -21,8 +21,9 @@ Comprehensive list of prefixd capabilities.
 Any system that can POST JSON works. Tested with:
 
 - **FastNetMon Community** - Notify script integration ([setup guide](docs/detectors/fastnetmon.md))
-- **Prometheus/Alertmanager** - Via webhook receiver
-- **Custom scripts** - Simple curl calls
+- **FastNetMon** (native webhook) - `POST /v1/signals/fastnetmon` accepts FastNetMon's JSON payload directly, classifies vector from traffic breakdown, configurable confidence mapping
+- **Prometheus/Alertmanager** - `POST /v1/signals/alertmanager` accepts Alertmanager v4 webhook payloads, maps labels/annotations to event fields, handles batched alerts with per-alert results
+- **Custom scripts** - Simple curl calls to `POST /v1/events`
 
 ### Event Schema
 
@@ -238,6 +239,72 @@ Real-time events pushed to dashboard:
 - `MitigationWithdrawn` - Manual withdrawal via API
 - `EventIngested` - New attack event received
 - `ResyncRequired` - Client should refresh (lag detected)
+
+---
+
+## Multi-Signal Correlation
+
+Combine weak signals from multiple detectors into high-confidence mitigation decisions. Example: FastNetMon reports a UDP flood at 0.6 confidence + Alertmanager fires a bandwidth alert = corroborated high-confidence mitigation.
+
+### Signal Groups
+
+Events targeting the same (victim_ip, vector) within a time window are grouped into a **signal group**. Each group tracks:
+
+- Contributing events from multiple sources
+- Derived confidence (weighted by source reliability)
+- Corroboration status (whether the `min_sources` threshold is met)
+- Source breakdown with per-source confidence and weight
+
+### Corroboration Model
+
+- **min_sources** - Minimum number of distinct sources required before mitigation triggers (default: 1 for backward compatibility)
+- **confidence_threshold** - Minimum derived confidence to trigger mitigation
+- **Per-playbook overrides** - Different thresholds per attack vector
+- **Time-windowed** - Signal groups expire after `window_seconds` if corroboration is not met
+
+### Source Weighting
+
+Each detection source is assigned a weight reflecting its reliability:
+
+```yaml
+correlation:
+  enabled: true
+  window_seconds: 120
+  min_sources: 2
+  confidence_threshold: 0.7
+  sources:
+    fastnetmon:
+      weight: 1.0
+      type: detector
+    alertmanager:
+      weight: 0.8
+      type: alert
+  default_weight: 0.5
+```
+
+### Explainability
+
+Every correlated mitigation includes a `correlation` field explaining the decision:
+
+- Signal group ID and contributing sources
+- Per-source confidence and weight
+- Whether corroboration was met
+- Human-readable explanation string
+
+### Signal Groups API
+
+- `GET /v1/signal-groups` - List groups with cursor pagination, status/vector/date filters
+- `GET /v1/signal-groups/{id}` - Detail with contributing events, source weights, and confidence
+- `GET /v1/config/correlation` - Current correlation config (secrets redacted)
+- `PUT /v1/config/correlation` - Update config (admin only, validates, writes YAML, hot-reloads)
+
+### Correlation Dashboard
+
+- **Signals tab** - Recent events with source, confidence, and group assignment
+- **Groups tab** - Signal groups with status, source count, confidence, corroboration status
+- **Config tab** - Visual correlation config editor with source weights
+- **Group detail page** - Contributing events, source breakdown, timeline
+- **Mitigation detail integration** - Correlation context section on mitigated IPs
 
 ---
 

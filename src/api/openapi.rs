@@ -1,11 +1,18 @@
 use utoipa::OpenApi;
 
 use super::handlers::{
-    AuditListResponse, BatchEventRequest, BatchEventResponse, BatchEventResult,
-    BulkAcknowledgeRequest, BulkAcknowledgeResponse, BulkAcknowledgeResult, BulkWithdrawRequest,
-    BulkWithdrawResponse, BulkWithdrawResult, ErrorResponse, EventResponse, EventsListResponse,
+    AlertmanagerAlert, AlertmanagerAlertResult, AlertmanagerWebhookPayload,
+    AlertmanagerWebhookResponse, AuditListResponse, BatchEventRequest, BatchEventResponse,
+    BatchEventResult, BulkAcknowledgeRequest, BulkAcknowledgeResponse, BulkAcknowledgeResult,
+    BulkWithdrawRequest, BulkWithdrawResponse, BulkWithdrawResult, CorrelationContext,
+    ErrorResponse, EventResponse, EventsListResponse, FastNetMonAttackDetails, FastNetMonPayload,
     HealthResponse, IpHistoryResponse, MitigationResponse, MitigationsListResponse,
-    PublicHealthResponse, ReloadResponse, TimeseriesResponse,
+    PublicHealthResponse, ReloadResponse, SignalGroupDetailResponse, SignalGroupsListResponse,
+    TimeseriesResponse,
+};
+use crate::correlation::config::{CorrelationConfig, SourceConfig};
+use crate::correlation::engine::{
+    CorrelationExplanation, SignalGroup, SignalGroupEvent, SignalGroupStatus, SourceContribution,
 };
 use crate::db::{GlobalStats, NotificationPreferences, PopInfo, PopStats, SafelistEntry};
 
@@ -46,6 +53,12 @@ use crate::db::{GlobalStats, NotificationPreferences, PopInfo, PopStats, Safelis
         super::handlers::get_notification_preferences,
         super::handlers::update_notification_preferences,
         super::handlers::generate_incident_report,
+        super::handlers::list_signal_groups,
+        super::handlers::get_signal_group,
+        super::handlers::ingest_alertmanager,
+        super::handlers::ingest_fastnetmon,
+        super::handlers::get_correlation_config,
+        super::handlers::update_correlation_config,
     ),
     components(
         schemas(
@@ -75,6 +88,22 @@ use crate::db::{GlobalStats, NotificationPreferences, PopInfo, PopStats, Safelis
             AuditListResponse,
             crate::db::TimeseriesBucket,
             NotificationPreferences,
+            CorrelationContext,
+            SignalGroupsListResponse,
+            SignalGroupDetailResponse,
+            AlertmanagerWebhookPayload,
+            AlertmanagerAlert,
+            AlertmanagerWebhookResponse,
+            AlertmanagerAlertResult,
+            FastNetMonPayload,
+            FastNetMonAttackDetails,
+            SignalGroup,
+            SignalGroupEvent,
+            SignalGroupStatus,
+            CorrelationExplanation,
+            SourceContribution,
+            CorrelationConfig,
+            SourceConfig,
         )
     ),
     tags(
@@ -88,6 +117,8 @@ use crate::db::{GlobalStats, NotificationPreferences, PopInfo, PopStats, Safelis
         (name = "ip-history", description = "IP history and context"),
         (name = "preferences", description = "Notification preferences"),
         (name = "reports", description = "Incident reports"),
+        (name = "signal-groups", description = "Signal group correlation management"),
+        (name = "signals", description = "Signal adapter webhook endpoints"),
     )
 )]
 pub struct ApiDoc;

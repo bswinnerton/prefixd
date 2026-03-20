@@ -13,6 +13,17 @@ function dispatchAuthExpired() {
   window.dispatchEvent(new CustomEvent("prefixd:auth-expired"))
 }
 
+export interface CorrelationContext {
+  signal_group_id: string
+  derived_confidence: number
+  source_count: number
+  corroboration_met: boolean
+  /** Populated on detail endpoint only (null/absent on list endpoint) */
+  contributing_sources?: string[] | null
+  /** Human-readable explanation (populated on detail endpoint only) */
+  explanation?: string | null
+}
+
 export interface Mitigation {
   mitigation_id: string
   scope_hash: string
@@ -36,6 +47,8 @@ export interface Mitigation {
   reason: string
   acknowledged_at: string | null
   acknowledged_by: string | null
+  /** Correlation context (present when mitigation was created via corroboration) */
+  correlation?: CorrelationContext | null
 }
 
 export interface PaginatedResponse<T> {
@@ -655,4 +668,163 @@ export async function updateNotificationPreferences(prefs: NotificationPreferenc
     method: "PUT",
     body: JSON.stringify(prefs),
   })
+}
+
+// Signal Groups (Correlation Engine)
+
+export interface SignalGroup {
+  group_id: string
+  victim_ip: string
+  vector: string
+  created_at: string
+  window_expires_at: string
+  derived_confidence: number
+  source_count: number
+  status: "open" | "resolved" | "expired"
+  corroboration_met: boolean
+}
+
+export interface SignalGroupEvent {
+  group_id: string
+  event_id: string
+  source: string
+  confidence: number | null
+  source_weight: number
+  ingested_at: string
+  victim_ip: string
+  vector: string
+}
+
+export interface SignalGroupsResponse {
+  groups: SignalGroup[]
+  count: number
+  next_cursor: string | null
+  has_more: boolean
+}
+
+export interface SignalGroupDetailResponse extends SignalGroup {
+  events: SignalGroupEvent[]
+  /** Linked mitigation ID (present when group status is resolved) */
+  mitigation_id?: string | null
+}
+
+export async function getSignalGroups(params?: {
+  status?: string
+  vector?: string
+  limit?: number
+  cursor?: string
+  start?: string
+  end?: string
+}): Promise<SignalGroupsResponse> {
+  const searchParams = new URLSearchParams()
+  if (params?.status) searchParams.set("status", params.status)
+  if (params?.vector) searchParams.set("vector", params.vector)
+  if (params?.limit) searchParams.set("limit", params.limit.toString())
+  if (params?.cursor) searchParams.set("cursor", params.cursor)
+  if (params?.start) searchParams.set("start", params.start)
+  if (params?.end) searchParams.set("end", params.end)
+
+  const query = searchParams.toString()
+  return fetchApi<SignalGroupsResponse>(`/v1/signal-groups${query ? `?${query}` : ""}`)
+}
+
+export async function getSignalGroupDetail(id: string): Promise<SignalGroupDetailResponse> {
+  return fetchApi<SignalGroupDetailResponse>(`/v1/signal-groups/${id}`)
+}
+
+// Correlation Config
+
+export interface SourceConfig {
+  weight: number
+  type: string
+  confidence_mapping: Record<string, number>
+}
+
+export interface CorrelationConfig {
+  enabled: boolean
+  window_seconds: number
+  min_sources: number
+  confidence_threshold: number
+  default_weight: number
+  sources: Record<string, SourceConfig>
+}
+
+export interface CorrelationConfigResponse {
+  config: CorrelationConfig
+  loaded_at: string
+}
+
+export async function getCorrelationConfig(): Promise<CorrelationConfig> {
+  const resp = await fetchApi<CorrelationConfigResponse>("/v1/config/correlation")
+  return resp.config
+}
+
+export async function updateCorrelationConfig(config: CorrelationConfig): Promise<CorrelationConfig> {
+  const resp = await fetchApi<CorrelationConfigResponse>("/v1/config/correlation", {
+    method: "PUT",
+    body: JSON.stringify(config),
+  })
+  return resp.config
+}
+
+// Signal Sources (derived from correlation config + recent events)
+
+export interface SignalSourceStatus {
+  name: string
+  type: string
+  weight: number
+  last_seen: string | null
+  event_count: number
+  healthy: boolean
+}
+
+export async function getSignalSources(): Promise<SignalSourceStatus[]> {
+  // Signal source status is derived from correlation config + recent events.
+  // We fetch correlation config and recent events, then combine them.
+  const [config, eventsResp] = await Promise.all([
+    getCorrelationConfig(),
+    getEvents({ limit: 1000 }),
+  ])
+
+  const sourceMap = new Map<string, SignalSourceStatus>()
+
+  // Initialize from config sources
+  for (const [name, src] of Object.entries(config.sources ?? {})) {
+    sourceMap.set(name, {
+      name,
+      type: src.type || "unknown",
+      weight: src.weight,
+      last_seen: null,
+      event_count: 0,
+      healthy: false,
+    })
+  }
+
+  // Enrich with event data
+  for (const event of eventsResp.events) {
+    const existing = sourceMap.get(event.source)
+    if (existing) {
+      existing.event_count++
+      if (!existing.last_seen || event.ingested_at > existing.last_seen) {
+        existing.last_seen = event.ingested_at
+      }
+    } else {
+      sourceMap.set(event.source, {
+        name: event.source,
+        type: "unknown",
+        weight: config.default_weight,
+        last_seen: event.ingested_at,
+        event_count: 1,
+        healthy: false,
+      })
+    }
+  }
+
+  // Determine health: seen within last 10 minutes
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+  for (const source of sourceMap.values()) {
+    source.healthy = source.last_seen != null && source.last_seen > tenMinutesAgo
+  }
+
+  return Array.from(sourceMap.values())
 }

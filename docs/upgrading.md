@@ -122,13 +122,120 @@ prefixdctl migrations
 # 4         schema_migrations               2026-02-20 10:00:00
 # 5         acknowledge                     2026-03-18 14:37:00
 # 6         notification_preferences        2026-03-18 14:37:00
+# 7         signal_groups                   2026-03-19 18:00:00
 #
-# 6 migration(s) applied
+# 7 migration(s) applied
 ```
 
 ---
 
 ## Version-Specific Notes
+
+### v0.13.0 -> v0.14.0 (Unreleased)
+
+#### New: Multi-Signal Correlation Engine
+
+This release adds the correlation engine, signal adapters, and correlation dashboard. **No breaking changes** — correlation is opt-in.
+
+##### New config file: `correlation.yaml`
+
+Create `configs/correlation.yaml` (or add a `correlation:` section to `prefixd.yaml`). If the file is absent, correlation is disabled and behavior is identical to v0.13.0.
+
+```yaml
+# configs/correlation.yaml
+enabled: true
+window_seconds: 300
+min_sources: 1          # Set to 2+ to require corroboration
+confidence_threshold: 0.5
+default_weight: 1.0
+sources:
+  fastnetmon:
+    weight: 1.0
+    type: detector
+  alertmanager:
+    weight: 0.8
+    type: telemetry
+```
+
+With `min_sources: 1`, events flow through the correlation engine but mitigate immediately on the first signal — identical to pre-correlation behavior. Increase to 2+ to require corroboration from multiple detectors.
+
+See [configuration.md#correlation](configuration.md#correlation) for full reference.
+
+##### New database migration (007)
+
+Migration 007 (`signal_groups`) runs automatically on startup. It adds:
+
+- `signal_groups` table (group_id, victim_ip, vector, window, confidence, status)
+- `signal_group_events` junction table
+- `mitigations.signal_group_id` nullable FK column
+- Two indexes for performance (victim/vector lookup, expiry sweep)
+
+This is an additive migration — it only creates new tables and adds a nullable column. **Safe to roll back** without a database restore (the new tables/column will be ignored by v0.13.0).
+
+##### New API endpoints
+
+| Endpoint | Auth | Description |
+|----------|------|-------------|
+| `GET /v1/signal-groups` | Yes | List signal groups (cursor pagination, status/vector/date filters) |
+| `GET /v1/signal-groups/{id}` | Yes | Signal group detail with contributing events |
+| `POST /v1/signals/alertmanager` | Yes | Alertmanager v4 webhook adapter |
+| `POST /v1/signals/fastnetmon` | Yes | FastNetMon native JSON webhook adapter |
+| `GET /v1/config/correlation` | Yes | Correlation config (secrets redacted) |
+| `PUT /v1/config/correlation` | Admin | Update correlation config (validates, writes YAML, hot-reloads) |
+
+##### New API response fields
+
+- `GET /v1/mitigations` and `GET /v1/mitigations/{id}` responses now include an optional `correlation` field on correlated mitigations. Contains `signal_group_id`, `derived_confidence`, `source_count`, `corroboration_met`, `contributing_sources`, and `explanation`. This field is `null` for mitigations created without correlation. **Backward-compatible** — clients that don't read this field are unaffected.
+
+##### Signal adapter integration
+
+If you use **Alertmanager**, point a webhook receiver at `POST /v1/signals/alertmanager`. The adapter maps Alertmanager labels/annotations to attack event fields:
+
+| Alertmanager Field | Maps To |
+|--------------------|---------|
+| `labels.instance` or `annotations.victim_ip` | `victim_ip` |
+| `labels.vector` or `annotations.vector` | `vector` |
+| `labels.severity` (critical/warning/info) | `confidence` (0.9/0.7/0.5) |
+| `annotations.bps`, `annotations.pps` | Traffic metrics |
+| `fingerprint` | Dedup key (idempotent) |
+
+If you use **FastNetMon**, point the webhook notify URL at `POST /v1/signals/fastnetmon`. The adapter classifies vector from the traffic breakdown and maps `action` to confidence (ban=0.9, partial_block=0.7, alert=0.5).
+
+Both adapters feed events through the full pipeline (correlation → policy → guardrails → announce).
+
+##### New Prometheus metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `prefixd_signal_groups_total` | Counter | Total signal groups created |
+| `prefixd_signal_group_sources` | Histogram | Source count distribution per group |
+| `prefixd_correlation_confidence` | Histogram | Derived confidence distribution |
+| `prefixd_corroboration_met_total` | Counter | Groups that met corroboration threshold |
+| `prefixd_corroboration_timeout_total` | Counter | Groups that expired without corroboration |
+
+##### Dashboard: Correlation page
+
+The dashboard adds a `/correlation` page with three tabs:
+
+- **Signals** — Recent events with source, confidence, and group assignment
+- **Groups** — Signal groups with status, source count, confidence, corroboration
+- **Config** — Visual correlation configuration editor
+
+Plus a signal group detail page at `/correlation/groups/[id]` and a correlation context section on the mitigation detail page.
+
+##### Docker: Config volume now writable by default
+
+The default `docker-compose.yml` now mounts `./configs:/etc/prefixd` (writable) so the dashboard config editors work out of the box. Previously it was `:ro`. If you have a customized `docker-compose.yml` with `:ro`, the `PUT /v1/config/correlation` endpoint (and playbooks/alerting PUT) will return 500. Either remove `:ro` or edit configs on the host and use `POST /v1/config/reload`.
+
+##### Upgrade steps
+
+1. Back up the database (as always)
+2. Add `configs/correlation.yaml` if you want correlation (optional — omit to keep existing behavior)
+3. Rebuild and restart: `docker compose build && docker compose up -d`
+4. Migration 007 runs automatically
+5. Verify: `curl http://localhost/v1/config/correlation` should return config (or defaults if no file)
+6. If using Alertmanager/FastNetMon, point webhook URLs at the new adapter endpoints
+7. Tune `min_sources` and `confidence_threshold` to taste
 
 ### v0.11.0 -> v0.12.0
 

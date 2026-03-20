@@ -4,13 +4,14 @@ import { use } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
-import { useMitigation, useConfigInventory } from "@/hooks/use-api"
+import { useMitigation, useConfigInventory, useSignalGroupDetail } from "@/hooks/use-api"
 import { StatusBadge } from "@/components/dashboard/status-badge"
 import { ActionBadge } from "@/components/dashboard/action-badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Check, Clock, Copy, FileText, ShieldAlert, Activity, GitBranch, RefreshCw, AlertTriangle, User, Terminal } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
+import { ArrowLeft, Check, Clock, Copy, FileText, ShieldAlert, Activity, GitBranch, RefreshCw, AlertTriangle, User, Terminal, Layers, CheckCircle2, Info } from "lucide-react"
 import { FlowSpecPreview, formatFlowSpecRule } from "@/components/dashboard/flowspec-preview"
 import { IncidentReportDialog } from "@/components/dashboard/incident-report-dialog"
 import { withdrawMitigation, getIncidentReport } from "@/lib/api"
@@ -68,6 +69,9 @@ export default function MitigationDetailPage({ params }: { params: Promise<{ id:
 
   const { data: mitigation, isLoading, mutate } = useMitigation(id)
   const { data: inventory } = useConfigInventory()
+  const { data: signalGroupDetail, isLoading: isSignalGroupLoading } = useSignalGroupDetail(
+    mitigation?.correlation?.signal_group_id ?? null
+  )
 
   const [copied, setCopied] = useState<string | null>(null)
   const [showWithdrawDialog, setShowWithdrawDialog] = useState(false)
@@ -337,6 +341,129 @@ export default function MitigationDetailPage({ params }: { params: Promise<{ id:
                 </div>
               </CardContent>
             </Card>
+
+            {/* Correlation Section */}
+            {mitigation.correlation ? (
+              <Card className="border-border shadow-sm" data-testid="correlation-card">
+                <CardHeader className="pb-4">
+                  <div className="flex items-center gap-2">
+                    <Layers className="h-5 w-5 text-muted-foreground" />
+                    <CardTitle className="text-base font-semibold">Correlation</CardTitle>
+                    {mitigation.correlation.corroboration_met ? (
+                      <Badge variant="default" className="ml-auto bg-green-600 hover:bg-green-600 text-xs">
+                        <CheckCircle2 className="h-3 w-3 mr-1" />
+                        Corroborated
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="ml-auto text-amber-600 dark:text-amber-400 border-amber-400 text-xs">
+                        <AlertTriangle className="h-3 w-3 mr-1" />
+                        Pending
+                      </Badge>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  {/* Signal Group Link */}
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Signal Group</p>
+                    <Link
+                      href={`/correlation/groups/${mitigation.correlation.signal_group_id}`}
+                      className="text-sm font-mono text-primary hover:underline"
+                    >
+                      {mitigation.correlation.signal_group_id}
+                    </Link>
+                  </div>
+
+                  {/* Derived Confidence with visual bar */}
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Derived Confidence</p>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-primary transition-all"
+                          style={{ width: `${Math.round(mitigation.correlation.derived_confidence * 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-sm font-mono font-medium tabular-nums w-10 text-right">
+                        {Math.round(mitigation.correlation.derived_confidence * 100)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Source Count with source names */}
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Sources</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-mono">{mitigation.correlation.source_count} source{mitigation.correlation.source_count !== 1 ? "s" : ""}</span>
+                      {mitigation.correlation.contributing_sources?.map((source) => (
+                        <Badge key={source} variant="outline" className="text-[10px] font-mono">
+                          {source}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Contributing Sources Table (from signal group detail) */}
+                  {isSignalGroupLoading ? (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-2">Contributing Sources</p>
+                      <div className="space-y-2">
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-3/4" />
+                      </div>
+                    </div>
+                  ) : signalGroupDetail?.events && signalGroupDetail.events.length > 0 ? (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-2">Contributing Sources</p>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs font-mono">
+                          <thead>
+                            <tr className="border-b border-border text-left text-muted-foreground">
+                              <th className="pb-2 pr-3 font-medium">Source</th>
+                              <th className="pb-2 pr-3 font-medium text-right">Confidence</th>
+                              <th className="pb-2 font-medium text-right">Weight</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {signalGroupDetail.events.map((event) => (
+                              <tr key={event.event_id} className="border-b border-border/50 last:border-0">
+                                <td className="py-1.5 pr-3">{event.source}</td>
+                                <td className="py-1.5 pr-3 text-right tabular-nums">
+                                  {event.confidence != null ? `${Math.round(event.confidence * 100)}%` : "N/A"}
+                                </td>
+                                <td className="py-1.5 text-right tabular-nums">{event.source_weight.toFixed(1)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Why Explanation */}
+                  {mitigation.correlation.explanation && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Why</p>
+                      <p className="text-sm text-foreground/80 leading-relaxed">
+                        {mitigation.correlation.explanation}
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ) : (
+              <Card className="border-border shadow-sm bg-secondary/5" data-testid="no-correlation-card">
+                <CardContent className="py-4">
+                  <div className="flex items-center gap-2">
+                    <Info className="h-4 w-4 text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">
+                      Single-source mitigation — no correlation data available.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
           </div>
 

@@ -8,6 +8,7 @@ use tokio::sync::{RwLock, broadcast};
 use crate::alerting::AlertingService;
 use crate::bgp::FlowSpecAnnouncer;
 use crate::config::{AuthMode, Inventory, Playbooks, Settings};
+use crate::correlation::CorrelationConfig;
 use crate::db::RepositoryTrait;
 use crate::error::{PrefixdError, Result};
 use crate::ws::WsMessage;
@@ -35,6 +36,10 @@ pub struct AppState {
     pub alerting: Arc<RwLock<Arc<AlertingService>>>,
     /// Timestamp when alerting config was last loaded
     pub alerting_loaded_at: RwLock<DateTime<Utc>>,
+    /// Correlation engine configuration (RwLock for hot-reload)
+    pub correlation_config: RwLock<CorrelationConfig>,
+    /// Timestamp when correlation config was last loaded
+    pub correlation_loaded_at: RwLock<DateTime<Utc>>,
     /// PostgreSQL pool for metrics (None in tests with MockRepository)
     pub db_pool: Option<PgPool>,
     config_dir: PathBuf,
@@ -93,6 +98,8 @@ impl AppState {
             None
         };
 
+        let correlation_config = settings.correlation.clone();
+
         Ok(Arc::new(Self {
             settings,
             inventory: RwLock::new(inventory),
@@ -104,6 +111,8 @@ impl AppState {
             bearer_token,
             alerting: Arc::new(RwLock::new(alerting)),
             alerting_loaded_at: RwLock::new(Utc::now()),
+            correlation_config: RwLock::new(correlation_config),
+            correlation_loaded_at: RwLock::new(Utc::now()),
             start_time: Instant::now(),
             inventory_loaded_at: RwLock::new(Utc::now()),
             playbooks_loaded_at: RwLock::new(Utc::now()),
@@ -138,6 +147,10 @@ impl AppState {
         self.config_dir.join("alerting.yaml")
     }
 
+    pub fn correlation_path(&self) -> PathBuf {
+        self.config_dir.join("correlation.yaml")
+    }
+
     /// Reload inventory and playbooks from config files
     pub async fn reload_config(&self) -> Result<Vec<String>> {
         let mut reloaded = Vec::new();
@@ -164,6 +177,27 @@ impl AppState {
             *self.playbooks_loaded_at.write().await = Utc::now();
             reloaded.push("playbooks".to_string());
             tracing::info!("reloaded playbooks.yaml");
+        }
+
+        // Reload correlation config: prefer standalone correlation.yaml, fall back to prefixd.yaml
+        let correlation_path = self.correlation_path();
+        if correlation_path.exists() {
+            let new_config = crate::correlation::CorrelationConfig::load(&correlation_path)
+                .map_err(|e| PrefixdError::Config(format!("correlation.yaml: {}", e)))?;
+            *self.correlation_config.write().await = new_config;
+            *self.correlation_loaded_at.write().await = Utc::now();
+            reloaded.push("correlation".to_string());
+            tracing::info!("reloaded correlation config from correlation.yaml");
+        } else {
+            let prefixd_yaml_path = self.config_dir.join("prefixd.yaml");
+            if prefixd_yaml_path.exists() {
+                let new_settings = Settings::load(&prefixd_yaml_path)
+                    .map_err(|e| PrefixdError::Config(format!("prefixd.yaml: {}", e)))?;
+                *self.correlation_config.write().await = new_settings.correlation;
+                *self.correlation_loaded_at.write().await = Utc::now();
+                reloaded.push("correlation".to_string());
+                tracing::info!("reloaded correlation config from prefixd.yaml");
+            }
         }
 
         // Reload alerting (from alerting.yaml if present)

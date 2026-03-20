@@ -18,8 +18,8 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::db::{ListParams, NotificationPreferences};
 use crate::domain::{
-    ActionParams, ActionType, AttackEvent, AttackEventInput, FlowSpecAction, FlowSpecNlri,
-    FlowSpecRule, MatchCriteria, Mitigation, MitigationIntent, MitigationStatus,
+    ActionParams, ActionType, AttackEvent, AttackEventInput, AttackVector, FlowSpecAction,
+    FlowSpecNlri, FlowSpecRule, MatchCriteria, Mitigation, MitigationIntent, MitigationStatus,
 };
 use crate::error::PrefixdError;
 use crate::guardrails::Guardrails;
@@ -50,6 +50,31 @@ pub struct EventResponse {
     pub status: String,
     /// ID of the created mitigation, if any
     pub mitigation_id: Option<Uuid>,
+}
+
+/// Correlation context attached to a mitigation that was created via the
+/// correlation engine's corroboration logic.
+///
+/// The list endpoint provides a lightweight summary with only the core fields
+/// (signal_group_id, derived_confidence, source_count, corroboration_met).
+/// The detail endpoint populates the full context including contributing_sources
+/// and explanation.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct CorrelationContext {
+    /// Signal group ID that triggered this mitigation
+    pub signal_group_id: Uuid,
+    /// Derived confidence (weighted average of contributing events)
+    pub derived_confidence: f32,
+    /// Number of distinct detection sources
+    pub source_count: i32,
+    /// Whether corroboration threshold was met
+    pub corroboration_met: bool,
+    /// List of contributing detection sources (populated on detail endpoint only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contributing_sources: Option<Vec<String>>,
+    /// Human-readable explanation of the correlation decision (populated on detail endpoint only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -98,6 +123,10 @@ pub struct MitigationResponse {
     pub acknowledged_at: Option<String>,
     /// Operator who acknowledged the mitigation
     pub acknowledged_by: Option<String>,
+    /// Correlation context (present when mitigation was created via
+    /// corroboration from the signal correlation engine)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation: Option<CorrelationContext>,
 }
 
 impl From<&Mitigation> for MitigationResponse {
@@ -125,6 +154,10 @@ impl From<&Mitigation> for MitigationResponse {
             reason: m.reason.clone(),
             acknowledged_at: m.acknowledged_at.map(|t| t.to_rfc3339()),
             acknowledged_by: m.acknowledged_by.clone(),
+            // Correlation context is populated asynchronously by handlers
+            // that have access to the signal group data. The basic From impl
+            // sets it to None — callers enrich it when needed.
+            correlation: None,
         }
     }
 }
@@ -593,13 +626,181 @@ async fn handle_ban(
 
     drop(inventory); // Release read lock before policy evaluation
 
-    // Build policy engine and evaluate
+    // ── Correlation step ───────────────────────────────────────────────
+    // If correlation.enabled, find/create a signal group and add the event.
+    // Check corroboration — if threshold not met, return 'accepted' without
+    // creating a mitigation. If threshold met, proceed to policy evaluation.
+    let correlation_config = state.correlation_config.read().await.clone();
+
+    // Resolve the matching playbook early so we can get per-playbook overrides
     let playbooks = state.playbooks.read().await.clone();
     let policy = PolicyEngine::new(
-        playbooks,
+        playbooks.clone(),
         state.settings.pop.clone(),
         state.settings.timers.default_ttl_seconds,
     );
+
+    // Find the matching playbook's correlation override
+    let vector = event.attack_vector();
+    let event_ports = event.top_dst_ports();
+    let has_ports = !event_ports.is_empty();
+    let matching_playbook = playbooks.find_playbook(vector, has_ports);
+    let playbook_override = matching_playbook.and_then(|p| p.correlation.as_ref());
+
+    let mut signal_group_id: Option<Uuid> = None;
+    let mut correlation_context: Option<CorrelationContext> = None;
+
+    if correlation_config.enabled {
+        use crate::correlation::CorrelationEngine;
+
+        let vector_str = event.vector.clone();
+
+        // Find or create signal group
+        let new_group = CorrelationEngine::create_group(
+            &event.victim_ip,
+            &vector_str,
+            correlation_config.window_seconds,
+        );
+        let group = state
+            .repo
+            .insert_signal_group(&new_group)
+            .await
+            .map_err(AppError)?;
+
+        let is_new_group = group.group_id == new_group.group_id;
+        if is_new_group {
+            crate::observability::metrics::SIGNAL_GROUPS_TOTAL
+                .with_label_values(&["open", &vector_str])
+                .inc();
+        }
+
+        // Add event to the group
+        let source_weight = correlation_config.source_weight(&event.source);
+        let _ = state
+            .repo
+            .add_event_to_group(group.group_id, event.event_id, source_weight)
+            .await
+            .map_err(AppError)?;
+
+        // Recompute derived confidence from all events in group
+        let group_events = state
+            .repo
+            .list_signal_group_events(group.group_id)
+            .await
+            .map_err(AppError)?;
+
+        let confidence_pairs: Vec<(Option<f32>, f32)> = group_events
+            .iter()
+            .map(|ge| (ge.confidence, ge.source_weight))
+            .collect();
+        let derived_confidence = CorrelationEngine::compute_derived_confidence(&confidence_pairs);
+
+        let source_names: Vec<String> = group_events
+            .iter()
+            .filter_map(|ge| ge.source.clone())
+            .collect();
+        let source_count = CorrelationEngine::count_distinct_sources(&source_names);
+
+        let corroboration_met = CorrelationEngine::check_corroboration(
+            source_count,
+            derived_confidence,
+            &correlation_config,
+            playbook_override,
+        );
+
+        // Update group in DB
+        let mut updated_group = group.clone();
+        updated_group.derived_confidence = derived_confidence;
+        updated_group.source_count = source_count;
+        updated_group.corroboration_met = corroboration_met;
+        state
+            .repo
+            .update_signal_group(&updated_group)
+            .await
+            .map_err(AppError)?;
+
+        // Record correlation metrics
+        crate::observability::metrics::CORRELATION_CONFIDENCE
+            .with_label_values(&[&vector_str])
+            .observe(derived_confidence as f64);
+
+        if !corroboration_met {
+            // Signal recorded but corroboration not met — no mitigation
+            tracing::info!(
+                group_id = %group.group_id,
+                source_count = source_count,
+                derived_confidence = derived_confidence,
+                "signal recorded, corroboration not met — no mitigation"
+            );
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(EventResponse {
+                    event_id: event.event_id,
+                    external_event_id: event.external_event_id.clone(),
+                    status: "accepted".to_string(),
+                    mitigation_id: None,
+                }),
+            ));
+        }
+
+        // Corroboration met — proceed to create mitigation
+        crate::observability::metrics::CORROBORATION_MET_TOTAL
+            .with_label_values(&[&vector_str])
+            .inc();
+        crate::observability::metrics::SIGNAL_GROUP_SOURCES
+            .with_label_values(&[&vector_str])
+            .observe(source_count as f64);
+
+        signal_group_id = Some(group.group_id);
+
+        // Build contributing sources list
+        let unique_sources: Vec<String> = {
+            let mut seen = std::collections::HashSet::new();
+            source_names
+                .into_iter()
+                .filter(|s| seen.insert(s.clone()))
+                .collect()
+        };
+
+        // Build explanation
+        let contributions: Vec<crate::correlation::SourceContribution> = group_events
+            .iter()
+            .map(|ge| {
+                let conf = ge.confidence.unwrap_or(0.0);
+                crate::correlation::SourceContribution {
+                    source: ge.source.clone().unwrap_or_default(),
+                    confidence: conf,
+                    weight: ge.source_weight,
+                    weighted_confidence: conf * ge.source_weight,
+                }
+            })
+            .collect();
+
+        let explanation = CorrelationEngine::compute_explanation(
+            &updated_group,
+            contributions,
+            &correlation_config,
+            playbook_override,
+        );
+
+        correlation_context = Some(CorrelationContext {
+            signal_group_id: group.group_id,
+            derived_confidence,
+            source_count,
+            corroboration_met: true,
+            contributing_sources: Some(unique_sources),
+            explanation: Some(explanation.explanation),
+        });
+
+        tracing::info!(
+            group_id = %group.group_id,
+            source_count = source_count,
+            derived_confidence = derived_confidence,
+            "corroboration met, creating mitigation"
+        );
+    }
+
+    // ── Policy evaluation ──────────────────────────────────────────────
 
     let intent = match policy.evaluate(&event, context.as_ref()) {
         Ok(i) => i,
@@ -679,6 +880,7 @@ async fn handle_ban(
     // Create mitigation
     let mut mitigation =
         Mitigation::from_intent(intent, event.victim_ip.clone(), event.attack_vector());
+    mitigation.signal_group_id = signal_group_id;
 
     // Announce FlowSpec (if not dry-run)
     if !state.is_dry_run() {
@@ -705,11 +907,23 @@ async fn handle_ban(
         .await
         .map_err(AppError)?;
 
+    // Resolve signal group to 'resolved' now that mitigation is confirmed
+    if let Some(group_id) = signal_group_id {
+        if let Ok(Some(mut group)) = state.repo.get_signal_group(group_id).await {
+            group.status = crate::correlation::SignalGroupStatus::Resolved;
+            let _ = state.repo.update_signal_group(&group).await;
+        }
+    }
+
+    // Build response with optional correlation context
+    let mut mit_response = MitigationResponse::from(&mitigation);
+    mit_response.correlation = correlation_context;
+
     // Broadcast new mitigation via WebSocket
     let _ = state
         .ws_broadcast
         .send(crate::ws::WsMessage::MitigationCreated {
-            mitigation: MitigationResponse::from(&mitigation),
+            mitigation: mit_response.clone(),
         });
 
     state
@@ -722,6 +936,7 @@ async fn handle_ban(
         mitigation_id = %mitigation.mitigation_id,
         victim_ip = %mitigation.victim_ip,
         action = %mitigation.action_type,
+        signal_group_id = ?mitigation.signal_group_id,
         "created mitigation"
     );
 
@@ -929,7 +1144,40 @@ pub async fn list_mitigations(
         None
     };
     let count = mitigations.len();
-    let responses: Vec<_> = mitigations.iter().map(MitigationResponse::from).collect();
+
+    // Collect signal group IDs and fetch group data for correlation summaries
+    let group_ids: Vec<Uuid> = mitigations
+        .iter()
+        .filter_map(|m| m.signal_group_id)
+        .collect();
+
+    let mut group_map = std::collections::HashMap::new();
+    for gid in &group_ids {
+        if let Ok(Some(g)) = state.repo.get_signal_group(*gid).await {
+            group_map.insert(g.group_id, g);
+        }
+    }
+
+    let responses: Vec<_> = mitigations
+        .iter()
+        .map(|m| {
+            let mut resp = MitigationResponse::from(m);
+            // Add lightweight correlation summary for correlated mitigations
+            if let Some(group_id) = m.signal_group_id {
+                if let Some(group) = group_map.get(&group_id) {
+                    resp.correlation = Some(CorrelationContext {
+                        signal_group_id: group_id,
+                        derived_confidence: group.derived_confidence,
+                        source_count: group.source_count,
+                        corroboration_met: group.corroboration_met,
+                        contributing_sources: None,
+                        explanation: None,
+                    });
+                }
+            }
+            resp
+        })
+        .collect();
 
     Ok(Json(MitigationsListResponse {
         mitigations: responses,
@@ -968,7 +1216,63 @@ pub async fn get_mitigation(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    Ok(Json(MitigationResponse::from(&mitigation)))
+    let mut response = MitigationResponse::from(&mitigation);
+
+    // Enrich with correlation context if signal_group_id is set
+    if let Some(group_id) = mitigation.signal_group_id {
+        if let Ok(Some(group)) = state.repo.get_signal_group(group_id).await {
+            if let Ok(events) = state.repo.list_signal_group_events(group_id).await {
+                let correlation_config = state.correlation_config.read().await.clone();
+                let playbooks = state.playbooks.read().await.clone();
+                let playbook_override = playbooks
+                    .find_playbook(
+                        mitigation.vector,
+                        !mitigation.match_criteria.dst_ports.is_empty(),
+                    )
+                    .and_then(|p| p.correlation.as_ref());
+
+                let contributions: Vec<crate::correlation::SourceContribution> = events
+                    .iter()
+                    .map(|ge| {
+                        let conf = ge.confidence.unwrap_or(0.0);
+                        crate::correlation::SourceContribution {
+                            source: ge.source.clone().unwrap_or_default(),
+                            confidence: conf,
+                            weight: ge.source_weight,
+                            weighted_confidence: conf * ge.source_weight,
+                        }
+                    })
+                    .collect();
+
+                let unique_sources: Vec<String> = {
+                    let mut seen = std::collections::HashSet::new();
+                    events
+                        .iter()
+                        .filter_map(|ge| ge.source.clone())
+                        .filter(|s| seen.insert(s.clone()))
+                        .collect()
+                };
+
+                let explanation = crate::correlation::CorrelationEngine::compute_explanation(
+                    &group,
+                    contributions,
+                    &correlation_config,
+                    playbook_override,
+                );
+
+                response.correlation = Some(CorrelationContext {
+                    signal_group_id: group.group_id,
+                    derived_confidence: group.derived_confidence,
+                    source_count: group.source_count,
+                    corroboration_met: group.corroboration_met,
+                    contributing_sources: Some(unique_sources),
+                    explanation: Some(explanation.explanation),
+                });
+            }
+        }
+    }
+
+    Ok(Json(response))
 }
 
 pub async fn create_mitigation(
@@ -2985,6 +3289,123 @@ pub async fn test_alerting(
 }
 
 // ---------------------------------------------------------------------------
+// Correlation configuration
+// ---------------------------------------------------------------------------
+
+/// Get correlation configuration (allowlist-redacted, ADR 014)
+#[utoipa::path(
+    get,
+    path = "/v1/config/correlation",
+    tag = "config",
+    responses(
+        (status = 200, description = "Correlation configuration with redacted secrets"),
+        (status = 401, description = "Not authenticated")
+    )
+)]
+pub async fn get_correlation_config(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_auth(&state, &auth_session, auth_header)?;
+
+    let config = state.correlation_config.read().await;
+    let loaded_at = state.correlation_loaded_at.read().await;
+
+    Ok(Json(serde_json::json!({
+        "config": config.redacted(),
+        "loaded_at": loaded_at.to_rfc3339(),
+    })))
+}
+
+/// Update correlation configuration (admin only)
+#[utoipa::path(
+    put,
+    path = "/v1/config/correlation",
+    tag = "config",
+    request_body = crate::correlation::CorrelationConfig,
+    responses(
+        (status = 200, description = "Updated correlation configuration"),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Insufficient permissions")
+    )
+)]
+pub async fn update_correlation_config(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    body: Result<
+        Json<crate::correlation::CorrelationConfig>,
+        axum::extract::rejection::JsonRejection,
+    >,
+) -> Result<impl IntoResponse, StatusCode> {
+    use crate::domain::OperatorRole;
+    use crate::observability::{ActorType, AuditEntry};
+
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    let operator = require_role(&state, &auth_session, auth_header, OperatorRole::Admin)?;
+
+    let Json(new_config) = match body {
+        Ok(payload) => payload,
+        Err(rejection) => {
+            tracing::warn!(error = %rejection, "invalid correlation config payload");
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    // Validate config
+    let errors = new_config.validate();
+    if !errors.is_empty() {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "errors": errors })),
+        )
+            .into_response());
+    }
+
+    // Atomic save to correlation.yaml
+    let correlation_path = state.correlation_path();
+    new_config.save(&correlation_path).map_err(|e| {
+        tracing::error!(error = %e, "failed to save correlation config");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // Hot-swap in-memory config
+    let previous_enabled = {
+        let current = state.correlation_config.read().await;
+        current.enabled
+    };
+    *state.correlation_config.write().await = new_config.clone();
+    *state.correlation_loaded_at.write().await = chrono::Utc::now();
+
+    // Audit log
+    let audit = AuditEntry::new(
+        ActorType::Operator,
+        Some(operator.username.clone()),
+        "update_correlation",
+        Some("config"),
+        None,
+        serde_json::json!({
+            "previous_enabled": previous_enabled,
+            "new_enabled": new_config.enabled,
+            "sources": new_config.sources.len(),
+        }),
+    );
+    if let Err(e) = state.repo.insert_audit(&audit).await {
+        tracing::warn!(error = %e, "failed to insert audit entry for correlation update");
+    }
+
+    // Return redacted config
+    Ok(Json(serde_json::json!({
+        "config": new_config.redacted(),
+        "loaded_at": chrono::Utc::now().to_rfc3339(),
+    }))
+    .into_response())
+}
+
+// ---------------------------------------------------------------------------
 // Notification preferences
 // ---------------------------------------------------------------------------
 
@@ -3371,6 +3792,51 @@ pub async fn generate_incident_report(
         md.push('\n');
     }
 
+    // Correlation section (for correlated mitigations)
+    let correlated: Vec<_> = mitigations
+        .iter()
+        .filter(|m| m.signal_group_id.is_some())
+        .collect();
+    if !correlated.is_empty() {
+        md.push_str("## Correlation\n\n");
+        for m in &correlated {
+            if let Some(group_id) = m.signal_group_id {
+                md.push_str(&format!(
+                    "### Mitigation `{}` — Signal Group `{}`\n\n",
+                    m.mitigation_id, group_id
+                ));
+                if let Ok(Some(group)) = state.repo.get_signal_group(group_id).await {
+                    md.push_str(&format!(
+                        "- **Derived Confidence**: {:.2}\n",
+                        group.derived_confidence
+                    ));
+                    md.push_str(&format!("- **Source Count**: {}\n", group.source_count));
+                    md.push_str(&format!(
+                        "- **Corroboration Met**: {}\n",
+                        if group.corroboration_met { "Yes" } else { "No" }
+                    ));
+                    md.push_str(&format!("- **Status**: {}\n", group.status));
+
+                    if let Ok(group_events) = state.repo.list_signal_group_events(group_id).await {
+                        if !group_events.is_empty() {
+                            md.push_str("\n| Source | Confidence | Weight |\n");
+                            md.push_str("|--------|------------|--------|\n");
+                            for ge in &group_events {
+                                md.push_str(&format!(
+                                    "| {} | {:.2} | {:.1} |\n",
+                                    ge.source.as_deref().unwrap_or("unknown"),
+                                    ge.confidence.unwrap_or(0.0),
+                                    ge.source_weight,
+                                ));
+                            }
+                        }
+                    }
+                    md.push('\n');
+                }
+            }
+        }
+    }
+
     // Audit trail
     if !audit_entries.is_empty() {
         md.push_str("## Audit Trail\n\n");
@@ -3398,6 +3864,793 @@ pub async fn generate_incident_report(
     );
 
     (StatusCode::OK, response_headers, md).into_response()
+}
+
+// ── Signal Groups API ──────────────────────────────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub struct SignalGroupsListResponse {
+    /// List of signal groups in this page
+    groups: Vec<crate::correlation::SignalGroup>,
+    /// Number of groups returned in this page
+    count: usize,
+    /// Cursor for the next page (null if no more pages)
+    next_cursor: Option<String>,
+    /// Whether there are more pages
+    has_more: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct SignalGroupDetailResponse {
+    /// Signal group metadata
+    #[serde(flatten)]
+    group: crate::correlation::SignalGroup,
+    /// Contributing events with source, confidence, source_weight, ingested_at
+    events: Vec<crate::correlation::SignalGroupEvent>,
+    /// Linked mitigation ID (present when a mitigation was created from this signal group)
+    mitigation_id: Option<Uuid>,
+}
+
+#[derive(Deserialize)]
+pub struct ListSignalGroupsQuery {
+    /// Filter by status (open, resolved, expired)
+    status: Option<String>,
+    /// Filter by attack vector
+    vector: Option<String>,
+    /// Number of results per page (default 100, max 1000)
+    #[serde(default = "default_limit")]
+    limit: u32,
+    /// Cursor for pagination (from previous response)
+    cursor: Option<String>,
+    /// Start of date range (ISO 8601, inclusive)
+    start: Option<String>,
+    /// End of date range (ISO 8601, exclusive)
+    end: Option<String>,
+}
+
+/// List signal groups with optional filters and cursor pagination
+#[utoipa::path(
+    get,
+    path = "/v1/signal-groups",
+    tag = "signal-groups",
+    params(
+        ("status" = Option<String>, Query, description = "Filter by status (open, resolved, expired)"),
+        ("vector" = Option<String>, Query, description = "Filter by attack vector"),
+        ("limit" = Option<u32>, Query, description = "Max results (default 100, max 1000)"),
+        ("cursor" = Option<String>, Query, description = "Cursor for pagination (from previous response)"),
+        ("start" = Option<String>, Query, description = "Start of date range (ISO 8601, inclusive)"),
+        ("end" = Option<String>, Query, description = "End of date range (ISO 8601, exclusive)"),
+    ),
+    responses(
+        (status = 200, description = "List of signal groups", body = SignalGroupsListResponse),
+        (status = 401, description = "Authentication required"),
+    )
+)]
+pub async fn list_signal_groups(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    Query(query): Query<ListSignalGroupsQuery>,
+) -> Result<Json<SignalGroupsListResponse>, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_auth(&state, &auth_session, auth_header)?;
+
+    let status_filter = query.status.as_deref().and_then(|s| s.parse().ok());
+
+    let limit = clamp_limit(query.limit);
+    let cursor = query.cursor.as_deref().and_then(decode_cursor);
+    let params = ListParams {
+        limit: limit + 1,
+        cursor,
+        start: query.start.as_deref().and_then(parse_datetime),
+        end: query.end.as_deref().and_then(parse_datetime),
+    };
+
+    let filter = crate::correlation::SignalGroupFilter {
+        status: status_filter,
+        vector: query.vector,
+        start: params.start,
+        end: params.end,
+    };
+
+    let mut groups = state
+        .repo
+        .list_signal_groups(&filter, &params)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let has_more = groups.len() > limit as usize;
+    if has_more {
+        groups.truncate(limit as usize);
+    }
+    let next_cursor = if has_more {
+        groups.last().map(|g| encode_cursor(&g.created_at))
+    } else {
+        None
+    };
+    let count = groups.len();
+
+    Ok(Json(SignalGroupsListResponse {
+        groups,
+        count,
+        next_cursor,
+        has_more,
+    }))
+}
+
+/// Get a specific signal group by ID with contributing events
+#[utoipa::path(
+    get,
+    path = "/v1/signal-groups/{id}",
+    tag = "signal-groups",
+    params(
+        ("id" = Uuid, Path, description = "Signal group ID")
+    ),
+    responses(
+        (status = 200, description = "Signal group detail with contributing events", body = SignalGroupDetailResponse),
+        (status = 401, description = "Authentication required"),
+        (status = 404, description = "Signal group not found"),
+    )
+)]
+pub async fn get_signal_group(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<SignalGroupDetailResponse>, StatusCode> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    require_auth(&state, &auth_session, auth_header)?;
+
+    let group = state
+        .repo
+        .get_signal_group(id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let events = state
+        .repo
+        .list_signal_group_events(id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mitigation_id = state
+        .repo
+        .find_mitigation_id_by_signal_group(id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(SignalGroupDetailResponse {
+        group,
+        events,
+        mitigation_id,
+    }))
+}
+
+// ==========================================================================
+// Alertmanager webhook adapter
+// ==========================================================================
+
+/// Alertmanager v4 webhook payload.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AlertmanagerWebhookPayload {
+    /// Payload version (expected "4")
+    pub version: String,
+    /// Group status (firing, resolved)
+    #[serde(default)]
+    pub status: String,
+    /// List of alerts in this notification
+    pub alerts: Vec<AlertmanagerAlert>,
+    /// Labels shared by all alerts in the group
+    #[serde(default)]
+    pub group_labels: HashMap<String, String>,
+    /// Labels common to all alerts in the group
+    #[serde(default)]
+    pub common_labels: HashMap<String, String>,
+    /// Annotations common to all alerts in the group
+    #[serde(default)]
+    pub common_annotations: HashMap<String, String>,
+    /// External Alertmanager URL
+    #[serde(default)]
+    pub external_url: String,
+}
+
+/// A single alert from the Alertmanager webhook.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AlertmanagerAlert {
+    /// Alert status: "firing" or "resolved"
+    pub status: String,
+    /// Alert labels
+    #[serde(default)]
+    pub labels: HashMap<String, String>,
+    /// Alert annotations
+    #[serde(default)]
+    pub annotations: HashMap<String, String>,
+    /// Start time of the alert
+    #[serde(default)]
+    pub starts_at: Option<String>,
+    /// End time of the alert (present when resolved)
+    #[serde(default)]
+    pub ends_at: Option<String>,
+    /// URL for the alert in the generator
+    #[serde(default)]
+    pub generator_url: Option<String>,
+    /// Unique fingerprint for the alert (used for dedup)
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+}
+
+/// Per-alert result in the Alertmanager webhook response.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AlertmanagerAlertResult {
+    /// Index in the alerts array
+    pub index: usize,
+    /// Processing status (processed, duplicate, withdrawn, error)
+    pub status: String,
+    /// Event ID created for this alert (if any)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<Uuid>,
+    /// Mitigation ID affected (if any)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mitigation_id: Option<Uuid>,
+    /// Error message (if processing failed)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Response for the Alertmanager webhook endpoint.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AlertmanagerWebhookResponse {
+    /// Number of alerts successfully processed
+    pub processed: u32,
+    /// Number of alerts that failed processing
+    pub failed: u32,
+    /// Per-alert results
+    pub results: Vec<AlertmanagerAlertResult>,
+}
+
+/// Map Alertmanager severity label to confidence score.
+fn alertmanager_severity_to_confidence(severity: Option<&str>) -> f32 {
+    match severity {
+        Some("critical") => 0.9,
+        Some("warning") => 0.7,
+        Some("info") => 0.5,
+        _ => 0.5,
+    }
+}
+
+/// Extract victim IP from alert labels, stripping port if present.
+/// Checks `victim_ip` first, then `instance` (with port stripping).
+fn extract_victim_ip(labels: &HashMap<String, String>) -> Option<String> {
+    if let Some(ip) = labels.get("victim_ip") {
+        if !ip.is_empty() {
+            return Some(ip.clone());
+        }
+    }
+    if let Some(instance) = labels.get("instance") {
+        if !instance.is_empty() {
+            // Strip port suffix (e.g., "10.0.0.1:9090" → "10.0.0.1")
+            let stripped = if instance.starts_with('[') {
+                // IPv6 with brackets: [::1]:9090
+                instance
+                    .find("]:")
+                    .map(|i| &instance[1..i])
+                    .unwrap_or(instance)
+            } else if instance.contains(':') && instance.matches(':').count() == 1 {
+                // IPv4 with port: 10.0.0.1:9090
+                instance.split(':').next().unwrap_or(instance)
+            } else {
+                // No port (IPv6 without brackets or plain IP)
+                instance
+            };
+            return Some(stripped.to_string());
+        }
+    }
+    None
+}
+
+/// Extract attack vector from alert labels.
+/// Checks `vector` first, then `alertname`.
+fn extract_vector(labels: &HashMap<String, String>) -> Option<String> {
+    if let Some(v) = labels.get("vector") {
+        if !v.is_empty() {
+            return Some(v.clone());
+        }
+    }
+    if let Some(name) = labels.get("alertname") {
+        if !name.is_empty() {
+            return Some(name.clone());
+        }
+    }
+    None
+}
+
+/// Parse an optional i64 from annotations.
+fn parse_optional_i64(annotations: &HashMap<String, String>, key: &str) -> Option<i64> {
+    annotations.get(key).and_then(|v| v.parse::<i64>().ok())
+}
+
+/// Ingest alerts from Alertmanager v4 webhook
+#[utoipa::path(
+    post,
+    path = "/v1/signals/alertmanager",
+    tag = "signals",
+    request_body = AlertmanagerWebhookPayload,
+    responses(
+        (status = 200, description = "Alerts processed", body = AlertmanagerWebhookResponse),
+        (status = 400, description = "Malformed payload"),
+        (status = 401, description = "Authentication required"),
+    )
+)]
+pub async fn ingest_alertmanager(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    ingest_alertmanager_inner(state, auth_session, headers, body).await
+}
+
+async fn ingest_alertmanager_inner(
+    state: Arc<AppState>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<(StatusCode, Json<AlertmanagerWebhookResponse>), AppError> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    if let Err(_status) = require_auth(&state, &auth_session, auth_header) {
+        return Err(AppError(PrefixdError::Unauthorized(
+            "authentication required".into(),
+        )));
+    }
+
+    // Parse body as JSON — return 400 for malformed payloads
+    let payload: AlertmanagerWebhookPayload = serde_json::from_slice(&body).map_err(|e| {
+        AppError(PrefixdError::InvalidRequest(format!(
+            "malformed Alertmanager payload: {}",
+            e
+        )))
+    })?;
+
+    // Validate version
+    if payload.version != "4" {
+        return Err(AppError(PrefixdError::InvalidRequest(format!(
+            "unsupported Alertmanager webhook version: '{}', expected '4'",
+            payload.version
+        ))));
+    }
+
+    // Validate alerts array is not empty
+    if payload.alerts.is_empty() {
+        return Err(AppError(PrefixdError::InvalidRequest(
+            "alerts array is empty".into(),
+        )));
+    }
+
+    let mut results = Vec::with_capacity(payload.alerts.len());
+    let mut processed = 0u32;
+    let mut failed = 0u32;
+
+    for (index, alert) in payload.alerts.into_iter().enumerate() {
+        match process_alertmanager_alert(&state, &alert, index).await {
+            Ok(result) => {
+                processed += 1;
+                results.push(result);
+            }
+            Err(result) => {
+                failed += 1;
+                results.push(result);
+            }
+        }
+    }
+
+    tracing::info!(
+        processed = processed,
+        failed = failed,
+        total = results.len(),
+        "alertmanager webhook processed"
+    );
+
+    Ok((
+        StatusCode::OK,
+        Json(AlertmanagerWebhookResponse {
+            processed,
+            failed,
+            results,
+        }),
+    ))
+}
+
+/// Process a single Alertmanager alert, returning Ok for success or Err for
+/// failure — both carry the per-alert result.
+async fn process_alertmanager_alert(
+    state: &Arc<AppState>,
+    alert: &AlertmanagerAlert,
+    index: usize,
+) -> Result<AlertmanagerAlertResult, AlertmanagerAlertResult> {
+    // Extract vector
+    let vector_str = match extract_vector(&alert.labels) {
+        Some(v) => v,
+        None => {
+            return Err(AlertmanagerAlertResult {
+                index,
+                status: "error".to_string(),
+                event_id: None,
+                mitigation_id: None,
+                error: Some(
+                    "missing vector: neither labels.vector nor labels.alertname present".into(),
+                ),
+            });
+        }
+    };
+
+    // Parse vector
+    let vector: AttackVector = vector_str.parse().unwrap_or(AttackVector::Unknown);
+
+    // Extract victim IP
+    let victim_ip = match extract_victim_ip(&alert.labels) {
+        Some(ip) => ip,
+        None => {
+            return Err(AlertmanagerAlertResult {
+                index,
+                status: "error".to_string(),
+                event_id: None,
+                mitigation_id: None,
+                error: Some(
+                    "missing victim_ip: neither labels.victim_ip nor labels.instance present"
+                        .into(),
+                ),
+            });
+        }
+    };
+
+    // Validate IP
+    if victim_ip.parse::<IpAddr>().is_err() {
+        return Err(AlertmanagerAlertResult {
+            index,
+            status: "error".to_string(),
+            event_id: None,
+            mitigation_id: None,
+            error: Some(format!("invalid IP address: '{}'", victim_ip)),
+        });
+    }
+
+    // Extract optional fields
+    let bps = parse_optional_i64(&alert.annotations, "bps");
+    let pps = parse_optional_i64(&alert.annotations, "pps");
+    let confidence =
+        alertmanager_severity_to_confidence(alert.labels.get("severity").map(|s| s.as_str()));
+
+    // Determine action from alert status
+    let action = if alert.status == "resolved" {
+        "unban".to_string()
+    } else {
+        "ban".to_string()
+    };
+
+    // Use fingerprint as external_event_id for dedup
+    let external_event_id = alert.fingerprint.clone();
+
+    // Parse timestamp
+    let timestamp = alert
+        .starts_at
+        .as_deref()
+        .and_then(|s| s.parse::<DateTime<Utc>>().ok())
+        .unwrap_or_else(Utc::now);
+
+    let input = AttackEventInput {
+        event_id: external_event_id,
+        timestamp,
+        source: "alertmanager".to_string(),
+        victim_ip,
+        vector,
+        bps,
+        pps,
+        top_dst_ports: None,
+        confidence: Some(confidence),
+        action,
+        raw_details: None,
+    };
+
+    // Delegate to the existing event ingestion pipeline
+    match input.action.as_str() {
+        "unban" => match handle_unban(state.clone(), input).await {
+            Ok((_status, Json(resp))) => Ok(AlertmanagerAlertResult {
+                index,
+                status: "withdrawn".to_string(),
+                event_id: Some(resp.event_id),
+                mitigation_id: resp.mitigation_id,
+                error: None,
+            }),
+            Err(AppError(e)) => Ok(AlertmanagerAlertResult {
+                index,
+                status: "withdrawn_noop".to_string(),
+                event_id: None,
+                mitigation_id: None,
+                error: Some(e.to_string()),
+            }),
+        },
+        _ => match handle_ban(state.clone(), input).await {
+            Ok((_status, Json(resp))) => Ok(AlertmanagerAlertResult {
+                index,
+                status: resp.status,
+                event_id: Some(resp.event_id),
+                mitigation_id: resp.mitigation_id,
+                error: None,
+            }),
+            Err(AppError(PrefixdError::DuplicateEvent { .. })) => Ok(AlertmanagerAlertResult {
+                index,
+                status: "duplicate".to_string(),
+                event_id: None,
+                mitigation_id: None,
+                error: None,
+            }),
+            Err(AppError(e)) => Err(AlertmanagerAlertResult {
+                index,
+                status: "error".to_string(),
+                event_id: None,
+                mitigation_id: None,
+                error: Some(e.to_string()),
+            }),
+        },
+    }
+}
+
+// ==========================================================================
+// FastNetMon signal adapter
+// ==========================================================================
+
+/// FastNetMon webhook payload (JSON notify format).
+///
+/// Accepts FastNetMon's native notify format with IP, attack details,
+/// direction, and bandwidth metrics. The `action` field determines the
+/// confidence mapping (ban=0.9, partial_block=0.7, alert=0.5 by default,
+/// overridable in correlation config).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct FastNetMonPayload {
+    /// Action type: "ban", "unban", "partial_block", or "alert"
+    pub action: String,
+    /// Victim IP address under attack
+    pub ip: String,
+    /// Scope of the alert: "host" or "total"
+    #[serde(default)]
+    pub alert_scope: Option<String>,
+    /// Attack details with traffic metrics and classification
+    #[serde(default)]
+    pub attack_details: Option<FastNetMonAttackDetails>,
+}
+
+/// Attack details from FastNetMon.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct FastNetMonAttackDetails {
+    /// UUID of the attack (used as external_event_id for dedup)
+    #[serde(default)]
+    pub attack_uuid: Option<String>,
+    /// Attack severity: "low", "middle", "high"
+    #[serde(default)]
+    pub attack_severity: Option<String>,
+    /// Detection source: "automatic", "manual", etc.
+    #[serde(default)]
+    pub attack_detection_source: Option<String>,
+    /// Detection threshold type: "bytes per second", "packets per second", etc.
+    #[serde(default)]
+    pub attack_detection_threshold: Option<String>,
+    /// Detection direction: "incoming", "outgoing"
+    #[serde(default)]
+    pub attack_detection_threshold_direction: Option<String>,
+    /// Attack start timestamp
+    #[serde(default)]
+    pub attack_start: Option<String>,
+    /// Protocol version: "IPv4" or "IPv6"
+    #[serde(default)]
+    pub protocol_version: Option<String>,
+    /// Host group
+    #[serde(default)]
+    pub host_group: Option<String>,
+    /// Host network
+    #[serde(default)]
+    pub host_network: Option<String>,
+
+    // Per-protocol incoming traffic metrics
+    #[serde(default)]
+    pub incoming_udp_pps: Option<i64>,
+    #[serde(default)]
+    pub incoming_udp_traffic_bits: Option<i64>,
+    #[serde(default)]
+    pub incoming_tcp_pps: Option<i64>,
+    #[serde(default)]
+    pub incoming_tcp_traffic_bits: Option<i64>,
+    #[serde(default)]
+    pub incoming_syn_tcp_pps: Option<i64>,
+    #[serde(default)]
+    pub incoming_syn_tcp_traffic_bits: Option<i64>,
+    #[serde(default)]
+    pub incoming_icmp_pps: Option<i64>,
+    #[serde(default)]
+    pub incoming_icmp_traffic_bits: Option<i64>,
+    #[serde(default)]
+    pub incoming_ip_fragmented_pps: Option<i64>,
+    #[serde(default)]
+    pub incoming_ip_fragmented_traffic_bits: Option<i64>,
+
+    // Totals
+    #[serde(default)]
+    pub total_incoming_pps: Option<i64>,
+    #[serde(default)]
+    pub total_incoming_traffic_bits: Option<i64>,
+    #[serde(default)]
+    pub total_incoming_flows: Option<i64>,
+    #[serde(default)]
+    pub total_outgoing_pps: Option<i64>,
+    #[serde(default)]
+    pub total_outgoing_traffic_bits: Option<i64>,
+    #[serde(default)]
+    pub total_outgoing_flows: Option<i64>,
+}
+
+/// Classify attack vector from FastNetMon attack details.
+///
+/// Examines per-protocol traffic breakdown to determine the dominant vector.
+/// Falls back to "unknown" if no clear dominant protocol is found.
+fn classify_fastnetmon_vector(details: &FastNetMonAttackDetails) -> AttackVector {
+    let udp_pps = details.incoming_udp_pps.unwrap_or(0);
+    let tcp_pps = details.incoming_tcp_pps.unwrap_or(0);
+    let syn_pps = details.incoming_syn_tcp_pps.unwrap_or(0);
+    let icmp_pps = details.incoming_icmp_pps.unwrap_or(0);
+
+    // Check for SYN flood: SYN PPS is dominant fraction of TCP
+    if syn_pps > 0 && (tcp_pps == 0 || syn_pps * 100 / tcp_pps.max(1) > 60) && syn_pps > udp_pps {
+        return AttackVector::SynFlood;
+    }
+
+    // Pick the dominant protocol by PPS
+    let max_pps = udp_pps.max(tcp_pps).max(icmp_pps);
+    if max_pps == 0 {
+        return AttackVector::Unknown;
+    }
+
+    if udp_pps == max_pps {
+        AttackVector::UdpFlood
+    } else if icmp_pps == max_pps {
+        AttackVector::IcmpFlood
+    } else {
+        // TCP flood (non-SYN dominant)
+        AttackVector::AckFlood
+    }
+}
+
+/// Ingest a signal from FastNetMon
+#[utoipa::path(
+    post,
+    path = "/v1/signals/fastnetmon",
+    tag = "signals",
+    request_body = FastNetMonPayload,
+    responses(
+        (status = 202, description = "Event accepted", body = EventResponse),
+        (status = 400, description = "Malformed payload"),
+        (status = 401, description = "Authentication required"),
+    )
+)]
+pub async fn ingest_fastnetmon(
+    State(state): State<Arc<AppState>>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    ingest_fastnetmon_inner(state, auth_session, headers, body).await
+}
+
+async fn ingest_fastnetmon_inner(
+    state: Arc<AppState>,
+    auth_session: AuthSession,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<(StatusCode, Json<EventResponse>), AppError> {
+    let auth_header = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok());
+    if let Err(_status) = require_auth(&state, &auth_session, auth_header) {
+        return Err(AppError(PrefixdError::Unauthorized(
+            "authentication required".into(),
+        )));
+    }
+
+    // Parse body as JSON — return 400 for malformed payloads
+    let payload: FastNetMonPayload = serde_json::from_slice(&body).map_err(|e| {
+        AppError(PrefixdError::InvalidRequest(format!(
+            "malformed FastNetMon payload: {}",
+            e
+        )))
+    })?;
+
+    // Validate required fields
+    if payload.ip.is_empty() {
+        return Err(AppError(PrefixdError::InvalidRequest(
+            "missing required field: ip".into(),
+        )));
+    }
+
+    // Validate IP address
+    if payload.ip.parse::<IpAddr>().is_err() {
+        return Err(AppError(PrefixdError::InvalidRequest(format!(
+            "invalid IP address: '{}'",
+            payload.ip
+        ))));
+    }
+
+    if payload.action.is_empty() {
+        return Err(AppError(PrefixdError::InvalidRequest(
+            "missing required field: action".into(),
+        )));
+    }
+
+    // Classify attack vector from details
+    let vector = payload
+        .attack_details
+        .as_ref()
+        .map(classify_fastnetmon_vector)
+        .unwrap_or(AttackVector::Unknown);
+
+    // Compute confidence from action type via configurable mapping
+    let correlation_config = state.correlation_config.read().await;
+    let confidence = correlation_config.source_action_confidence("fastnetmon", &payload.action);
+    drop(correlation_config);
+
+    // Extract traffic metrics from attack details
+    let (bps, pps) = payload
+        .attack_details
+        .as_ref()
+        .map(|d| (d.total_incoming_traffic_bits, d.total_incoming_pps))
+        .unwrap_or((None, None));
+
+    // Use attack_uuid as external_event_id for dedup
+    let external_event_id = payload
+        .attack_details
+        .as_ref()
+        .and_then(|d| d.attack_uuid.clone());
+
+    // Parse timestamp from attack_start, or use now
+    let timestamp = payload
+        .attack_details
+        .as_ref()
+        .and_then(|d| d.attack_start.as_deref())
+        .and_then(|s| s.parse::<DateTime<Utc>>().ok())
+        .unwrap_or_else(Utc::now);
+
+    // Determine action for the event pipeline
+    let action = match payload.action.as_str() {
+        "unban" => "unban".to_string(),
+        _ => "ban".to_string(), // ban, partial_block, alert all map to ban action in the pipeline
+    };
+
+    // Store raw payload as raw_details for forensics
+    let raw_details = serde_json::to_value(&payload).ok();
+
+    let input = AttackEventInput {
+        event_id: external_event_id,
+        timestamp,
+        source: "fastnetmon".to_string(),
+        victim_ip: payload.ip,
+        vector,
+        bps,
+        pps,
+        top_dst_ports: None,
+        confidence: Some(confidence),
+        action,
+        raw_details,
+    };
+
+    // Delegate to the existing event ingestion pipeline
+    match input.action.as_str() {
+        "unban" => match handle_unban(state.clone(), input).await {
+            Ok(resp) => Ok(resp),
+            Err(e) => Err(e),
+        },
+        _ => match handle_ban(state.clone(), input).await {
+            Ok(resp) => Ok(resp),
+            Err(e) => Err(e),
+        },
+    }
 }
 
 fn format_bps(bps: i64) -> String {

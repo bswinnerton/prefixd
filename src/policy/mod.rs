@@ -179,6 +179,7 @@ mod tests {
                         vector: AttackVector::UdpFlood,
                         require_top_ports: false,
                     },
+                    correlation: None,
                     steps: vec![PlaybookStep {
                         action: PlaybookAction::Police,
                         rate_bps: Some(5_000_000),
@@ -193,6 +194,7 @@ mod tests {
                         vector: AttackVector::SynFlood,
                         require_top_ports: false,
                     },
+                    correlation: None,
                     steps: vec![PlaybookStep {
                         action: PlaybookAction::Discard,
                         rate_bps: None,
@@ -372,6 +374,7 @@ mod tests {
                     vector: AttackVector::UdpFlood,
                     require_top_ports: false,
                 },
+                correlation: None,
                 steps: vec![PlaybookStep {
                     action: PlaybookAction::Discard,
                     rate_bps: None,

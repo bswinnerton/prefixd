@@ -8,6 +8,9 @@ use super::{
     GlobalStats, ListParams, NotificationPreferences, PopInfo, PopStats, RepositoryTrait,
     SafelistEntry, TimeseriesBucket,
 };
+use crate::correlation::engine::{
+    SignalGroup, SignalGroupEvent, SignalGroupFilter, SignalGroupStatus,
+};
 use crate::domain::{AttackEvent, Mitigation, MitigationStatus, Operator, OperatorRole};
 use crate::error::Result;
 use crate::observability::AuditEntry;
@@ -19,6 +22,8 @@ pub struct MockRepository {
     audit: Mutex<Vec<AuditEntry>>,
     operators: Mutex<Vec<Operator>>,
     notification_prefs: Mutex<HashMap<Uuid, NotificationPreferences>>,
+    signal_groups: Mutex<Vec<SignalGroup>>,
+    signal_group_events: Mutex<Vec<(Uuid, Uuid, f32)>>, // (group_id, event_id, source_weight)
 }
 
 impl MockRepository {
@@ -30,6 +35,8 @@ impl MockRepository {
             audit: Mutex::new(Vec::new()),
             operators: Mutex::new(Vec::new()),
             notification_prefs: Mutex::new(HashMap::new()),
+            signal_groups: Mutex::new(Vec::new()),
+            signal_group_events: Mutex::new(Vec::new()),
         }
     }
 }
@@ -535,5 +542,138 @@ impl RepositoryTrait for MockRepository {
             .unwrap()
             .insert(operator_id, prefs.clone());
         Ok(())
+    }
+
+    // ── Signal groups ──────────────────────────────────────────────────
+
+    async fn insert_signal_group(&self, group: &SignalGroup) -> Result<SignalGroup> {
+        let mut groups = self.signal_groups.lock().unwrap();
+        // Check for existing open group (simulates ON CONFLICT behavior)
+        if let Some(existing) = groups.iter().find(|g| {
+            g.victim_ip == group.victim_ip
+                && g.vector == group.vector
+                && g.status == SignalGroupStatus::Open
+                && g.window_expires_at > Utc::now()
+        }) {
+            return Ok(existing.clone());
+        }
+        groups.push(group.clone());
+        Ok(group.clone())
+    }
+
+    async fn update_signal_group(&self, group: &SignalGroup) -> Result<()> {
+        let mut groups = self.signal_groups.lock().unwrap();
+        if let Some(existing) = groups.iter_mut().find(|g| g.group_id == group.group_id) {
+            existing.derived_confidence = group.derived_confidence;
+            existing.source_count = group.source_count;
+            existing.status = group.status;
+            existing.corroboration_met = group.corroboration_met;
+        }
+        Ok(())
+    }
+
+    async fn get_signal_group(&self, group_id: Uuid) -> Result<Option<SignalGroup>> {
+        let groups = self.signal_groups.lock().unwrap();
+        Ok(groups.iter().find(|g| g.group_id == group_id).cloned())
+    }
+
+    async fn find_open_group(&self, victim_ip: &str, vector: &str) -> Result<Option<SignalGroup>> {
+        let groups = self.signal_groups.lock().unwrap();
+        Ok(groups
+            .iter()
+            .find(|g| {
+                g.victim_ip == victim_ip
+                    && g.vector == vector
+                    && g.status == SignalGroupStatus::Open
+                    && g.window_expires_at > Utc::now()
+            })
+            .cloned())
+    }
+
+    async fn add_event_to_group(
+        &self,
+        group_id: Uuid,
+        event_id: Uuid,
+        source_weight: f32,
+    ) -> Result<bool> {
+        let mut links = self.signal_group_events.lock().unwrap();
+        // Check for duplicate
+        if links
+            .iter()
+            .any(|(gid, eid, _)| *gid == group_id && *eid == event_id)
+        {
+            return Ok(false);
+        }
+        links.push((group_id, event_id, source_weight));
+        Ok(true)
+    }
+
+    async fn list_signal_group_events(&self, group_id: Uuid) -> Result<Vec<SignalGroupEvent>> {
+        let links = self.signal_group_events.lock().unwrap();
+        let events = self.events.lock().unwrap();
+
+        Ok(links
+            .iter()
+            .filter(|(gid, _, _)| *gid == group_id)
+            .map(|(gid, eid, weight)| {
+                let event = events.iter().find(|e| e.event_id == *eid);
+                SignalGroupEvent {
+                    group_id: *gid,
+                    event_id: *eid,
+                    source_weight: *weight,
+                    source: event.map(|e| e.source.clone()),
+                    confidence: event.and_then(|e| e.confidence),
+                    ingested_at: event.map(|e| e.ingested_at),
+                }
+            })
+            .collect())
+    }
+
+    async fn list_signal_groups(
+        &self,
+        filter: &SignalGroupFilter,
+        params: &ListParams,
+    ) -> Result<Vec<SignalGroup>> {
+        let groups = self.signal_groups.lock().unwrap();
+        Ok(groups
+            .iter()
+            .rev()
+            .filter(|g| filter.status.is_none_or(|s| g.status == s))
+            .filter(|g| filter.vector.as_ref().is_none_or(|v| &g.vector == v))
+            .filter(|g| filter.start.is_none_or(|s| g.created_at >= s))
+            .filter(|g| filter.end.is_none_or(|e| g.created_at < e))
+            .filter(|g| params.cursor.is_none_or(|c| g.created_at < c))
+            .take(params.limit as usize)
+            .cloned()
+            .collect())
+    }
+
+    async fn count_open_groups(&self) -> Result<u32> {
+        let groups = self.signal_groups.lock().unwrap();
+        Ok(groups
+            .iter()
+            .filter(|g| g.status == SignalGroupStatus::Open)
+            .count() as u32)
+    }
+
+    async fn find_expired_signal_groups(&self) -> Result<Vec<SignalGroup>> {
+        let now = Utc::now();
+        let groups = self.signal_groups.lock().unwrap();
+        Ok(groups
+            .iter()
+            .filter(|g| g.status == SignalGroupStatus::Open && g.window_expires_at <= now)
+            .cloned()
+            .collect())
+    }
+
+    async fn find_mitigation_id_by_signal_group(
+        &self,
+        signal_group_id: Uuid,
+    ) -> Result<Option<Uuid>> {
+        let mitigations = self.mitigations.lock().unwrap();
+        Ok(mitigations
+            .iter()
+            .find(|m| m.signal_group_id == Some(signal_group_id))
+            .map(|m| m.mitigation_id))
     }
 }

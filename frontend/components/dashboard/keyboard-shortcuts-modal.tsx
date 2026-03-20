@@ -14,6 +14,7 @@ const shortcuts = [
       { keys: ["g", "o"], description: "Go to Overview" },
       { keys: ["g", "m"], description: "Go to Mitigations" },
       { keys: ["g", "e"], description: "Go to Events" },
+      { keys: ["g", "r"], description: "Go to Correlation" },
       { keys: ["g", "i"], description: "Go to Inventory" },
       { keys: ["g", "h"], description: "Go to IP History" },
       { keys: ["g", "a"], description: "Go to Audit Log" },

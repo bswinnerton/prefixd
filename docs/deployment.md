@@ -65,6 +65,8 @@ open http://localhost
 
 > **Note:** The dashboard and API are not exposed directly. All HTTP and WebSocket traffic goes through nginx on port 80.
 
+> **Config editing in Docker:** The default `docker-compose.yml` mounts `./configs:/etc/prefixd` (writable) so the dashboard config editors (playbooks, alerting, correlation) work out of the box. Writes use atomic temp-file + fsync + rename with `.bak` backups, and all PUT endpoints are admin-only with validation. For hardened deployments, add `:ro` to the mount and edit configs on the host, then reload via `POST /v1/config/reload`.
+
 ---
 
 ## Authentication Setup
@@ -144,6 +146,89 @@ cd frontend
 export PREFIXD_API=http://localhost:8080
 bun run dev
 ```
+
+---
+
+## Signal Adapters (Detector Integration)
+
+prefixd accepts events three ways:
+
+1. **Generic API** (`POST /v1/events`) — any detector that can POST JSON
+2. **Alertmanager webhook** (`POST /v1/signals/alertmanager`) — native Alertmanager v4 payload
+3. **FastNetMon webhook** (`POST /v1/signals/fastnetmon`) — native FastNetMon JSON payload
+
+The signal adapters translate detector-native payloads into prefixd events and feed them through the full pipeline (correlation → policy → guardrails → announce).
+
+### Alertmanager Setup
+
+Add a webhook receiver to your Alertmanager config:
+
+```yaml
+# alertmanager.yml
+receivers:
+  - name: prefixd
+    webhook_configs:
+      - url: "http://prefixd.internal/v1/signals/alertmanager"
+        send_resolved: true   # Enables auto-withdraw on resolve
+
+route:
+  routes:
+    - match:
+        severity: critical
+      receiver: prefixd
+```
+
+The adapter maps Alertmanager fields to prefixd events:
+
+| Alertmanager Field | Maps To | Notes |
+|--------------------|---------|-------|
+| `labels.instance` or `annotations.victim_ip` | `victim_ip` | Required — alert is skipped without it |
+| `labels.vector` or `annotations.vector` | `vector` | Falls back to `unknown` |
+| `labels.severity` | `confidence` | critical=0.9, warning=0.7, info=0.5 |
+| `annotations.bps`, `annotations.pps` | Traffic metrics | Optional |
+| `fingerprint` | Dedup key | Prevents duplicate events |
+
+Resolved alerts (status=`resolved`) automatically withdraw the corresponding mitigation.
+
+### FastNetMon Setup
+
+Point FastNetMon's webhook notify URL at prefixd:
+
+```bash
+# FastNetMon Advanced
+notify_script_path = /usr/bin/curl
+notify_script_args = -X POST -H "Content-Type: application/json" \
+  -d @- http://prefixd.internal/v1/signals/fastnetmon
+```
+
+Or use the notify script from `scripts/prefixd-fastnetmon.sh` which provides additional features (retry, logging, unban support).
+
+The adapter classifies the attack vector from the traffic breakdown (UDP/SYN/ICMP/TCP) and maps `action` to confidence:
+
+| FastNetMon Action | Confidence |
+|-------------------|------------|
+| `ban` | 0.9 |
+| `partial_block` | 0.7 |
+| `alert` | 0.5 |
+| `unban` | Withdraws mitigation |
+
+### Multi-Signal Correlation
+
+When [correlation](configuration.md#correlation) is enabled, events from multiple adapters targeting the same (victim_ip, vector) within a time window are grouped into a signal group. Set `min_sources: 2` to require corroboration before triggering mitigation:
+
+```yaml
+# configs/correlation.yaml
+enabled: true
+min_sources: 2
+window_seconds: 300
+sources:
+  fastnetmon:
+    weight: 1.0
+  alertmanager:
+    weight: 0.8
+```
+
+See [ADR 018](adr/018-multi-signal-correlation-engine.md) and [ADR 019](adr/019-signal-adapter-architecture.md) for design rationale.
 
 ---
 
@@ -355,6 +440,7 @@ SELECT * FROM schema_migrations ORDER BY version;
 --       4 | schema_migrations        | 2026-02-20 10:00:00
 --       5 | acknowledge              | 2026-03-18 14:37:00
 --       6 | notification_preferences | 2026-03-18 14:37:00
+--       7 | signal_groups            | 2026-03-19 18:00:00
 ```
 
 ### Check Migration Status
@@ -641,6 +727,10 @@ scrape_configs:
 | `prefixd_http_request_duration_seconds` | Request latency histogram |
 | `prefixd_db_pool_connections` | DB pool stats (active, idle, total) |
 | `prefixd_db_row_parse_errors_total` | Corrupted row parse errors |
+| `prefixd_signal_groups_total` | Signal groups created (correlation) |
+| `prefixd_corroboration_met_total` | Groups that met corroboration threshold |
+| `prefixd_corroboration_timeout_total` | Groups that expired without corroboration |
+| `prefixd_correlation_confidence` | Derived confidence distribution |
 
 ### Alerting
 
@@ -728,6 +818,7 @@ curl -v http://localhost/v1/health 2>&1 | grep x-request-id
 - [ ] Playbooks match security policy
 - [ ] Quotas set appropriately
 - [ ] Safelist populated with infrastructure IPs
+- [ ] Correlation config tuned (if enabled): `min_sources`, `confidence_threshold`, source weights
 
 ### Testing
 
@@ -736,6 +827,8 @@ curl -v http://localhost/v1/health 2>&1 | grep x-request-id
 - [ ] Test mitigation withdrawal
 - [ ] Verify TTL expiry works
 - [ ] Test dashboard login
+- [ ] Test signal adapters (if using Alertmanager/FastNetMon)
+- [ ] Verify corroboration behavior with `min_sources` > 1 (if enabled)
 
 ---
 

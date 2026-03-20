@@ -16,6 +16,11 @@ pub struct Playbook {
     pub name: String,
     #[serde(rename = "match")]
     pub match_criteria: PlaybookMatch,
+    /// Per-playbook correlation override. When present, overrides global
+    /// correlation `min_sources` and `confidence_threshold` for events
+    /// matching this playbook.
+    #[serde(default)]
+    pub correlation: Option<crate::correlation::PlaybookCorrelationOverride>,
     pub steps: Vec<PlaybookStep>,
 }
 
@@ -224,6 +229,7 @@ mod tests {
                 vector: AttackVector::UdpFlood,
                 require_top_ports: false,
             },
+            correlation: None,
             steps: vec![PlaybookStep {
                 action: PlaybookAction::Police,
                 rate_bps: Some(5_000_000),
@@ -365,5 +371,94 @@ mod tests {
         symlink(&target, &link).unwrap();
 
         assert!(pb.save(&link).is_err());
+    }
+
+    #[test]
+    fn test_playbook_without_correlation_override() {
+        let yaml = r#"
+playbooks:
+  - name: test
+    match:
+      vector: udp_flood
+    steps:
+      - action: police
+        rate_bps: 5000000
+        ttl_seconds: 120
+"#;
+        let playbooks: Playbooks = serde_yaml::from_str(yaml).unwrap();
+        assert!(playbooks.playbooks[0].correlation.is_none());
+    }
+
+    #[test]
+    fn test_playbook_with_correlation_override() {
+        let yaml = r#"
+playbooks:
+  - name: corroborated_udp
+    match:
+      vector: udp_flood
+    correlation:
+      min_sources: 2
+      confidence_threshold: 0.7
+    steps:
+      - action: police
+        rate_bps: 5000000
+        ttl_seconds: 120
+"#;
+        let playbooks: Playbooks = serde_yaml::from_str(yaml).unwrap();
+        let corr = playbooks.playbooks[0].correlation.as_ref().unwrap();
+        assert_eq!(corr.min_sources, Some(2));
+        assert_eq!(corr.confidence_threshold, Some(0.7));
+    }
+
+    #[test]
+    fn test_playbook_with_partial_correlation_override() {
+        let yaml = r#"
+playbooks:
+  - name: partial_override
+    match:
+      vector: syn_flood
+    correlation:
+      min_sources: 3
+    steps:
+      - action: discard
+        ttl_seconds: 300
+"#;
+        let playbooks: Playbooks = serde_yaml::from_str(yaml).unwrap();
+        let corr = playbooks.playbooks[0].correlation.as_ref().unwrap();
+        assert_eq!(corr.min_sources, Some(3));
+        assert_eq!(corr.confidence_threshold, None);
+    }
+
+    #[test]
+    fn test_playbook_roundtrip_with_correlation() {
+        use crate::correlation::PlaybookCorrelationOverride;
+
+        let pb = Playbooks {
+            playbooks: vec![Playbook {
+                name: "test_corr".to_string(),
+                match_criteria: PlaybookMatch {
+                    vector: AttackVector::UdpFlood,
+                    require_top_ports: false,
+                },
+                correlation: Some(PlaybookCorrelationOverride {
+                    min_sources: Some(2),
+                    confidence_threshold: Some(0.8),
+                }),
+                steps: vec![PlaybookStep {
+                    action: PlaybookAction::Police,
+                    rate_bps: Some(5_000_000),
+                    ttl_seconds: 120,
+                    require_confidence_at_least: None,
+                    require_persistence_seconds: None,
+                }],
+            }],
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("playbooks.yaml");
+        pb.save(&path).unwrap();
+        let loaded = Playbooks::load(&path).unwrap();
+        let corr = loaded.playbooks[0].correlation.as_ref().unwrap();
+        assert_eq!(corr.min_sources, Some(2));
+        assert_eq!(corr.confidence_threshold, Some(0.8));
     }
 }

@@ -141,6 +141,7 @@ mod tests {
             rejection_reason: None,
             acknowledged_at: None,
             acknowledged_by: None,
+            signal_group_id: None,
         }
     }
 

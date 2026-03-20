@@ -5,6 +5,7 @@ pub mod api;
 pub mod auth;
 pub mod bgp;
 pub mod config;
+pub mod correlation;
 pub mod db;
 pub mod domain;
 pub mod error;

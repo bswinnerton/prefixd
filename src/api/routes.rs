@@ -98,6 +98,10 @@ fn api_routes() -> Router<Arc<AppState>> {
         )
         .route("/v1/config/alerting/test", post(handlers::test_alerting))
         .route(
+            "/v1/config/correlation",
+            get(handlers::get_correlation_config).put(handlers::update_correlation_config),
+        )
+        .route(
             "/v1/preferences",
             get(handlers::get_notification_preferences)
                 .put(handlers::update_notification_preferences),
@@ -106,6 +110,13 @@ fn api_routes() -> Router<Arc<AppState>> {
             "/v1/reports/incident",
             get(handlers::generate_incident_report),
         )
+        .route("/v1/signal-groups", get(handlers::list_signal_groups))
+        .route("/v1/signal-groups/{id}", get(handlers::get_signal_group))
+        .route(
+            "/v1/signals/alertmanager",
+            post(handlers::ingest_alertmanager),
+        )
+        .route("/v1/signals/fastnetmon", post(handlers::ingest_fastnetmon))
 }
 
 /// Common layers applied to both production and test routers

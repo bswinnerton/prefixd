@@ -3,15 +3,16 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Shield, Activity, FileText, Settings, X, ChevronsLeft, ChevronsRight, FileCode, Database, History } from "lucide-react"
+import { LayoutDashboard, Shield, Activity, FileText, Settings, X, ChevronsLeft, ChevronsRight, FileCode, Database, History, Waypoints } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { usePermissions } from "@/hooks/use-permissions"
-import { useStats } from "@/hooks/use-api"
+import { useStats, useOpenSignalGroupCount } from "@/hooks/use-api"
 
 const navItems = [
   { href: "/", label: "Overview", icon: LayoutDashboard, adminOnly: false },
   { href: "/mitigations", label: "Mitigations", icon: Shield, adminOnly: false },
   { href: "/events", label: "Events", icon: Activity, adminOnly: false },
+  { href: "/correlation", label: "Correlation", icon: Waypoints, adminOnly: false },
   { href: "/inventory", label: "Inventory", icon: Database, adminOnly: false },
   { href: "/ip-history", label: "IP History", icon: History, adminOnly: false },
   { href: "/audit-log", label: "Audit Log", icon: FileText, adminOnly: false },
@@ -30,6 +31,7 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false, onToggleCollapse
   const pathname = usePathname()
   const permissions = usePermissions()
   const { data: stats } = useStats()
+  const openGroupCount = useOpenSignalGroupCount()
 
   // Filter nav items based on permissions
   const visibleNavItems = navItems.filter(item => !item.adminOnly || permissions.isAdmin)
@@ -74,7 +76,11 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false, onToggleCollapse
           <nav className={cn("flex-1 py-2", isCollapsed ? "px-2" : "px-2")}>
             {visibleNavItems.map((item) => {
               const isActive = pathname === item.href
-              const activeCount = item.href === "/mitigations" ? (stats?.total_active ?? 0) : 0
+              const activeCount = item.href === "/mitigations"
+                ? (stats?.total_active ?? 0)
+                : item.href === "/correlation"
+                  ? openGroupCount
+                  : 0
 
               if (isCollapsed) {
                 return (

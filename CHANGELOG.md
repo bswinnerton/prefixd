@@ -5,6 +5,29 @@ All notable changes to prefixd will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Multi-signal correlation engine** — Time-windowed grouping of related attack events by (victim_ip, vector) from multiple detection sources. Configurable source weights, corroboration thresholds, and per-playbook overrides. When `correlation.enabled` is true, events are grouped into signal groups and mitigation only triggers when corroboration requirements are met (configurable `min_sources` and `confidence_threshold`). Single-source behavior is preserved with `min_sources=1` (backward compatible). See [ADR 018](docs/adr/018-multi-signal-correlation-engine.md).
+- **Signal groups API** — `GET /v1/signal-groups` (list with cursor pagination, status/vector/date filters) and `GET /v1/signal-groups/{id}` (detail with contributing events, source weights, and confidence). Both endpoints require authentication.
+- **Correlation context on mitigations** — `GET /v1/mitigations` and `GET /v1/mitigations/{id}` responses include a `correlation` field for correlated mitigations, containing signal_group_id, derived_confidence, source_count, corroboration_met, contributing_sources, and a human-readable explanation.
+- **Correlation engine metrics** — `prefixd_signal_groups_total`, `prefixd_signal_group_sources`, `prefixd_correlation_confidence`, `prefixd_corroboration_met_total`, `prefixd_corroboration_timeout_total` Prometheus counters and histograms.
+- **Signal group expiry** — Reconciliation loop expires open signal groups whose time window has elapsed, transitioning them to `expired` status.
+- **Database migration 007** — `signal_groups` and `signal_group_events` tables, `mitigations.signal_group_id` nullable FK column with indexes.
+- **Correlation configuration** — New `correlation` section in `prefixd.yaml` with `enabled`, `window_seconds`, `min_sources`, `confidence_threshold`, `sources` (per-source weight/type), and `default_weight`. Per-playbook `correlation` overrides in `playbooks.yaml`. Hot-reloadable via `POST /v1/config/reload`.
+- **Alertmanager webhook adapter** — `POST /v1/signals/alertmanager` accepts Alertmanager v4 webhook payloads. Maps labels/annotations to attack event fields (vector, victim_ip, bps/pps, severity→confidence). Handles batched alerts with per-alert results, resolved alerts (→ withdraw), fingerprint dedup. Returns 400 for malformed payloads (Alertmanager won't retry 4xx). See [ADR 019](docs/adr/019-signal-adapter-architecture.md).
+- **FastNetMon webhook adapter** — `POST /v1/signals/fastnetmon` accepts FastNetMon's native JSON notify payload. Classifies attack vector from traffic breakdown (UDP/SYN/ICMP/TCP), maps action type to confidence (ban=0.9, partial_block=0.7, alert=0.5, configurable), uses `attack_uuid` for dedup. Returns `EventResponse` shape for script compatibility.
+- **Correlation config API** — `GET /v1/config/correlation` (secrets redacted) and `PUT /v1/config/correlation` (admin only, validates, writes YAML, hot-reloads). Correlation config reloaded alongside inventory/playbooks/alerting on `POST /v1/config/reload`.
+- **Signal adapter E2E tests** — 3 end-to-end tests in `tests/integration_e2e.rs` verifying full-stack signal adapter flows through real Postgres and GoBGP: Alertmanager→signal group→mitigation, FastNetMon→signal group→mitigation, multi-source corroboration (FastNetMon + Alertmanager → same group → mitigation with FlowSpec in RIB). Marked `#[ignore]` by default (require Docker).
+
+### Changed
+
+- Backend unit tests increased from 126 to 179 (correlation engine, config parsing, corroboration, explainability, signal adapters)
+- Integration tests increased from 44 to 99 (signal group CRUD, correlation flow, concurrent event handling, Alertmanager adapter, FastNetMon adapter, correlation config API)
+- Postgres integration tests increased from 9 to 16 (signal group operations)
+- Frontend tests increased from 34 to 67 (correlation dashboard, signal group detail, mitigation detail correlation)
+
 ## [0.13.0] - 2026-03-19
 
 ### Added

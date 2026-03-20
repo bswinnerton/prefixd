@@ -18,9 +18,11 @@ use prefixd::config::{
     PlaybookAction, PlaybookMatch, PlaybookStep, Playbooks, QuotasConfig, RateLimitConfig,
     SafelistConfig, Service, Settings, ShutdownConfig, StorageConfig, TimersConfig,
 };
+use prefixd::correlation::{CorrelationConfig, SourceConfig};
 use prefixd::db::{Repository, RepositoryTrait, init_postgres_pool};
 use prefixd::domain::AttackVector;
 use sqlx::PgPool;
+use std::collections::HashMap;
 
 pub struct TestContext {
     pub state: Arc<AppState>,
@@ -213,6 +215,7 @@ pub fn test_settings() -> Settings {
         safelist: SafelistConfig { prefixes: vec![] },
         shutdown: ShutdownConfig::default(),
         alerting: Default::default(),
+        correlation: Default::default(),
     }
 }
 
@@ -252,6 +255,7 @@ pub fn test_playbooks() -> Playbooks {
                     vector: AttackVector::UdpFlood,
                     require_top_ports: false,
                 },
+                correlation: None,
                 steps: vec![PlaybookStep {
                     action: PlaybookAction::Police,
                     rate_bps: Some(10_000_000),
@@ -266,6 +270,7 @@ pub fn test_playbooks() -> Playbooks {
                     vector: AttackVector::SynFlood,
                     require_top_ports: false,
                 },
+                correlation: None,
                 steps: vec![PlaybookStep {
                     action: PlaybookAction::Discard,
                     rate_bps: None,
@@ -364,6 +369,122 @@ impl E2ETestContext {
         settings.mode = OperationMode::Enforced; // Actually announce!
         settings.bgp.mode = BgpMode::Sidecar;
         settings.bgp.gobgp_grpc = gobgp_endpoint.clone();
+
+        let state = AppState::new(
+            settings,
+            test_inventory(),
+            test_playbooks(),
+            repo.clone(),
+            announcer.clone(),
+            std::path::PathBuf::from("."),
+        )
+        .expect("Failed to create app state");
+
+        Self {
+            state,
+            repo,
+            announcer,
+            pool,
+            gobgp_endpoint,
+            _postgres: postgres,
+            _gobgp: gobgp,
+        }
+    }
+
+    /// Create an E2E test context with correlation enabled.
+    /// This enables the correlation engine with configurable min_sources and
+    /// confidence_threshold, plus pre-configured source weights for fastnetmon
+    /// and alertmanager adapters.
+    pub async fn with_correlation(min_sources: u32, confidence_threshold: f32) -> Self {
+        // Start Postgres container
+        let postgres = Postgres::default()
+            .with_tag("16-alpine")
+            .start()
+            .await
+            .expect("Failed to start Postgres container");
+
+        let pg_host = postgres
+            .get_host()
+            .await
+            .expect("Failed to get Postgres host");
+        let pg_port = postgres
+            .get_host_port_ipv4(5432)
+            .await
+            .expect("Failed to get Postgres port");
+
+        let connection_string = format!(
+            "postgres://postgres:postgres@{}:{}/postgres",
+            pg_host, pg_port
+        );
+
+        // Start GoBGP container
+        let gobgp = GenericImage::new("jauderho/gobgp", "latest")
+            .with_exposed_port(50051.tcp())
+            .with_exposed_port(179.tcp())
+            .with_wait_for(WaitFor::seconds(3))
+            .with_cmd(["/usr/local/bin/gobgpd", "-p", "--api-hosts=0.0.0.0:50051"])
+            .start()
+            .await
+            .expect("Failed to start GoBGP container");
+
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        let gobgp_host = gobgp.get_host().await.expect("Failed to get GoBGP host");
+        let gobgp_port = gobgp
+            .get_host_port_ipv4(50051)
+            .await
+            .expect("Failed to get GoBGP port");
+
+        let gobgp_endpoint = format!("{}:{}", gobgp_host, gobgp_port);
+
+        let pool = init_postgres_pool(&connection_string)
+            .await
+            .expect("Failed to init pool");
+
+        let repo: Arc<dyn RepositoryTrait> = Arc::new(Repository::new(pool.clone()));
+
+        configure_gobgp(&gobgp_endpoint).await;
+
+        let mut announcer = GoBgpAnnouncer::new(gobgp_endpoint.clone());
+        announcer
+            .connect()
+            .await
+            .expect("Failed to connect to GoBGP");
+        let announcer = Arc::new(announcer);
+
+        // Settings with correlation enabled
+        let mut settings = test_settings();
+        settings.storage.connection_string = connection_string;
+        settings.mode = OperationMode::Enforced;
+        settings.bgp.mode = BgpMode::Sidecar;
+        settings.bgp.gobgp_grpc = gobgp_endpoint.clone();
+
+        // Enable correlation engine
+        let mut sources = HashMap::new();
+        sources.insert(
+            "fastnetmon".to_string(),
+            SourceConfig {
+                weight: 1.0,
+                r#type: "detector".to_string(),
+                confidence_mapping: HashMap::new(),
+            },
+        );
+        sources.insert(
+            "alertmanager".to_string(),
+            SourceConfig {
+                weight: 0.8,
+                r#type: "telemetry".to_string(),
+                confidence_mapping: HashMap::new(),
+            },
+        );
+        settings.correlation = CorrelationConfig {
+            enabled: true,
+            window_seconds: 300,
+            min_sources,
+            confidence_threshold,
+            sources,
+            default_weight: 1.0,
+        };
 
         let state = AppState::new(
             settings,

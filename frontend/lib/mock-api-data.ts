@@ -60,6 +60,14 @@ export const mockMitigations: Mitigation[] = [
     reason: "UDP flood detected by FastNetMon",
     acknowledged_at: null,
     acknowledged_by: null,
+    correlation: {
+      signal_group_id: "sg-001-aaaa-bbbb-cccc-dddd",
+      derived_confidence: 0.88,
+      source_count: 2,
+      corroboration_met: true,
+      contributing_sources: ["fastnetmon", "alertmanager"],
+      explanation: "Corroboration achieved: 2 of 2 required sources confirmed UDP flood on 203.0.113.10. Derived confidence 88% (threshold 50%). Sources: fastnetmon (95% × 1.0), alertmanager (80% × 0.8).",
+    },
   },
   {
     mitigation_id: "550e8400-e29b-41d4-a716-446655440001",
@@ -424,4 +432,83 @@ export const mockPops: import("./api").PopInfo[] = [
   { pop: "iad1", active_mitigations: 4, total_mitigations: 523 },
   { pop: "ord1", active_mitigations: 1, total_mitigations: 198 },
   { pop: "lax1", active_mitigations: 1, total_mitigations: 126 },
+]
+
+export const mockSignalGroups: import("./api").SignalGroup[] = [
+  {
+    group_id: "sg-001-aaaa-bbbb-cccc-dddd",
+    victim_ip: "203.0.113.10",
+    vector: "udp_flood",
+    created_at: ago(5),
+    window_expires_at: inFuture(0),
+    derived_confidence: 0.88,
+    source_count: 2,
+    status: "resolved",
+    corroboration_met: true,
+    mitigation_id: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  },
+  {
+    group_id: "sg-002-aaaa-bbbb-cccc-dddd",
+    victim_ip: "198.51.100.25",
+    vector: "syn_flood",
+    created_at: ago(3),
+    window_expires_at: inFuture(2),
+    derived_confidence: 0.72,
+    source_count: 1,
+    status: "open",
+    corroboration_met: false,
+  },
+  {
+    group_id: "sg-003-aaaa-bbbb-cccc-dddd",
+    victim_ip: "192.0.2.100",
+    vector: "ntp_amplification",
+    created_at: ago(30),
+    window_expires_at: ago(25),
+    derived_confidence: 0.65,
+    source_count: 1,
+    status: "expired",
+    corroboration_met: false,
+  },
+]
+
+export const mockSignalGroupEvents: import("./api").SignalGroupEvent[] = [
+  {
+    group_id: "sg-001-aaaa-bbbb-cccc-dddd",
+    event_id: "evt-001",
+    source: "fastnetmon",
+    confidence: 0.95,
+    source_weight: 1.0,
+    ingested_at: ago(5),
+    victim_ip: "203.0.113.10",
+    vector: "udp_flood",
+  },
+  {
+    group_id: "sg-001-aaaa-bbbb-cccc-dddd",
+    event_id: "evt-009",
+    source: "alertmanager",
+    confidence: 0.8,
+    source_weight: 0.8,
+    ingested_at: ago(4),
+    victim_ip: "203.0.113.10",
+    vector: "udp_flood",
+  },
+]
+
+export const mockCorrelationConfig: import("./api").CorrelationConfig = {
+  enabled: true,
+  window_seconds: 300,
+  min_sources: 2,
+  confidence_threshold: 0.5,
+  default_weight: 1.0,
+  sources: {
+    fastnetmon: { weight: 1.0, type: "detector", confidence_mapping: { ban: 0.9, partial_block: 0.7, alert: 0.5 } },
+    alertmanager: { weight: 0.8, type: "telemetry", confidence_mapping: {} },
+    dashboard: { weight: 1.0, type: "manual", confidence_mapping: {} },
+  },
+}
+
+export const mockSignalSources: import("./api").SignalSourceStatus[] = [
+  { name: "fastnetmon", type: "detector", weight: 1.0, last_seen: ago(2), event_count: 6, healthy: true },
+  { name: "alertmanager", type: "telemetry", weight: 0.8, last_seen: ago(30), event_count: 1, healthy: false },
+  { name: "dashboard", type: "manual", weight: 1.0, last_seen: null, event_count: 0, healthy: false },
 ]
