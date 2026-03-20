@@ -17,7 +17,7 @@ services:
     expose:
       - "8080"
     volumes:
-      - ./configs:/etc/prefixd:ro
+      - ./configs:/etc/prefixd
       - prefixd-data:/data
     environment:
       - RUST_LOG=info

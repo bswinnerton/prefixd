@@ -223,12 +223,9 @@ The dashboard adds a `/correlation` page with three tabs:
 
 Plus a signal group detail page at `/correlation/groups/[id]` and a correlation context section on the mitigation detail page.
 
-##### Docker: Read-only config volume
+##### Docker: Config volume now writable by default
 
-The default `docker-compose.yml` mounts configs as `:ro` (read-only). This means `PUT /v1/config/correlation` (and `PUT /v1/config/playbooks`, `PUT /v1/config/alerting`) will return 500 in Docker. Two options:
-
-1. **Edit on host + reload** (recommended): Edit `configs/correlation.yaml` on the host, then `curl -X POST http://localhost/v1/config/reload`
-2. **Mount writable**: Change `./configs:/etc/prefixd:ro` to `./configs:/etc/prefixd` in `docker-compose.yml`
+The default `docker-compose.yml` now mounts `./configs:/etc/prefixd` (writable) so the dashboard config editors work out of the box. Previously it was `:ro`. If you have a customized `docker-compose.yml` with `:ro`, the `PUT /v1/config/correlation` endpoint (and playbooks/alerting PUT) will return 500. Either remove `:ro` or edit configs on the host and use `POST /v1/config/reload`.
 
 ##### Upgrade steps
 

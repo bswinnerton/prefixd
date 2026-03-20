@@ -65,7 +65,7 @@ open http://localhost
 
 > **Note:** The dashboard and API are not exposed directly. All HTTP and WebSocket traffic goes through nginx on port 80.
 
-> **Config editing in Docker:** The default `docker-compose.yml` mounts `./configs:/etc/prefixd:ro` (read-only). The `PUT /v1/config/playbooks`, `PUT /v1/config/alerting`, and `PUT /v1/config/correlation` endpoints will return 500 in this mode. To edit configs, either modify files on the host and run `POST /v1/config/reload`, or change the mount to `./configs:/etc/prefixd` (writable) in `docker-compose.yml`.
+> **Config editing in Docker:** The default `docker-compose.yml` mounts `./configs:/etc/prefixd` (writable) so the dashboard config editors (playbooks, alerting, correlation) work out of the box. Writes use atomic temp-file + fsync + rename with `.bak` backups, and all PUT endpoints are admin-only with validation. For hardened deployments, add `:ro` to the mount and edit configs on the host, then reload via `POST /v1/config/reload`.
 
 ---
 
